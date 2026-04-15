@@ -12,6 +12,7 @@ jobs:
       - check-nightly-ci
       - changed-files
       - checks
+      - check-c-abi
       - conda-cpp-build
       - conda-cpp-tests
       - conda-cpp-checks
@@ -43,16 +44,22 @@ jobs:
         if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
         uses: rapidsai/shared-actions/telemetry-dispatch-stash-base-env-vars@main
   check-nightly-ci:
-    needs: telemetry-setup
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      id-token: write
     env:
-      RAPIDS_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Get PR Info
+        id: get-pr-info
+        uses: nv-gha-runners/get-pr-info@main
       - name: Check if nightly CI is passing
         uses: rapidsai/shared-actions/check_nightly_success/dispatch@main
         with:
-          repo: cuvs
-          max_days_without_success: 30
+          repo: ${{ github.repository }}
+          target-branch: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}
+          max-days-without-success: 30
   changed-files:
     needs: telemetry-setup
     secrets: inherit
@@ -61,6 +68,8 @@ jobs:
       files_yaml: |
         build_docs:
           - '**'
+          - '!**/*/REVIEW_GUIDELINES.md'
+          - '!.coderabbit.yaml'
           - '!.devcontainer/**'
           - '!.github/CODEOWNERS'
           - '!.github/ISSUE_TEMPLATE/**'
@@ -83,6 +92,8 @@ jobs:
           - '!thirdparty/LICENSES/**'
         test_cpp:
           - '**'
+          - '!**/*/REVIEW_GUIDELINES.md'
+          - '!.coderabbit.yaml'
           - '!.devcontainer/**'
           - '!.github/CODEOWNERS'
           - '!.github/ISSUE_TEMPLATE/**'
@@ -117,6 +128,8 @@ jobs:
           - '!thirdparty/LICENSES/**'
         test_java:
           - '**'
+          - '!**/*/REVIEW_GUIDELINES.md'
+          - '!.coderabbit.yaml'
           - '!.devcontainer/**'
           - '!.github/CODEOWNERS'
           - '!.github/ISSUE_TEMPLATE/**'
@@ -150,6 +163,8 @@ jobs:
           - '!thirdparty/LICENSES/**'
         test_python_conda:
           - '**'
+          - '!**/*/REVIEW_GUIDELINES.md'
+          - '!.coderabbit.yaml'
           - '!.devcontainer/**'
           - '!.github/CODEOWNERS'
           - '!.github/ISSUE_TEMPLATE/**'
@@ -187,6 +202,8 @@ jobs:
           - '!thirdparty/LICENSES/**'
         test_python_wheels:
           - '**'
+          - '!**/*/REVIEW_GUIDELINES.md'
+          - '!.coderabbit.yaml'
           - '!.devcontainer/**'
           - '!.github/CODEOWNERS'
           - '!.github/ISSUE_TEMPLATE/**'
@@ -229,6 +246,8 @@ jobs:
           - '!thirdparty/LICENSES/**'
         test_rust:
           - '**'
+          - '!**/*/REVIEW_GUIDELINES.md'
+          - '!.coderabbit.yaml'
           - '!.devcontainer/**'
           - '!.github/CODEOWNERS'
           - '!.github/ISSUE_TEMPLATE/**'
@@ -266,6 +285,8 @@ jobs:
           - '!thirdparty/LICENSES/**'
         test_go:
           - '**'
+          - '!**/*/REVIEW_GUIDELINES.md'
+          - '!.coderabbit.yaml'
           - '!.devcontainer/**'
           - '!.github/CODEOWNERS'
           - '!.github/ISSUE_TEMPLATE/**'
@@ -309,6 +330,9 @@ jobs:
     with:
       enable_check_generated_files: false
       ignored_pr_jobs: "telemetry-summarize"
+  check-c-abi:
+    needs: telemetry-setup
+    uses: ./.github/workflows/check-c-abi.yaml
   conda-cpp-build:
     needs: checks
     secrets: inherit
@@ -366,7 +390,7 @@ jobs:
       build_type: pull-request
       arch: "${{matrix.arch}}"
       date: ${{ inputs.date }}_c
-      container_image: "rapidsai/ci-wheel:26.04-cuda${{ matrix.cuda_version }}-rockylinux8-py3.11"
+      container_image: "rapidsai/ci-wheel:26.06-cuda${{ matrix.cuda_version }}-rockylinux8-py3.11"
       node_type: "cpu16"
       requires_license_builder: true
       script: "ci/build_standalone_c.sh --build-tests"
@@ -392,7 +416,7 @@ jobs:
       node_type: "gpu-l4-latest-1"
       arch: "${{matrix.arch}}"
       date: ${{ inputs.date }}_c
-      container_image: "rapidsai/ci-wheel:26.04-cuda${{ matrix.cuda_version }}-rockylinux8-py3.11"
+      container_image: "rapidsai/ci-wheel:26.06-cuda${{ matrix.cuda_version }}-rockylinux8-py3.11"
       script: "ci/test_standalone_c.sh libcuvs_c_${{ matrix.cuda_version }}_${{ matrix.arch }}.tar.gz"
       sha: ${{ inputs.sha }}
   conda-java-build-and-tests:
@@ -412,7 +436,7 @@ jobs:
       build_type: pull-request
       node_type: "gpu-l4-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.04-cuda${{ matrix.cuda_version }}-ubuntu24.04-py3.13"
+      container_image: "rapidsai/ci-conda:26.06-cuda${{ matrix.cuda_version }}-ubuntu24.04-py3.13"
       script: "ci/test_java.sh"
       artifact-name: "cuvs-java-cuda${{ matrix.cuda_version }}"
       file_to_upload: "java/cuvs-java/target/"
@@ -433,7 +457,7 @@ jobs:
       build_type: pull-request
       node_type: "gpu-l4-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.04-cuda${{ matrix.cuda_version }}-ubuntu24.04-py3.13"
+      container_image: "rapidsai/ci-conda:26.06-cuda${{ matrix.cuda_version }}-ubuntu24.04-py3.13"
       script: "ci/build_rust.sh"
   go-build:
     needs: [conda-cpp-build, changed-files]
@@ -452,7 +476,7 @@ jobs:
       build_type: pull-request
       node_type: "gpu-l4-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.04-cuda${{ matrix.cuda_version }}-ubuntu24.04-py3.13"
+      container_image: "rapidsai/ci-conda:26.06-cuda${{ matrix.cuda_version }}-ubuntu24.04-py3.13"
       script: "ci/build_go.sh"
   docs-build:
     needs: conda-python-build
@@ -462,7 +486,7 @@ jobs:
       build_type: pull-request
       node_type: "gpu-l4-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.04-latest"
+      container_image: "rapidsai/ci-conda:26.06-latest"
       script: "ci/build_docs.sh"
   wheel-build-libcuvs:
     needs: checks
