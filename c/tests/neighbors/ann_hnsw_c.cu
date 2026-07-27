@@ -14,6 +14,7 @@
 
 #include <cuda_runtime.h>
 #include <gtest/gtest.h>
+#include <rmm/device_uvector.hpp>
 #include <sys/types.h>
 #include <vector>
 
@@ -34,6 +35,8 @@ TEST(CagraHnswC, BuildSearch)
   // create cuvsResources_t
   cuvsResources_t res;
   cuvsResourcesCreate(&res);
+  cudaStream_t stream;
+  cuvsStreamGet(res, &stream);
 
   // create dataset DLTensor
   DLManagedTensor dataset_tensor;
@@ -54,11 +57,27 @@ TEST(CagraHnswC, BuildSearch)
   // build index
   cuvsCagraIndexParams_t build_params;
   cuvsCagraIndexParamsCreate(&build_params);
-  cuvsDatasetStandardView_t dataset_view;
-  cuvsDatasetMakeHostStandardView(res, &dataset_tensor, &dataset_view);
-  cuvsCagraBuildHostStandard(res, build_params, dataset_view, index);
-  cuvsDatasetStandardViewDestroy(dataset_view);
-  cuvsCagraSerializeToHnswlib(res, "/tmp/cagra_hnswlib.index", index);
+  cuvsDatasetStandardView_t dataset_view = nullptr;
+  ASSERT_EQ(cuvsDatasetMakeHostStandardView(res, &dataset_tensor, &dataset_view), CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraBuildHostStandard(res, build_params, dataset_view, index), CUVS_SUCCESS);
+
+  // Host build yields a graph-only host index. The hnswlib format stores the vectors
+  // alongside the graph, so attach a device padded dataset before serializing.
+  rmm::device_uvector<float> dataset_d(4 * 2, stream);
+  raft::copy(dataset_d.data(), (float*)dataset, 4 * 2, stream);
+  DLManagedTensor device_dataset_tensor            = dataset_tensor;
+  device_dataset_tensor.dl_tensor.data             = dataset_d.data();
+  device_dataset_tensor.dl_tensor.device.device_type = kDLCUDA;
+  device_dataset_tensor.dl_tensor.device.device_id = 0;
+  cuvsDatasetPadded_t padded_dataset_owner         = nullptr;
+  ASSERT_EQ(cuvsDatasetMakeDevicePadded(res, &device_dataset_tensor, &padded_dataset_owner),
+            CUVS_SUCCESS);
+  cuvsDatasetPaddedView_t padded_dataset_view = nullptr;
+  ASSERT_EQ(cuvsDatasetMakeViewFromOwningPadded(padded_dataset_owner, &padded_dataset_view),
+            CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraUpdateDataset(res, padded_dataset_view, index), CUVS_SUCCESS);
+
+  ASSERT_EQ(cuvsCagraSerializeToHnswlib(res, "/tmp/cagra_hnswlib.index", index), CUVS_SUCCESS);
 
   DLManagedTensor queries_tensor;
   queries_tensor.dl_tensor.data               = queries;
@@ -107,20 +126,27 @@ TEST(CagraHnswC, BuildSearch)
   cuvsHnswIndexParamsCreate(&hnsw_params);
   // Use NONE hierarchy since cuvsCagraSerializeToHnswlib creates a base-layer-only index
   hnsw_params->hierarchy = NONE;
-  cuvsHnswDeserialize(res, hnsw_params, "/tmp/cagra_hnswlib.index", 2, L2Expanded, hnsw_index);
+  ASSERT_EQ(
+    cuvsHnswDeserialize(res, hnsw_params, "/tmp/cagra_hnswlib.index", 2, L2Expanded, hnsw_index),
+    CUVS_SUCCESS);
 
   // search index
   cuvsHnswSearchParams_t search_params;
   cuvsHnswSearchParamsCreate(&search_params);
-  cuvsHnswSearch(
-    res, search_params, hnsw_index, &queries_tensor, &neighbors_tensor, &distances_tensor);
+  ASSERT_EQ(cuvsHnswSearch(
+              res, search_params, hnsw_index, &queries_tensor, &neighbors_tensor, &distances_tensor),
+            CUVS_SUCCESS);
 
   // verify output
   ASSERT_TRUE(cuvs::hostVecMatch(neighbors_exp, neighbors, cuvs::Compare<uint64_t>()));
   ASSERT_TRUE(cuvs::hostVecMatch(distances_exp, distances, cuvs::CompareApprox<float>(0.001f)));
 
+  cuvsDatasetStandardViewDestroy(dataset_view);
+  cuvsDatasetPaddedViewDestroy(padded_dataset_view);
+  cuvsDatasetPaddedDestroy(padded_dataset_owner);
   cuvsCagraIndexParamsDestroy(build_params);
   cuvsCagraIndexDestroy(index);
+  cuvsHnswIndexParamsDestroy(hnsw_params);
   cuvsHnswSearchParamsDestroy(search_params);
   cuvsHnswIndexDestroy(hnsw_index);
   cuvsResourcesDestroy(res);
