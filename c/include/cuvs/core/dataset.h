@@ -61,8 +61,6 @@ typedef struct {
 } cuvsDatasetView;
 typedef cuvsDatasetView* cuvsDatasetView_t;
 
-typedef struct cuvsCagraIndex* cuvsCagraIndex_t;
-
 /**
  * @brief Create an empty owning dataset handle.
  *
