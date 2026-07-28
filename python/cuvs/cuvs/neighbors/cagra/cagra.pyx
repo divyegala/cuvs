@@ -413,7 +413,7 @@ cdef class PaddedDataset:
 
     def __dealloc__(self):
         if self.dataset != NULL:
-            check_cuvs(cuvsDatasetPaddedDestroy(self.dataset))
+            check_cuvs(cuvsDatasetDestroy(self.dataset))
 
 
 cdef class StandardDataset:
@@ -422,7 +422,7 @@ cdef class StandardDataset:
 
     def __dealloc__(self):
         if self.dataset != NULL:
-            check_cuvs(cuvsDatasetStandardDestroy(self.dataset))
+            check_cuvs(cuvsDatasetDestroy(self.dataset))
 
 
 cdef class PaddedDatasetView:
@@ -431,7 +431,7 @@ cdef class PaddedDatasetView:
 
     def __dealloc__(self):
         if self.view != NULL:
-            check_cuvs(cuvsDatasetPaddedViewDestroy(self.view))
+            check_cuvs(cuvsDatasetViewDestroy(self.view))
 
 
 cdef class StandardDatasetView:
@@ -440,7 +440,7 @@ cdef class StandardDatasetView:
 
     def __dealloc__(self):
         if self.view != NULL:
-            check_cuvs(cuvsDatasetStandardViewDestroy(self.view))
+            check_cuvs(cuvsDatasetViewDestroy(self.view))
 
 
 @auto_sync_resources
@@ -529,34 +529,37 @@ def build(IndexParams index_params, dataset, resources=None):
     cdef cydlpack.DLManagedTensor* dataset_dlpack = \
         cydlpack.dlpack_c(dataset_ai)
     cdef cuvsCagraIndexParams* params = index_params.params
-    cdef cuvsDatasetPaddedView_t padded_view = NULL
-    cdef cuvsDatasetStandardView_t standard_view = NULL
-    cdef cuvsDatasetViewKind_t view_kind
 
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
 
+    cdef cuvsDatasetMemType_t mem_type
+    cdef cuvsDatasetLayout_t layout
+    cdef cuvsDatasetView_t dataset_view = NULL
+
     with cuda_interruptible():
         try:
-            check_cuvs(cuvsCagraGetDatasetViewKind(dataset_dlpack, &view_kind))
-            if view_kind == CUVS_DATASET_VIEW_KIND_DEVICE_PADDED:
-                check_cuvs(cuvsDatasetMakeDevicePaddedView(res, dataset_dlpack, &padded_view))
-                check_cuvs(cuvsCagraBuildDevicePadded(res, params, padded_view, idx.index))
-            elif view_kind == CUVS_DATASET_VIEW_KIND_DEVICE_STANDARD:
-                check_cuvs(cuvsDatasetMakeDeviceStandardView(res, dataset_dlpack, &standard_view))
-                check_cuvs(cuvsCagraBuildDeviceStandard(res, params, standard_view, idx.index))
-            elif view_kind == CUVS_DATASET_VIEW_KIND_HOST_PADDED:
-                check_cuvs(cuvsDatasetMakeHostPaddedView(res, dataset_dlpack, &padded_view))
-                check_cuvs(cuvsCagraBuildHostPadded(res, params, padded_view, idx.index))
+            check_cuvs(cuvsCagraGetDatasetMemTypeAndLayout(
+                dataset_dlpack, &mem_type, &layout))
+            if mem_type == CUVS_DATASET_MEM_TYPE_DEVICE:
+                if layout == CUVS_DATASET_LAYOUT_PADDED:
+                    check_cuvs(cuvsDatasetDevicePaddedViewMake(
+                        res, dataset_dlpack, &dataset_view))
+                else:
+                    check_cuvs(cuvsDatasetDeviceStandardViewMake(
+                        res, dataset_dlpack, &dataset_view))
             else:
-                check_cuvs(cuvsDatasetMakeHostStandardView(res, dataset_dlpack, &standard_view))
-                check_cuvs(cuvsCagraBuildHostStandard(res, params, standard_view, idx.index))
+                if layout == CUVS_DATASET_LAYOUT_PADDED:
+                    check_cuvs(cuvsDatasetHostPaddedViewMake(
+                        res, dataset_dlpack, &dataset_view))
+                else:
+                    check_cuvs(cuvsDatasetHostStandardViewMake(
+                        res, dataset_dlpack, &dataset_view))
+            check_cuvs(cuvsCagraBuild(res, params, dataset_view, idx.index))
             idx.trained = True
             idx.active_index_type = dataset_ai.dtype.name
         finally:
-            if padded_view != NULL:
-                cuvsDatasetPaddedViewDestroy(padded_view)
-            if standard_view != NULL:
-                cuvsDatasetStandardViewDestroy(standard_view)
+            if dataset_view != NULL:
+                cuvsDatasetViewDestroy(dataset_view)
 
     return idx
 
@@ -573,19 +576,17 @@ def get_dataset_view_kind(dataset):
                                     np.dtype('ubyte')])
     cdef cydlpack.DLManagedTensor* dataset_dlpack = \
         cydlpack.dlpack_c(dataset_ai)
-    cdef cuvsDatasetViewKind_t view_kind
+    cdef cuvsDatasetMemType_t mem_type
+    cdef cuvsDatasetLayout_t layout
     with cuda_interruptible():
-        check_cuvs(cuvsCagraGetDatasetViewKind(dataset_dlpack, &view_kind))
+        check_cuvs(cuvsCagraGetDatasetMemTypeAndLayout(
+            dataset_dlpack, &mem_type, &layout))
 
-    if view_kind == CUVS_DATASET_VIEW_KIND_DEVICE_PADDED:
-        return "device_padded"
-    elif view_kind == CUVS_DATASET_VIEW_KIND_DEVICE_STANDARD:
-        return "device_standard"
-    elif view_kind == CUVS_DATASET_VIEW_KIND_HOST_PADDED:
-        return "host_padded"
-    elif view_kind == CUVS_DATASET_VIEW_KIND_HOST_STANDARD:
-        return "host_standard"
-    raise RuntimeError("unexpected dataset view kind")
+    mem_name = ("device" if mem_type == CUVS_DATASET_MEM_TYPE_DEVICE
+                else "host")
+    layout_name = ("padded" if layout == CUVS_DATASET_LAYOUT_PADDED
+                   else "standard")
+    return f"{mem_name}_{layout_name}"
 
 
 @auto_sync_resources
@@ -606,7 +607,7 @@ def make_device_padded_dataset(dataset, resources=None):
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef PaddedDataset padded = PaddedDataset()
     with cuda_interruptible():
-        check_cuvs(cuvsDatasetMakeDevicePadded(
+        check_cuvs(cuvsDatasetDevicePaddedMake(
             res,
             dataset_dlpack,
             &padded.dataset
@@ -632,7 +633,7 @@ def make_device_padded_dataset_view(dataset, resources=None):
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef PaddedDatasetView padded_view = PaddedDatasetView()
     with cuda_interruptible():
-        check_cuvs(cuvsDatasetMakeDevicePaddedView(
+        check_cuvs(cuvsDatasetDevicePaddedViewMake(
             res,
             dataset_dlpack,
             &padded_view.view
@@ -647,7 +648,7 @@ def make_view_from_owning_padded(PaddedDataset padded_dataset):
     if padded_dataset is None or padded_dataset.dataset == NULL:
         raise ValueError("padded_dataset is uninitialized")
     cdef PaddedDatasetView padded_view = PaddedDatasetView()
-    check_cuvs(cuvsDatasetMakeViewFromOwningPadded(
+    check_cuvs(cuvsDatasetViewFromOwningPaddedMake(
         padded_dataset.dataset,
         &padded_view.view
     ))
@@ -672,7 +673,7 @@ def make_device_standard_dataset_view(dataset, resources=None):
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef StandardDatasetView standard_view = StandardDatasetView()
     with cuda_interruptible():
-        check_cuvs(cuvsDatasetMakeDeviceStandardView(
+        check_cuvs(cuvsDatasetDeviceStandardViewMake(
             res,
             dataset_dlpack,
             &standard_view.view
@@ -1087,10 +1088,10 @@ def load(index, filename, out_dataset=None, resources=None):
     cdef Index idx = index
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef string c_filename = filename.encode('utf-8')
-    cdef cuvsDatasetPadded_t out_padded_dataset = NULL
-    cdef cuvsDatasetStandard_t out_standard_dataset = NULL
-    cdef cuvsDatasetPadded_t* out_padded_ptr
-    cdef cuvsDatasetStandard_t* out_standard_ptr
+    cdef cuvsDataset_t out_padded_dataset = NULL
+    cdef cuvsDataset_t out_standard_dataset = NULL
+    cdef cuvsDataset_t* out_padded_ptr
+    cdef cuvsDataset_t* out_standard_ptr
 
     if isinstance(out_dataset, PaddedDataset):
         out_padded_ptr = &out_padded_dataset
@@ -1221,14 +1222,14 @@ def extend(ExtendParams params, Index index, additional_dataset, extended_datase
             "Create it explicitly via make_device_padded_dataset_view() or "
             "make_device_padded_dataset() + make_view_from_owning_padded()."
         )
-    cdef cuvsDatasetPaddedView_t padded_view = (<PaddedDatasetView>additional_dataset).view
+    cdef cuvsDatasetView_t padded_view = (<PaddedDatasetView>additional_dataset).view
     if padded_view == NULL:
         raise ValueError("additional_dataset padded view is uninitialized")
     if not isinstance(extended_dataset, PaddedDatasetView):
         raise TypeError(
             "extended_dataset must be a device PaddedDatasetView."
         )
-    cdef cuvsDatasetPaddedView_t out_extended_dataset = (<PaddedDatasetView>extended_dataset).view
+    cdef cuvsDatasetView_t out_extended_dataset = (<PaddedDatasetView>extended_dataset).view
     if out_extended_dataset == NULL:
         raise ValueError("extended_dataset padded view is uninitialized")
 

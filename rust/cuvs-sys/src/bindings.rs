@@ -282,114 +282,59 @@ pub enum cuvsDatasetLayout_t {
 }
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub enum cuvsDatasetViewKind_t {
-    CUVS_DATASET_VIEW_KIND_DEVICE_PADDED = 0,
-    CUVS_DATASET_VIEW_KIND_HOST_PADDED = 1,
-    CUVS_DATASET_VIEW_KIND_DEVICE_STANDARD = 2,
-    CUVS_DATASET_VIEW_KIND_HOST_STANDARD = 3,
+pub enum cuvsDatasetMemType_t {
+    CUVS_DATASET_MEM_TYPE_HOST = 0,
+    CUVS_DATASET_MEM_TYPE_DEVICE = 1,
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct cuvsDatasetPadded {
+pub struct cuvsDataset {
     pub addr: usize,
     pub destroy_addr:
         ::std::option::Option<unsafe extern "C" fn(arg1: *mut ::std::os::raw::c_void)>,
     pub dtype: DLDataType,
+    pub mem_type: cuvsDatasetMemType_t,
     pub layout: cuvsDatasetLayout_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of cuvsDatasetPadded"][::std::mem::size_of::<cuvsDatasetPadded>() - 24usize];
-    ["Alignment of cuvsDatasetPadded"][::std::mem::align_of::<cuvsDatasetPadded>() - 8usize];
-    ["Offset of field: cuvsDatasetPadded::addr"]
-        [::std::mem::offset_of!(cuvsDatasetPadded, addr) - 0usize];
-    ["Offset of field: cuvsDatasetPadded::destroy_addr"]
-        [::std::mem::offset_of!(cuvsDatasetPadded, destroy_addr) - 8usize];
-    ["Offset of field: cuvsDatasetPadded::dtype"]
-        [::std::mem::offset_of!(cuvsDatasetPadded, dtype) - 16usize];
-    ["Offset of field: cuvsDatasetPadded::layout"]
-        [::std::mem::offset_of!(cuvsDatasetPadded, layout) - 20usize];
+    ["Size of cuvsDataset"][::std::mem::size_of::<cuvsDataset>() - 32usize];
+    ["Alignment of cuvsDataset"][::std::mem::align_of::<cuvsDataset>() - 8usize];
+    ["Offset of field: cuvsDataset::addr"][::std::mem::offset_of!(cuvsDataset, addr) - 0usize];
+    ["Offset of field: cuvsDataset::destroy_addr"]
+        [::std::mem::offset_of!(cuvsDataset, destroy_addr) - 8usize];
+    ["Offset of field: cuvsDataset::dtype"][::std::mem::offset_of!(cuvsDataset, dtype) - 16usize];
+    ["Offset of field: cuvsDataset::mem_type"]
+        [::std::mem::offset_of!(cuvsDataset, mem_type) - 20usize];
+    ["Offset of field: cuvsDataset::layout"][::std::mem::offset_of!(cuvsDataset, layout) - 24usize];
 };
-pub type cuvsDatasetPadded_t = *mut cuvsDatasetPadded;
+pub type cuvsDataset_t = *mut cuvsDataset;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct cuvsDatasetStandard {
+pub struct cuvsDatasetView {
     pub addr: usize,
     pub destroy_addr:
         ::std::option::Option<unsafe extern "C" fn(arg1: *mut ::std::os::raw::c_void)>,
     pub dtype: DLDataType,
+    pub mem_type: cuvsDatasetMemType_t,
     pub layout: cuvsDatasetLayout_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of cuvsDatasetStandard"][::std::mem::size_of::<cuvsDatasetStandard>() - 24usize];
-    ["Alignment of cuvsDatasetStandard"][::std::mem::align_of::<cuvsDatasetStandard>() - 8usize];
-    ["Offset of field: cuvsDatasetStandard::addr"]
-        [::std::mem::offset_of!(cuvsDatasetStandard, addr) - 0usize];
-    ["Offset of field: cuvsDatasetStandard::destroy_addr"]
-        [::std::mem::offset_of!(cuvsDatasetStandard, destroy_addr) - 8usize];
-    ["Offset of field: cuvsDatasetStandard::dtype"]
-        [::std::mem::offset_of!(cuvsDatasetStandard, dtype) - 16usize];
-    ["Offset of field: cuvsDatasetStandard::layout"]
-        [::std::mem::offset_of!(cuvsDatasetStandard, layout) - 20usize];
+    ["Size of cuvsDatasetView"][::std::mem::size_of::<cuvsDatasetView>() - 32usize];
+    ["Alignment of cuvsDatasetView"][::std::mem::align_of::<cuvsDatasetView>() - 8usize];
+    ["Offset of field: cuvsDatasetView::addr"]
+        [::std::mem::offset_of!(cuvsDatasetView, addr) - 0usize];
+    ["Offset of field: cuvsDatasetView::destroy_addr"]
+        [::std::mem::offset_of!(cuvsDatasetView, destroy_addr) - 8usize];
+    ["Offset of field: cuvsDatasetView::dtype"]
+        [::std::mem::offset_of!(cuvsDatasetView, dtype) - 16usize];
+    ["Offset of field: cuvsDatasetView::mem_type"]
+        [::std::mem::offset_of!(cuvsDatasetView, mem_type) - 20usize];
+    ["Offset of field: cuvsDatasetView::layout"]
+        [::std::mem::offset_of!(cuvsDatasetView, layout) - 24usize];
 };
-pub type cuvsDatasetStandard_t = *mut cuvsDatasetStandard;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct cuvsDatasetPaddedView {
-    pub addr: usize,
-    pub destroy_addr:
-        ::std::option::Option<unsafe extern "C" fn(arg1: *mut ::std::os::raw::c_void)>,
-    pub kind: cuvsDatasetViewKind_t,
-    pub dtype: DLDataType,
-    pub layout: cuvsDatasetLayout_t,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of cuvsDatasetPaddedView"][::std::mem::size_of::<cuvsDatasetPaddedView>() - 32usize];
-    ["Alignment of cuvsDatasetPaddedView"]
-        [::std::mem::align_of::<cuvsDatasetPaddedView>() - 8usize];
-    ["Offset of field: cuvsDatasetPaddedView::addr"]
-        [::std::mem::offset_of!(cuvsDatasetPaddedView, addr) - 0usize];
-    ["Offset of field: cuvsDatasetPaddedView::destroy_addr"]
-        [::std::mem::offset_of!(cuvsDatasetPaddedView, destroy_addr) - 8usize];
-    ["Offset of field: cuvsDatasetPaddedView::kind"]
-        [::std::mem::offset_of!(cuvsDatasetPaddedView, kind) - 16usize];
-    ["Offset of field: cuvsDatasetPaddedView::dtype"]
-        [::std::mem::offset_of!(cuvsDatasetPaddedView, dtype) - 20usize];
-    ["Offset of field: cuvsDatasetPaddedView::layout"]
-        [::std::mem::offset_of!(cuvsDatasetPaddedView, layout) - 24usize];
-};
-pub type cuvsDatasetPaddedView_t = *mut cuvsDatasetPaddedView;
-pub type cuvsDatasetView = cuvsDatasetPaddedView;
 pub type cuvsDatasetView_t = *mut cuvsDatasetView;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct cuvsDatasetStandardView {
-    pub addr: usize,
-    pub destroy_addr:
-        ::std::option::Option<unsafe extern "C" fn(arg1: *mut ::std::os::raw::c_void)>,
-    pub kind: cuvsDatasetViewKind_t,
-    pub dtype: DLDataType,
-    pub layout: cuvsDatasetLayout_t,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of cuvsDatasetStandardView"][::std::mem::size_of::<cuvsDatasetStandardView>() - 32usize];
-    ["Alignment of cuvsDatasetStandardView"]
-        [::std::mem::align_of::<cuvsDatasetStandardView>() - 8usize];
-    ["Offset of field: cuvsDatasetStandardView::addr"]
-        [::std::mem::offset_of!(cuvsDatasetStandardView, addr) - 0usize];
-    ["Offset of field: cuvsDatasetStandardView::destroy_addr"]
-        [::std::mem::offset_of!(cuvsDatasetStandardView, destroy_addr) - 8usize];
-    ["Offset of field: cuvsDatasetStandardView::kind"]
-        [::std::mem::offset_of!(cuvsDatasetStandardView, kind) - 16usize];
-    ["Offset of field: cuvsDatasetStandardView::dtype"]
-        [::std::mem::offset_of!(cuvsDatasetStandardView, dtype) - 20usize];
-    ["Offset of field: cuvsDatasetStandardView::layout"]
-        [::std::mem::offset_of!(cuvsDatasetStandardView, layout) - 24usize];
-};
-pub type cuvsDatasetStandardView_t = *mut cuvsDatasetStandardView;
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub enum cuvsDatasetStorageKind_t {
@@ -418,80 +363,70 @@ pub type cuvsDatasetStorage_t = *mut cuvsDatasetStorage;
 pub type cuvsCagraIndex_t = *mut cuvsCagraIndex;
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetMakeDevicePadded(
+    pub fn cuvsDatasetDevicePaddedMake(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
-        padded_dataset: *mut cuvsDatasetPadded_t,
+        padded_dataset: *mut cuvsDataset_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetMakeHostPadded(
+    pub fn cuvsDatasetHostPaddedMake(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
-        padded_dataset: *mut cuvsDatasetPadded_t,
+        padded_dataset: *mut cuvsDataset_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetMakeDevicePaddedView(
+    pub fn cuvsDatasetDevicePaddedViewMake(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
-        padded_dataset: *mut cuvsDatasetPaddedView_t,
+        padded_dataset: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetMakeViewFromOwningPadded(
-        padded_dataset: cuvsDatasetPadded_t,
-        padded_view: *mut cuvsDatasetPaddedView_t,
+    pub fn cuvsDatasetViewFromOwningPaddedMake(
+        padded_dataset: cuvsDataset_t,
+        padded_view: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetMakeHostPaddedView(
+    pub fn cuvsDatasetHostPaddedViewMake(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
-        padded_dataset: *mut cuvsDatasetPaddedView_t,
+        padded_dataset: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetPaddedDestroy(padded_dataset: cuvsDatasetPadded_t) -> cuvsError_t;
+    pub fn cuvsDatasetDestroy(dataset: cuvsDataset_t) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetStandardDestroy(standard_dataset: cuvsDatasetStandard_t) -> cuvsError_t;
+    pub fn cuvsDatasetViewDestroy(dataset_view: cuvsDatasetView_t) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetPaddedViewDestroy(padded_dataset: cuvsDatasetPaddedView_t) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsDatasetMakeDeviceStandardView(
+    pub fn cuvsDatasetDeviceStandardViewMake(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
-        standard_dataset: *mut cuvsDatasetStandardView_t,
+        standard_dataset: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetMakeHostStandardView(
+    pub fn cuvsDatasetHostStandardViewMake(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
-        standard_dataset: *mut cuvsDatasetStandardView_t,
+        standard_dataset: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetStandardViewDestroy(
-        standard_dataset: cuvsDatasetStandardView_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsMakeMergedStorage(
+    pub fn cuvsMergedStorageMake(
         res: cuvsResources_t,
         indices: *mut cuvsCagraIndex_t,
         num_indices: usize,
@@ -1479,44 +1414,18 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsCagraGetDatasetViewKind(
+    pub fn cuvsCagraGetDatasetMemTypeAndLayout(
         dataset: *mut DLManagedTensor,
-        kind: *mut cuvsDatasetViewKind_t,
+        mem_type: *mut cuvsDatasetMemType_t,
+        layout: *mut cuvsDatasetLayout_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsCagraBuildDevicePadded(
+    pub fn cuvsCagraBuild(
         res: cuvsResources_t,
         params: cuvsCagraIndexParams_t,
-        dataset_view: cuvsDatasetPaddedView_t,
-        index: cuvsCagraIndex_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsCagraBuildDeviceStandard(
-        res: cuvsResources_t,
-        params: cuvsCagraIndexParams_t,
-        dataset_view: cuvsDatasetStandardView_t,
-        index: cuvsCagraIndex_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsCagraBuildHostPadded(
-        res: cuvsResources_t,
-        params: cuvsCagraIndexParams_t,
-        dataset_view: cuvsDatasetPaddedView_t,
-        index: cuvsCagraIndex_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsCagraBuildHostStandard(
-        res: cuvsResources_t,
-        params: cuvsCagraIndexParams_t,
-        dataset_view: cuvsDatasetStandardView_t,
+        dataset: cuvsDatasetView_t,
         index: cuvsCagraIndex_t,
     ) -> cuvsError_t;
 }
@@ -1525,8 +1434,8 @@ unsafe extern "C" {
     pub fn cuvsCagraExtend(
         res: cuvsResources_t,
         params: cuvsCagraExtendParams_t,
-        additional_dataset: cuvsDatasetPaddedView_t,
-        extended_dataset: cuvsDatasetPaddedView_t,
+        additional_dataset: cuvsDatasetView_t,
+        extended_dataset: cuvsDatasetView_t,
         index: cuvsCagraIndex_t,
     ) -> cuvsError_t;
 }
@@ -1565,7 +1474,7 @@ unsafe extern "C" {
         res: cuvsResources_t,
         filename: *const ::std::os::raw::c_char,
         index: cuvsCagraIndex_t,
-        out_padded_dataset: *mut cuvsDatasetPadded_t,
+        out_padded_dataset: *mut cuvsDataset_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
@@ -1574,7 +1483,7 @@ unsafe extern "C" {
         res: cuvsResources_t,
         filename: *const ::std::os::raw::c_char,
         index: cuvsCagraIndex_t,
-        out_standard_dataset: *mut cuvsDatasetStandard_t,
+        out_standard_dataset: *mut cuvsDataset_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
