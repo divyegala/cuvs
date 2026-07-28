@@ -58,7 +58,12 @@ TEST(CagraHnswC, BuildSearch)
   cuvsCagraIndexParams_t build_params;
   cuvsCagraIndexParamsCreate(&build_params);
   cuvsDatasetView_t dataset_view;
-  ASSERT_EQ(cuvsDatasetMakeHostStandardView(res, &dataset_tensor, &dataset_view), CUVS_SUCCESS);
+  ASSERT_EQ(cuvsDatasetMakeView(res,
+                                &dataset_tensor,
+                                CUVS_DATASET_LAYOUT_STANDARD,
+                                CUVS_DATASET_MEM_TYPE_HOST,
+                                &dataset_view),
+            CUVS_SUCCESS);
   ASSERT_EQ(cuvsCagraBuild(res, build_params, dataset_view, index), CUVS_SUCCESS);
   ASSERT_EQ(cuvsDatasetViewDestroy(dataset_view), CUVS_SUCCESS);
 
@@ -71,7 +76,11 @@ TEST(CagraHnswC, BuildSearch)
   device_dataset_tensor.dl_tensor.device.device_type = kDLCUDA;
   device_dataset_tensor.dl_tensor.device.device_id   = 0;
   cuvsDataset_t padded_dataset_owner                 = nullptr;
-  ASSERT_EQ(cuvsDatasetMakeDevicePadded(res, &device_dataset_tensor, &padded_dataset_owner),
+  ASSERT_EQ(cuvsDatasetMake(res,
+                            &device_dataset_tensor,
+                            CUVS_DATASET_LAYOUT_PADDED,
+                            CUVS_DATASET_MEM_TYPE_DEVICE,
+                            &padded_dataset_owner),
             CUVS_SUCCESS);
   cuvsDatasetView_t padded_dataset_view = nullptr;
   ASSERT_EQ(cuvsDatasetMakeViewFromOwningPadded(padded_dataset_owner, &padded_dataset_view),

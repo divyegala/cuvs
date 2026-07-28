@@ -69,23 +69,26 @@ typedef cuvsDatasetView* cuvsDatasetView_t;
  */
 CUVS_EXPORT cuvsError_t cuvsDatasetCreate(cuvsDataset_t* dataset);
 
-CUVS_EXPORT cuvsError_t cuvsDatasetMakeDevicePadded(cuvsResources_t res,
-                                                    DLManagedTensor* dataset,
-                                                    cuvsDataset_t* padded_dataset);
-
-CUVS_EXPORT cuvsError_t cuvsDatasetMakeHostPadded(cuvsResources_t res,
-                                                  DLManagedTensor* dataset,
-                                                  cuvsDataset_t* padded_dataset);
-
-CUVS_EXPORT cuvsError_t cuvsDatasetMakeDevicePaddedView(cuvsResources_t res,
-                                                        DLManagedTensor* dataset,
-                                                        cuvsDatasetView_t* padded_dataset);
+/**
+ * @brief Create an owning dataset from an existing tensor.
+ *
+ * @param[in] res cuVS resources
+ * @param[in] tensor source tensor
+ * @param[in] layout requested dataset layout
+ * @param[in] mem_type requested dataset memory type
+ * @param[out] dataset newly allocated owning dataset handle
+ */
+CUVS_EXPORT cuvsError_t cuvsDatasetMake(cuvsResources_t res,
+                                        DLManagedTensor* tensor,
+                                        cuvsDatasetLayout_t layout,
+                                        cuvsDatasetMemType_t mem_type,
+                                        cuvsDataset_t* dataset);
 
 /**
  * @brief Create a non-owning device padded view handle from an owning device padded dataset.
  *
  * This is useful when APIs require a padded view handle (e.g. attach-for-search), while callers
- * keep ownership in a padded dataset handle created by `cuvsDatasetMakeDevicePadded`.
+ * keep ownership in a padded dataset handle created by `cuvsDatasetMake`.
  *
  * @param[in] padded_dataset owning device padded dataset handle
  * @param[out] padded_view output padded view handle
@@ -93,22 +96,28 @@ CUVS_EXPORT cuvsError_t cuvsDatasetMakeDevicePaddedView(cuvsResources_t res,
 CUVS_EXPORT cuvsError_t cuvsDatasetMakeViewFromOwningPadded(
   cuvsDataset_t padded_dataset, cuvsDatasetView_t* padded_view);
 
-CUVS_EXPORT cuvsError_t cuvsDatasetMakeHostPaddedView(cuvsResources_t res,
-                                                      DLManagedTensor* dataset,
-                                                      cuvsDatasetView_t* padded_dataset);
+/**
+ * @brief Create a non-owning dataset view from an existing tensor.
+ *
+ * @param[in] res cuVS resources
+ * @param[in] tensor source tensor
+ * @param[in] layout requested dataset layout
+ * @param[in] mem_type requested dataset memory type
+ * @param[out] view newly allocated dataset view handle
+ */
+CUVS_EXPORT cuvsError_t cuvsDatasetMakeView(cuvsResources_t res,
+                                            DLManagedTensor* tensor,
+                                            cuvsDatasetLayout_t layout,
+                                            cuvsDatasetMemType_t mem_type,
+                                            cuvsDatasetView_t* view);
 
-CUVS_EXPORT cuvsError_t cuvsDatasetMakeDeviceStandardView(cuvsResources_t res,
-                                                          DLManagedTensor* dataset,
-                                                          cuvsDatasetView_t* standard_dataset);
-
-CUVS_EXPORT cuvsError_t cuvsDatasetMakeHostStandardView(cuvsResources_t res,
-                                                        DLManagedTensor* dataset,
-                                                        cuvsDatasetView_t* standard_dataset);
-
-/** @brief Destroy an owning dataset handle created by a `cuvsDatasetMake*` function. */
+/** @brief Destroy an owning dataset handle created by `cuvsDatasetMake`. */
 CUVS_EXPORT cuvsError_t cuvsDatasetDestroy(cuvsDataset_t dataset);
 
-/** @brief Destroy a non-owning dataset view handle created by a `cuvsDatasetMake*View` function. */
+/**
+ * @brief Destroy a non-owning dataset view handle created by `cuvsDatasetMakeView` or
+ * `cuvsDatasetMakeViewFromOwningPadded`.
+ */
 CUVS_EXPORT cuvsError_t cuvsDatasetViewDestroy(cuvsDatasetView_t dataset_view);
 
 #ifdef __cplusplus

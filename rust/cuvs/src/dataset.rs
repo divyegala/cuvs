@@ -79,23 +79,18 @@ impl<'a> DatasetView<'a> {
                 mem_type.as_mut_ptr(),
                 layout.as_mut_ptr(),
             ))?;
-            let kind = DatasetKind::from_ffi(mem_type.assume_init(), layout.assume_init());
+            let mem_type = mem_type.assume_init();
+            let layout = layout.assume_init();
+            let kind = DatasetKind::from_ffi(mem_type, layout);
 
-            let handle = init_handle(|out| match kind {
-                DatasetKind::DevicePadded => {
-                    ffi::cuvsDatasetMakeDevicePaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
-                }
-                DatasetKind::DeviceStandard => ffi::cuvsDatasetMakeDeviceStandardView(
+            let handle = init_handle(|out| {
+                ffi::cuvsDatasetMakeView(
                     res.handle(),
                     dataset_c.as_mut_ptr(),
+                    layout,
+                    mem_type,
                     out,
-                ),
-                DatasetKind::HostPadded => {
-                    ffi::cuvsDatasetMakeHostPaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
-                }
-                DatasetKind::HostStandard => {
-                    ffi::cuvsDatasetMakeHostStandardView(res.handle(), dataset_c.as_mut_ptr(), out)
-                }
+                )
             })?;
             Ok(Self { handle, kind, _dataset: PhantomData })
         }
@@ -145,7 +140,13 @@ impl DevicePaddedDataset {
         }
         unsafe {
             let handle = init_handle(|out| {
-                ffi::cuvsDatasetMakeDevicePadded(res.handle(), dataset_c.as_mut_ptr(), out)
+                ffi::cuvsDatasetMake(
+                    res.handle(),
+                    dataset_c.as_mut_ptr(),
+                    ffi::cuvsDatasetLayout_t::CUVS_DATASET_LAYOUT_PADDED,
+                    ffi::cuvsDatasetMemType_t::CUVS_DATASET_MEM_TYPE_DEVICE,
+                    out,
+                )
             })?;
             Ok(Self { handle })
         }

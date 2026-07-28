@@ -29,7 +29,11 @@ cuvsCagraIndexParamsCreate(&index_params);
 cuvsCagraIndexCreate(&index);
 
 cuvsDatasetView_t dataset_view;
-cuvsDatasetMakeDeviceStandardView(res, dataset, &dataset_view);
+cuvsDatasetMakeView(res,
+                    dataset,
+                    CUVS_DATASET_LAYOUT_STANDARD,
+                    CUVS_DATASET_MEM_TYPE_DEVICE,
+                    &dataset_view);
 
 cuvsCagraBuild(res, index_params, dataset_view, index);
 
@@ -560,7 +564,11 @@ hnsw_search_params->ef = 200;
 hnsw_search_params->num_threads = 0;
 
 cuvsDatasetView_t dataset_view;
-cuvsDatasetMakeDeviceStandardView(res, dataset, &dataset_view);
+cuvsDatasetMakeView(res,
+                    dataset,
+                    CUVS_DATASET_LAYOUT_STANDARD,
+                    CUVS_DATASET_MEM_TYPE_DEVICE,
+                    &dataset_view);
 
 cuvsCagraBuild(res, cagra_params, dataset_view, cagra_index);
 cuvsHnswFromCagra(res, hnsw_params, cagra_index, hnsw_index);
@@ -755,7 +763,11 @@ load_queries(queries);
 allocate_outputs(neighbors, distances);
 
 cuvsDatasetView_t dataset_view;
-cuvsDatasetMakeDeviceStandardView(res, dataset, &dataset_view);
+cuvsDatasetMakeView(res,
+                    dataset,
+                    CUVS_DATASET_LAYOUT_STANDARD,
+                    CUVS_DATASET_MEM_TYPE_DEVICE,
+                    &dataset_view);
 
 cuvsCagraBuild(res, index_params, dataset_view, index);
 

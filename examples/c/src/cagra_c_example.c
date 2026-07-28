@@ -54,7 +54,11 @@ void cagra_build_search_simple()
   CHECK_CUVS(cuvsCagraIndexCreate(&index));
 
   cuvsDatasetView_t host_dataset_view = NULL;
-  CHECK_CUVS(cuvsDatasetMakeHostStandardView(res, &dataset_tensor, &host_dataset_view));
+  CHECK_CUVS(cuvsDatasetMakeView(res,
+                                 &dataset_tensor,
+                                 CUVS_DATASET_LAYOUT_STANDARD,
+                                 CUVS_DATASET_MEM_TYPE_HOST,
+                                 &host_dataset_view));
   CHECK_CUVS(cuvsCagraBuild(res, index_params, host_dataset_view, index));
 
   // Allocate memory for `queries`, `neighbors` and `distances` output
@@ -109,7 +113,11 @@ void cagra_build_search_simple()
   device_dataset_tensor.dl_tensor.device.device_type = kDLCUDA;
   device_dataset_tensor.dl_tensor.device.device_id   = 0;
   cuvsDataset_t padded_owner                         = NULL;
-  CHECK_CUVS(cuvsDatasetMakeDevicePadded(res, &device_dataset_tensor, &padded_owner));
+  CHECK_CUVS(cuvsDatasetMake(res,
+                             &device_dataset_tensor,
+                             CUVS_DATASET_LAYOUT_PADDED,
+                             CUVS_DATASET_MEM_TYPE_DEVICE,
+                             &padded_owner));
   cuvsDatasetView_t padded_view = NULL;
   CHECK_CUVS(cuvsDatasetMakeViewFromOwningPadded(padded_owner, &padded_view));
   CHECK_CUVS(cuvsCagraUpdateDataset(res, padded_view, index));
