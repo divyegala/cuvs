@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
-"""cuTile fused GEMM + 1-NN kernels (InnerProduct, L2Expanded, CosineExpanded)."""
+"""cuTile fused GEMM + 1-NN kernel with runtime metric selection."""
 
 from __future__ import annotations
 
@@ -13,8 +13,11 @@ DEFAULT_TILE_M = 128
 DEFAULT_TILE_N = 128
 DEFAULT_TILE_K = 64
 
-METRICS = ("inner_product", "l2_expanded", "cosine_expanded")
+METRICS = ("runtime",)
 INDEX_TYPES = ("int32", "int64")
+METRIC_L2_EXPANDED = 0
+METRIC_COSINE_EXPANDED = 2
+METRIC_INNER_PRODUCT = 6
 
 
 def _idx_dtype(index_type: str):
@@ -35,7 +38,7 @@ def make_kernel(
     index_type: str = "int32",
     gpu_code: str = "sm_80",
 ):
-    """Build a cuTile kernel with metric, index width, and tile sizes baked in at compile time."""
+    """Build a cuTile kernel with index width and tile sizes baked in."""
     if data_type not in ("half", "float"):
         raise ValueError(f"Unsupported data_type {data_type!r}")
     if metric not in METRICS:
@@ -46,9 +49,6 @@ def make_kernel(
     acc_dtype = ct.float32
     idx_dtype = _idx_dtype(index_type)
     out_dist_dtype = ct.float16 if data_type == "half" else ct.float32
-    is_ip = metric == "inner_product"
-    is_l2 = metric == "l2_expanded"
-    is_cos = metric == "cosine_expanded"
     items_per_thread = 4 if gpu_code in ("sm_100", "sm_120") else 2
     core_shape = (
         tile_m,
@@ -73,6 +73,7 @@ def make_kernel(
         K,
         apply_sqrt,
         store_idx,
+        metric_code,
         tm: ConstInt,
         tn: ConstInt,
         tk: ConstInt,
@@ -84,12 +85,7 @@ def make_kernel(
         # Blackwell uses four items per logical thread slot; earlier targets
         # retain the existing two-item grouping.
 
-        if is_ip:
-            best_dist = ct.full(best_shape, -3.4e38, acc_dtype)
-            neutral_dist = -3.4e38
-        else:
-            best_dist = ct.full(best_shape, 3.4e38, acc_dtype)
-            neutral_dist = 3.4e38
+        best_dist = ct.full(best_shape, 3.4e38, acc_dtype)
         best_idx = ct.zeros(best_shape, idx_dtype)
 
         num_tiles_k = ct.num_tiles(A, axis=1, shape=(tm, tk))
@@ -98,10 +94,7 @@ def make_kernel(
 
         def reduce_scores(best, best_idx, axes):
             def red_op(a_score, a_idx, b_score, b_idx):
-                if is_ip:
-                    cond = a_score > b_score
-                else:
-                    cond = a_score < b_score
+                cond = a_score < b_score
 
                 return (
                     ct.where(cond, a_score, b_score),
@@ -113,7 +106,7 @@ def make_kernel(
                     (best, best_idx),
                     axes[0],
                     red_op,
-                    (neutral_dist, -1),
+                    (3.4e38, -1),
                     keepdims=True,
                 )
             if len(axes) >= 2:
@@ -121,7 +114,7 @@ def make_kernel(
                     (best, best_idx),
                     axes[1],
                     red_op,
-                    (neutral_dist, -1),
+                    (3.4e38, -1),
                     keepdims=True,
                 )
 
@@ -142,21 +135,23 @@ def make_kernel(
 
                 accumulator = ct.mma(a, ct.transpose(b_T), accumulator)
 
-            if is_ip:
-                score = accumulator
-            elif is_l2 or is_cos:
+            if metric_code == METRIC_INNER_PRODUCT:
+                # Keep one min reduction for every metric, then restore the
+                # inner-product sign before writing the result.
+                score = -accumulator
+            else:
                 a_norm = ct.load(
                     A_norm, index=(bidm,), shape=(tm,), padding_mode=zero_pad
                 )
                 b_norm = ct.load(
                     B_norm, index=(n,), shape=(tn,), padding_mode=zero_pad
                 )
-                if is_l2:
+                if metric_code == METRIC_L2_EXPANDED:
                     # L2 expanded: ||x||^2 + ||y||^2 - 2 * dot(x, y); norms are squared.
                     score = (
                         a_norm[:, None] + b_norm[None, :] - (2.0 * accumulator)
                     )
-                elif is_cos:
+                else:
                     # Cosine expanded distance: 1 - dot / (||x|| * ||y||); norms are L2 (not squared).
                     denom = a_norm[:, None] * b_norm[None, :]
                     score = 1.0 - (accumulator / denom)
@@ -166,10 +161,7 @@ def make_kernel(
                 col = ct.arange(tn, dtype=idx_dtype)
                 global_col = (n * tn + col).astype(idx_dtype)
                 valid = global_col < N
-                if is_ip:
-                    score = ct.where(valid[None, :], score, -3.4e38)
-                else:
-                    score = ct.where(valid[None, :], score, 3.4e38)
+                score = ct.where(valid[None, :], score, 3.4e38)
 
             curr_idx = ct.arange(tn, dtype=idx_dtype).reshape(core_shape[1:])[
                 None, ...
@@ -177,10 +169,7 @@ def make_kernel(
             curr_best, curr_idx = reduce_scores(
                 score.reshape(core_shape), curr_idx, inner_reduction_axes
             )
-            if is_ip:
-                update = curr_best > best_dist
-            else:
-                update = curr_best < best_dist
+            update = curr_best < best_dist
             best_dist = ct.where(update, curr_best, best_dist)
             best_idx = ct.where(
                 update, (n * tn + curr_idx).astype(idx_dtype), best_idx
@@ -191,7 +180,9 @@ def make_kernel(
         )
 
         out_dist = best_dist
-        if is_l2:
+        if metric_code == METRIC_INNER_PRODUCT:
+            out_dist = -best_dist
+        elif metric_code == METRIC_L2_EXPANDED:
             out_dist = ct.where(apply_sqrt != 0, ct.sqrt(best_dist), best_dist)
         if store_idx != 0:
             ct.store(OutIdx, index=(bidm,), tile=best_idx.reshape((tm,)))
@@ -206,25 +197,16 @@ def make_kernel(
 
 def kernel_symbol(
     data_abbrev: str,
-    metric_abbrev: str,
     index_abbrev: str,
     matrix_layout: str = "strict",
 ) -> str:
     """Must stay in sync with fused_1nn_kernel_entrypoint() in fused_1nn_planner.hpp."""
-    base = f"fused_1nn_{data_abbrev}_{metric_abbrev}_{index_abbrev}"
+    base = f"fused_1nn_{data_abbrev}_{index_abbrev}"
     if matrix_layout == "strict":
         return base
     if matrix_layout == "relaxed":
         return f"{base}_relaxed"
     raise ValueError(f"Unsupported matrix layout {matrix_layout!r}")
-
-
-def metric_abbrev(metric: str) -> str:
-    return {
-        "inner_product": "ip",
-        "l2_expanded": "l2",
-        "cosine_expanded": "cos",
-    }[metric]
 
 
 def index_abbrev(index_type: str) -> str:

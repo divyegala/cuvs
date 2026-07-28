@@ -92,45 +92,78 @@ function(_cutile_kernels_setup)
   )
 endfunction()
 
+macro(_cutile_append_matrix_tile_aliases entry abi_abbrev tile_m tile_n tile_k)
+  string(JSON _cutile_export_len LENGTH "${entry}" "_export")
+  set(_cutile_export_idx 0)
+  while(_cutile_export_idx LESS _cutile_export_len)
+    string(JSON _cutile_export_entry GET "${entry}" "_export" "${_cutile_export_idx}")
+    string(JSON _cutile_register GET "${_cutile_export_entry}" "register")
+    if(_cutile_register STREQUAL "cubin")
+      string(JSON _cutile_arch_tag GET "${_cutile_export_entry}" "arch_tag")
+      set(_cutile_alias_suffix "${_cutile_arch_tag}_${abi_abbrev}")
+    elseif(_cutile_register STREQUAL "tileir")
+      set(_cutile_alias_suffix "tileir_${abi_abbrev}")
+    else()
+      message(FATAL_ERROR "Unknown cuTile register kind '${_cutile_register}'")
+    endif()
+
+    set(_cutile_tile_value "${tile_m},${tile_n},${tile_k}")
+    if(DEFINED _tile_alias_value_${_cutile_alias_suffix})
+      if(NOT "${_tile_alias_value_${_cutile_alias_suffix}}" STREQUAL "${_cutile_tile_value}")
+        message(FATAL_ERROR "Conflicting cuTile tile geometry for ${_cutile_alias_suffix}: "
+                            "${_tile_alias_value_${_cutile_alias_suffix}} vs ${_cutile_tile_value}"
+        )
+      endif()
+    else()
+      set(_tile_alias_value_${_cutile_alias_suffix} "${_cutile_tile_value}")
+      string(
+        APPEND
+        _tile_aliases
+        "using fused_1nn_matrix_tile_${_cutile_alias_suffix} = cutile_tile_config<${tile_m}, ${tile_n}, ${tile_k}>;\n"
+      )
+    endif()
+    math(EXPR _cutile_export_idx "${_cutile_export_idx} + 1")
+  endwhile()
+endmacro()
+
 function(_cutile_generate_matrix_tiles_header header_path matrix_json_file)
   file(READ "${matrix_json_file}" _matrix_json)
-  string(JSON _tile0 GET "${_matrix_json}" 0 "_tile" 0)
-  string(JSON _tile_m GET "${_tile0}" "tile_m")
-  string(JSON _tile_n GET "${_tile0}" "tile_n")
-  string(JSON _tile_k GET "${_tile0}" "tile_k")
-  set(_arch_tile_aliases "")
+  set(_tile_aliases "")
   string(JSON _entry_len LENGTH "${_matrix_json}")
   set(_entry_idx 0)
   while(_entry_idx LESS _entry_len)
     string(JSON _entry GET "${_matrix_json}" "${_entry_idx}")
-    string(JSON _entry_tile GET "${_entry}" "_tile" 0)
-    string(JSON _entry_tile_m GET "${_entry_tile}" "tile_m")
-    string(JSON _entry_tile_n GET "${_entry_tile}" "tile_n")
-    string(JSON _entry_tile_k GET "${_entry_tile}" "tile_k")
-    string(JSON _export_len LENGTH "${_entry}" "_export")
-    set(_export_idx 0)
-    while(_export_idx LESS _export_len)
-      string(JSON _export_entry GET "${_entry}" "_export" "${_export_idx}")
-      string(JSON _register GET "${_export_entry}" "register")
-      if(_register STREQUAL "cubin")
-        string(JSON _arch_tag GET "${_export_entry}" "arch_tag")
-        set(_arch_tile_value "${_entry_tile_m},${_entry_tile_n},${_entry_tile_k}")
-        if(DEFINED _arch_tile_alias_value_${_arch_tag})
-          if(NOT "${_arch_tile_alias_value_${_arch_tag}}" STREQUAL "${_arch_tile_value}")
-            message(FATAL_ERROR "Conflicting cuTile tile geometry for ${_arch_tag}: "
-                                "${_arch_tile_alias_value_${_arch_tag}} vs ${_arch_tile_value}"
-            )
-          endif()
-        else()
-          set(_arch_tile_alias_value_${_arch_tag} "${_arch_tile_value}")
-          string(
-            APPEND
-            _arch_tile_aliases
-            "using fused_1nn_matrix_tile_${_arch_tag} = cutile_tile_config<${_entry_tile_m}, ${_entry_tile_n}, ${_entry_tile_k}>;\n"
-          )
+    string(JSON _entry_tile ERROR_VARIABLE _entry_tile_error GET "${_entry}" "_tile" 0)
+    if(NOT _entry_tile_error)
+      string(JSON _default_tile_m GET "${_entry_tile}" "tile_m")
+      string(JSON _default_tile_n GET "${_entry_tile}" "tile_n")
+      string(JSON _default_tile_k GET "${_entry_tile}" "tile_k")
+    endif()
+
+    string(JSON _abi_len LENGTH "${_entry}" "_abi")
+    set(_abi_idx 0)
+    while(_abi_idx LESS _abi_len)
+      string(JSON _abi_entry GET "${_entry}" "_abi" "${_abi_idx}")
+      string(JSON _abi_abbrev GET "${_abi_entry}" "abi_abbrev")
+      string(JSON _tile_m ERROR_VARIABLE _tile_m_error GET "${_abi_entry}" "tile_m")
+      string(JSON _tile_n ERROR_VARIABLE _tile_n_error GET "${_abi_entry}" "tile_n")
+      string(JSON _tile_k ERROR_VARIABLE _tile_k_error GET "${_abi_entry}" "tile_k")
+      if(_tile_m_error
+         OR _tile_n_error
+         OR _tile_k_error
+      )
+        if(_entry_tile_error)
+          message(FATAL_ERROR "Missing cuTile geometry for ABI ${_abi_abbrev}")
         endif()
+        set(_tile_m "${_default_tile_m}")
+        set(_tile_n "${_default_tile_n}")
+        set(_tile_k "${_default_tile_k}")
       endif()
-      math(EXPR _export_idx "${_export_idx} + 1")
+
+      _cutile_append_matrix_tile_aliases(
+        "${_entry}" "${_abi_abbrev}" "${_tile_m}" "${_tile_n}" "${_tile_k}"
+      )
+      math(EXPR _abi_idx "${_abi_idx} + 1")
     endwhile()
     math(EXPR _entry_idx "${_entry_idx} + 1")
   endwhile()
@@ -145,8 +178,7 @@ function(_cutile_generate_matrix_tiles_header header_path matrix_json_file)
 
 namespace cuvs::distance::detail {
 
-using fused_1nn_matrix_tile = cutile_tile_config<${_tile_m}, ${_tile_n}, ${_tile_k}>;
-${_arch_tile_aliases}
+${_tile_aliases}
 
 }  // namespace cuvs::distance::detail
 "

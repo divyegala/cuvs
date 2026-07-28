@@ -26,7 +26,6 @@ from fused_1nn_kernel import (
     index_abbrev,
     kernel_symbol,
     make_kernel,
-    metric_abbrev,
 )
 
 DEFAULT_TILEIR_BYTECODE_VERSION = "13.1"
@@ -138,7 +137,6 @@ def _kernel_signature(
     abbrev = _data_abbrev(data_type)
     symbol = kernel_symbol(
         abbrev,
-        metric_abbrev(metric),
         index_abbrev(index_type),
         matrix_layout,
     )
@@ -156,6 +154,7 @@ def _kernel_signature(
             ScalarConstraint(idx_dtype),
             ScalarConstraint(idx_dtype),
             ScalarConstraint(idx_dtype),
+            ScalarConstraint(ct.int32),
             ConstantConstraint(tile_m),
             ConstantConstraint(tile_n),
             ConstantConstraint(tile_k),
