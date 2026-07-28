@@ -303,7 +303,7 @@ static void make_device_padded_dataset(raft::resources* res_ptr,
 {
   auto dataset = dataset_tensor->dl_tensor;
   RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(dataset),
-               "cuvsDatasetDevicePaddedMake: dataset must have device-compatible memory");
+               "cuvsDatasetMakeDevicePadded: dataset must have device-compatible memory");
   using mdspan_type = raft::device_matrix_view<T const, int64_t, raft::row_major>;
   auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
   auto owner = cuvs::neighbors::make_device_padded_dataset(*res_ptr, mds);
@@ -324,7 +324,7 @@ static void make_host_padded_dataset(raft::resources* res_ptr,
 {
   auto dataset = dataset_tensor->dl_tensor;
   RAFT_EXPECTS(cuvs::core::is_dlpack_host_compatible(dataset),
-               "cuvsDatasetHostPaddedMake: dataset must have host-compatible memory");
+               "cuvsDatasetMakeHostPadded: dataset must have host-compatible memory");
   using mdspan_type = raft::host_matrix_view<T const, int64_t, raft::row_major>;
   auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
   auto owner = cuvs::neighbors::make_host_padded_dataset(*res_ptr, mds);
@@ -347,7 +347,7 @@ static void make_device_padded_dataset_view(raft::resources* res_ptr,
   auto* out    = new cuvsDatasetView{};
   if (!cuvs::core::is_dlpack_device_compatible(dataset)) {
     delete out;
-    RAFT_FAIL("cuvsDatasetDevicePaddedViewMake: dataset must have device-compatible memory");
+    RAFT_FAIL("cuvsDatasetMakeDevicePaddedView: dataset must have device-compatible memory");
   }
   using mdspan_type = raft::device_matrix_view<T const, int64_t, raft::row_major>;
   auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
@@ -366,9 +366,9 @@ static void make_view_from_owning_padded(cuvsDataset_t padded_dataset,
                                          cuvsDatasetView_t* output_padded_view)
 {
   RAFT_EXPECTS(padded_dataset != nullptr,
-               "cuvsDatasetViewFromOwningPaddedMake: null padded dataset");
+               "cuvsDatasetMakeViewFromOwningPadded: null padded dataset");
   RAFT_EXPECTS(padded_dataset->addr != 0,
-               "cuvsDatasetViewFromOwningPaddedMake: null padded dataset storage");
+               "cuvsDatasetMakeViewFromOwningPadded: null padded dataset storage");
 
   auto* owner =
     reinterpret_cast<cuvs::neighbors::device_padded_dataset<T, int64_t>*>(padded_dataset->addr);
@@ -392,7 +392,7 @@ static void make_host_padded_dataset_view(raft::resources*,
   auto* out    = new cuvsDatasetView{};
   if (!cuvs::core::is_dlpack_host_compatible(dataset)) {
     delete out;
-    RAFT_FAIL("cuvsDatasetHostPaddedViewMake: dataset must have host-compatible memory");
+    RAFT_FAIL("cuvsDatasetMakeHostPaddedView: dataset must have host-compatible memory");
   }
   using mdspan_type = raft::host_matrix_view<T const, int64_t, raft::row_major>;
   auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
@@ -415,7 +415,7 @@ static void make_device_standard_dataset_view(raft::resources*,
   auto* out    = new cuvsDatasetView{};
   if (!cuvs::core::is_dlpack_device_compatible(dataset)) {
     delete out;
-    RAFT_FAIL("cuvsDatasetDeviceStandardViewMake: dataset must have device-compatible memory");
+    RAFT_FAIL("cuvsDatasetMakeDeviceStandardView: dataset must have device-compatible memory");
   }
   using mdspan_type = raft::device_matrix_view<T const, int64_t, raft::row_major>;
   auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
@@ -438,7 +438,7 @@ static void make_host_standard_dataset_view(raft::resources*,
   auto* out    = new cuvsDatasetView{};
   if (!cuvs::core::is_dlpack_host_compatible(dataset)) {
     delete out;
-    RAFT_FAIL("cuvsDatasetHostStandardViewMake: dataset must have host-compatible memory");
+    RAFT_FAIL("cuvsDatasetMakeHostStandardView: dataset must have host-compatible memory");
   }
   using mdspan_type = raft::host_matrix_view<T const, int64_t, raft::row_major>;
   auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
@@ -1174,7 +1174,7 @@ extern "C" cuvsError_t cuvsDatasetCreate(cuvsDataset_t* dataset)
   });
 }
 
-extern "C" cuvsError_t cuvsDatasetDevicePaddedMake(cuvsResources_t res,
+extern "C" cuvsError_t cuvsDatasetMakeDevicePadded(cuvsResources_t res,
                                                    DLManagedTensor* dataset_tensor,
                                                    cuvsDataset_t* padded_dataset)
 {
@@ -1197,7 +1197,7 @@ extern "C" cuvsError_t cuvsDatasetDevicePaddedMake(cuvsResources_t res,
   });
 }
 
-extern "C" cuvsError_t cuvsDatasetHostPaddedMake(cuvsResources_t res,
+extern "C" cuvsError_t cuvsDatasetMakeHostPadded(cuvsResources_t res,
                                                  DLManagedTensor* dataset_tensor,
                                                  cuvsDataset_t* padded_dataset)
 {
@@ -1220,7 +1220,7 @@ extern "C" cuvsError_t cuvsDatasetHostPaddedMake(cuvsResources_t res,
   });
 }
 
-extern "C" cuvsError_t cuvsDatasetDevicePaddedViewMake(cuvsResources_t res,
+extern "C" cuvsError_t cuvsDatasetMakeDevicePaddedView(cuvsResources_t res,
                                                        DLManagedTensor* dataset_tensor,
                                                        cuvsDatasetView_t* padded_dataset)
 {
@@ -1243,7 +1243,7 @@ extern "C" cuvsError_t cuvsDatasetDevicePaddedViewMake(cuvsResources_t res,
   });
 }
 
-extern "C" cuvsError_t cuvsDatasetHostPaddedViewMake(cuvsResources_t res,
+extern "C" cuvsError_t cuvsDatasetMakeHostPaddedView(cuvsResources_t res,
                                                      DLManagedTensor* dataset_tensor,
                                                      cuvsDatasetView_t* padded_dataset)
 {
@@ -1266,16 +1266,16 @@ extern "C" cuvsError_t cuvsDatasetHostPaddedViewMake(cuvsResources_t res,
   });
 }
 
-extern "C" cuvsError_t cuvsDatasetViewFromOwningPaddedMake(
+extern "C" cuvsError_t cuvsDatasetMakeViewFromOwningPadded(
   cuvsDataset_t padded_dataset, cuvsDatasetView_t* padded_view)
 {
   return cuvs::core::translate_exceptions([=] {
     RAFT_EXPECTS(padded_dataset != nullptr,
-                 "cuvsDatasetViewFromOwningPaddedMake: null padded dataset");
+                 "cuvsDatasetMakeViewFromOwningPadded: null padded dataset");
     RAFT_EXPECTS(padded_view != nullptr,
-                 "cuvsDatasetViewFromOwningPaddedMake: null output padded view");
+                 "cuvsDatasetMakeViewFromOwningPadded: null output padded view");
     RAFT_EXPECTS(padded_dataset->layout == CUVS_DATASET_LAYOUT_PADDED,
-                 "cuvsDatasetViewFromOwningPaddedMake: input dataset must be padded");
+                 "cuvsDatasetMakeViewFromOwningPadded: input dataset must be padded");
     auto dtype = padded_dataset->dtype;
     if (dtype.code == kDLFloat && dtype.bits == 32) {
       make_view_from_owning_padded<float>(padded_dataset, padded_view);
@@ -1313,7 +1313,7 @@ extern "C" cuvsError_t cuvsDatasetViewDestroy(cuvsDatasetView_t dataset_view)
   });
 }
 
-extern "C" cuvsError_t cuvsDatasetDeviceStandardViewMake(cuvsResources_t res,
+extern "C" cuvsError_t cuvsDatasetMakeDeviceStandardView(cuvsResources_t res,
                                                          DLManagedTensor* dataset_tensor,
                                                          cuvsDatasetView_t* standard_dataset)
 {
@@ -1336,7 +1336,7 @@ extern "C" cuvsError_t cuvsDatasetDeviceStandardViewMake(cuvsResources_t res,
   });
 }
 
-extern "C" cuvsError_t cuvsDatasetHostStandardViewMake(cuvsResources_t res,
+extern "C" cuvsError_t cuvsDatasetMakeHostStandardView(cuvsResources_t res,
                                                        DLManagedTensor* dataset_tensor,
                                                        cuvsDatasetView_t* standard_dataset)
 {

@@ -342,7 +342,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetDevicePaddedMake(
+    pub fn cuvsDatasetMakeDevicePadded(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         padded_dataset: *mut cuvsDataset_t,
@@ -350,7 +350,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetHostPaddedMake(
+    pub fn cuvsDatasetMakeHostPadded(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         padded_dataset: *mut cuvsDataset_t,
@@ -358,7 +358,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetDevicePaddedViewMake(
+    pub fn cuvsDatasetMakeDevicePaddedView(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         padded_dataset: *mut cuvsDatasetView_t,
@@ -366,14 +366,14 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetViewFromOwningPaddedMake(
+    pub fn cuvsDatasetMakeViewFromOwningPadded(
         padded_dataset: cuvsDataset_t,
         padded_view: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetHostPaddedViewMake(
+    pub fn cuvsDatasetMakeHostPaddedView(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         padded_dataset: *mut cuvsDatasetView_t,
@@ -381,7 +381,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetDeviceStandardViewMake(
+    pub fn cuvsDatasetMakeDeviceStandardView(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         standard_dataset: *mut cuvsDatasetView_t,
@@ -389,7 +389,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetHostStandardViewMake(
+    pub fn cuvsDatasetMakeHostStandardView(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         standard_dataset: *mut cuvsDatasetView_t,

@@ -145,25 +145,25 @@ cdef extern from "cuvs/neighbors/cagra.h" nogil:
         pass
     ctypedef cuvsDataset* cuvsDataset_t
 
-    cuvsError_t cuvsDatasetDevicePaddedMake(cuvsResources_t res,
+    cuvsError_t cuvsDatasetMakeDevicePadded(cuvsResources_t res,
                                             DLManagedTensor* dataset,
                                             cuvsDataset_t* padded_dataset)
     cuvsError_t cuvsDatasetDestroy(cuvsDataset_t dataset)
-    cuvsError_t cuvsDatasetViewFromOwningPaddedMake(
+    cuvsError_t cuvsDatasetMakeViewFromOwningPadded(
         cuvsDataset_t padded_dataset,
         cuvsDatasetView_t* padded_view)
 
-    cuvsError_t cuvsDatasetDevicePaddedViewMake(cuvsResources_t res,
+    cuvsError_t cuvsDatasetMakeDevicePaddedView(cuvsResources_t res,
                                                 DLManagedTensor* dataset,
                                                 cuvsDatasetView_t* padded_dataset)
-    cuvsError_t cuvsDatasetHostPaddedViewMake(cuvsResources_t res,
+    cuvsError_t cuvsDatasetMakeHostPaddedView(cuvsResources_t res,
                                               DLManagedTensor* dataset,
                                               cuvsDatasetView_t* padded_dataset)
 
-    cuvsError_t cuvsDatasetDeviceStandardViewMake(cuvsResources_t res,
+    cuvsError_t cuvsDatasetMakeDeviceStandardView(cuvsResources_t res,
                                                   DLManagedTensor* dataset,
                                                   cuvsDatasetView_t* standard_dataset)
-    cuvsError_t cuvsDatasetHostStandardViewMake(cuvsResources_t res,
+    cuvsError_t cuvsDatasetMakeHostStandardView(cuvsResources_t res,
                                                 DLManagedTensor* dataset,
                                                 cuvsDatasetView_t* standard_dataset)
     cuvsError_t cuvsDatasetViewDestroy(cuvsDatasetView_t dataset_view)
