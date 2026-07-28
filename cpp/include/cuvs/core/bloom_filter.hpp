@@ -42,8 +42,12 @@ class CUVS_EXPORT bloom_filter {
    *
    * Sizing math used internally:
    * - `expected_insertions = ceil(dataset_rows * filtering_rate)`
-   * - `required_bits = -expected_insertions * ln(target_false_positive_rate) / (ln(2)^2)`
-   * - `required_blocks = ceil(required_bits / 256)` (default cuco policy uses 256-bit blocks)
+   * - The default policy uses 256-bit blocks split into eight 32-bit words and sets one bit in each
+   *   word per inserted key.
+   * - For each candidate block count, the expected false-positive rate accounts for the binomial
+   *   distribution of inserted keys across blocks and the fixed eight-bit fingerprint.
+   * - The smallest block count whose expected false-positive rate meets
+   *   @p target_false_positive_rate is selected.
    *
    * Practical knob behavior:
    * - Lower @p target_false_positive_rate -> larger filter, fewer false positives, typically higher
@@ -76,8 +80,14 @@ class CUVS_EXPORT bloom_filter {
                       raft::device_vector_view<std::uint8_t, int64_t> output) const;
 
   [[nodiscard]] std::size_t num_blocks() const noexcept;
-  [[nodiscard]] float estimate_filtering_rate(raft::resources const& res,
-                                              std::size_t dataset_rows) const;
+
+  /**
+   * @brief Return the estimated fraction of dataset rows rejected by this filter.
+   *
+   * The estimate is derived at construction from the configured valid-row fraction and the
+   * expected false-positive rate of the selected filter geometry. It performs no device work.
+   */
+  [[nodiscard]] float estimate_filtering_rate() const noexcept;
 
  private:
   friend impl const& get_bloom_filter_impl(bloom_filter const& filter) noexcept;

@@ -1010,6 +1010,44 @@ class AnnCagraFilterTest : public ::testing::TestWithParam<AnnCagraInputs> {
           global_bloom_filter.add_async(handle_, valid_ids_view);
           raft::resource::sync_stream(handle_);
 
+          if (candidate_fprs.size() > 1) {
+            constexpr std::size_t fpr_probe_count = 100'000;
+            rmm::device_uvector<std::uint32_t> fpr_probe_ids(fpr_probe_count, stream_);
+            rmm::device_uvector<std::uint8_t> fpr_probe_hits(fpr_probe_count, stream_);
+            thrust::sequence(raft::resource::get_thrust_policy(handle_),
+                             fpr_probe_ids.begin(),
+                             fpr_probe_ids.end(),
+                             static_cast<std::uint32_t>(ps.n_rows));
+            auto fpr_probe_ids_view = raft::make_device_vector_view<const std::uint32_t, int64_t>(
+              fpr_probe_ids.data(), static_cast<int64_t>(fpr_probe_count));
+            auto fpr_probe_hits_view = raft::make_device_vector_view<std::uint8_t, int64_t>(
+              fpr_probe_hits.data(), static_cast<int64_t>(fpr_probe_count));
+            global_bloom_filter.contains_async(handle_, fpr_probe_ids_view, fpr_probe_hits_view);
+
+            std::vector<std::uint8_t> fpr_probe_hits_host(fpr_probe_count);
+            raft::update_host(
+              fpr_probe_hits_host.data(), fpr_probe_hits.data(), fpr_probe_count, stream_);
+            raft::resource::sync_stream(handle_);
+
+            auto false_positives = static_cast<std::size_t>(std::count_if(
+              fpr_probe_hits_host.begin(), fpr_probe_hits_host.end(), [](std::uint8_t hit) {
+                return hit != 0;
+              }));
+            auto observed_fpr =
+              static_cast<double>(false_positives) / static_cast<double>(fpr_probe_count);
+            auto target_fpr = static_cast<double>(target_false_positive_rate);
+            auto standard_deviation =
+              std::sqrt(target_fpr * (1.0 - target_fpr) / static_cast<double>(fpr_probe_count));
+            auto fpr_upper_bound =
+              target_fpr + 5.0 * standard_deviation + 1.0 / static_cast<double>(fpr_probe_count);
+            RAFT_LOG_INFO("Bloom filter observed FPR = %f (%zu/%zu), target FPR = %f",
+                          observed_fpr,
+                          false_positives,
+                          fpr_probe_count,
+                          target_fpr);
+            EXPECT_LE(observed_fpr, fpr_upper_bound);
+          }
+
           auto bloom_filter_obj = cuvs::neighbors::filtering::bloom_filter(global_bloom_filter);
 
           cagra::search(handle_,
