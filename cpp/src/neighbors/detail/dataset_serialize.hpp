@@ -6,6 +6,7 @@
 
 #include <cuvs/neighbors/common.hpp>
 #include <raft/core/host_mdarray.hpp>
+#include <raft/core/numpy_serializer.hpp>
 #include <raft/core/resources.hpp>
 #include <raft/core/serialize.hpp>
 #include <raft/matrix/copy.cuh>
@@ -15,9 +16,13 @@
 
 #include <cuda_fp16.h>
 
+#include <algorithm>
+#include <array>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <memory>
+#include <type_traits>
 
 namespace cuvs::neighbors::detail {
 
@@ -102,6 +107,74 @@ auto deserialize_dense_payload(raft::resources const& res, std::istream& is)
   auto host_array = raft::make_host_matrix<DataT, IdxT>(n_rows, dim);
   raft::deserialize_mdspan(res, is, host_array.view());
   return {n_rows, dim, stride, std::move(host_array)};
+}
+
+template <typename DataT, typename IdxT>
+void skip_dense_payload(raft::resources const& res, std::istream& is)
+{
+  auto n_rows = raft::deserialize_scalar<IdxT>(res, is);
+  auto dim    = raft::deserialize_scalar<uint32_t>(res, is);
+  auto stride = raft::deserialize_scalar<uint32_t>(res, is);
+  RAFT_EXPECTS(dim <= stride,
+               "skip_dense_payload: logical dim (%u) must not exceed row stride (%u).",
+               static_cast<unsigned>(dim),
+               static_cast<unsigned>(stride));
+  if constexpr (std::is_signed_v<IdxT>) {
+    RAFT_EXPECTS(n_rows >= 0, "skip_dense_payload: row count must not be negative");
+  }
+
+  auto const header         = raft::numpy_serializer::read_header(is);
+  auto const expected_dtype = raft::numpy_serializer::get_numpy_dtype<DataT>();
+  RAFT_EXPECTS(header.dtype == expected_dtype,
+               "skip_dense_payload: expected dtype %s but got %s",
+               expected_dtype.to_string().c_str(),
+               header.dtype.to_string().c_str());
+  RAFT_EXPECTS(!header.fortran_order, "skip_dense_payload: expected row-major payload");
+  RAFT_EXPECTS(header.shape.size() == 2,
+               "skip_dense_payload: expected rank 2 but got %zu",
+               header.shape.size());
+
+  using payload_size_t = raft::numpy_serializer::ndarray_len_t;
+  auto const rows      = static_cast<payload_size_t>(n_rows);
+  auto const columns   = static_cast<payload_size_t>(dim);
+  RAFT_EXPECTS(header.shape[0] == rows && header.shape[1] == columns,
+               "skip_dense_payload: payload shape does not match serialized dimensions");
+  RAFT_EXPECTS(rows == 0 || columns <= std::numeric_limits<payload_size_t>::max() / rows,
+               "skip_dense_payload: element count overflow");
+  auto const elements = rows * columns;
+  RAFT_EXPECTS(elements <= std::numeric_limits<payload_size_t>::max() / sizeof(DataT),
+               "skip_dense_payload: byte count overflow");
+  auto remaining = elements * sizeof(DataT);
+
+  using pos_type              = std::istream::pos_type;
+  using off_type              = std::istream::off_type;
+  auto* buffer                = is.rdbuf();
+  auto const invalid_position = pos_type{off_type{-1}};
+  auto const current          = buffer->pubseekoff(0, std::ios_base::cur, std::ios_base::in);
+  if (current != invalid_position &&
+      remaining <= static_cast<payload_size_t>(std::numeric_limits<off_type>::max())) {
+    auto const end = buffer->pubseekoff(0, std::ios_base::end, std::ios_base::in);
+    if (end != invalid_position) {
+      auto const available = end - current;
+      RAFT_EXPECTS(available >= 0 && static_cast<payload_size_t>(available) >= remaining,
+                   "skip_dense_payload: truncated payload");
+      auto const next =
+        buffer->pubseekpos(current + static_cast<off_type>(remaining), std::ios_base::in);
+      RAFT_EXPECTS(next != invalid_position, "skip_dense_payload: failed to seek past payload");
+      return;
+    }
+    RAFT_EXPECTS(buffer->pubseekpos(current, std::ios_base::in) != invalid_position,
+                 "skip_dense_payload: failed to restore stream position");
+  }
+
+  std::array<char, 64 * 1024> discard_buffer{};
+  while (remaining > 0) {
+    auto const chunk = std::min<payload_size_t>(remaining, discard_buffer.size());
+    is.read(discard_buffer.data(), static_cast<std::streamsize>(chunk));
+    RAFT_EXPECTS(static_cast<payload_size_t>(is.gcount()) == chunk,
+                 "skip_dense_payload: truncated payload");
+    remaining -= chunk;
+  }
 }
 
 template <typename DataT, typename IdxT, typename OwningDatasetT>
@@ -208,7 +281,7 @@ void skip_dense_dataset(raft::resources const& res, std::istream& is)
                "skip_dense_dataset: serialized dtype (%d) does not match expected (%d)",
                static_cast<int>(dtype),
                static_cast<int>(expected_dtype));
-  static_cast<void>(deserialize_dense_payload<DataT, IdxT>(res, is));
+  skip_dense_payload<DataT, IdxT>(res, is);
 }
 
 // Reads tag + dtype prefix, validates they match DataT, and returns the requested concrete

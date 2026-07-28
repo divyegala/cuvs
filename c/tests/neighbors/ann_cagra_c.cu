@@ -1197,8 +1197,12 @@ TEST(CagraC, ExplicitSerializationSemantics) {
   EXPECT_EQ(loaded->addr, loaded_addr);
 
   auto truncated_path = prefix + "-truncated.bin";
+  auto truncated_payload_path = prefix + "-truncated-payload.bin";
   auto bad_dtype_path = prefix + "-bad-dtype.bin";
   auto bad_kind_path = prefix + "-bad-kind.bin";
+  std::filesystem::copy_file(full_path, truncated_payload_path);
+  auto const full_size = std::filesystem::file_size(truncated_payload_path);
+  std::filesystem::resize_file(truncated_payload_path, full_size - 1);
   {
     std::ofstream truncated(truncated_path, std::ios::binary);
     truncated.write("xx", 2);
@@ -1218,6 +1222,9 @@ TEST(CagraC, ExplicitSerializationSemantics) {
     raft::serialize_scalar(parse_res, bad_kind, unsupported_kind);
   }
   EXPECT_EQ(cuvsCagraDeserializeGraph(res, truncated_path.c_str(), loaded),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+  EXPECT_EQ(cuvsCagraDeserializeGraph(res, truncated_payload_path.c_str(), loaded),
             CUVS_ERROR);
   EXPECT_EQ(loaded->addr, loaded_addr);
   EXPECT_EQ(cuvsCagraDeserializeGraph(res, bad_dtype_path.c_str(), loaded),
@@ -1284,6 +1291,7 @@ TEST(CagraC, ExplicitSerializationSemantics) {
   std::filesystem::remove(full_path);
   std::filesystem::remove(graph_path);
   std::filesystem::remove(truncated_path);
+  std::filesystem::remove(truncated_payload_path);
   std::filesystem::remove(bad_dtype_path);
   std::filesystem::remove(sentinel_path);
   std::filesystem::remove(bad_kind_path);
