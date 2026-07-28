@@ -59,9 +59,9 @@ void serialize(const raft::resources& res, std::ostream& os, ViewT const& datase
 /** Write CAGRA index dataset blob (tag + element dtype + strided payload). */
 template <typename DataT, typename IdxT, typename ViewT>
   requires cuvs::neighbors::is_dense_row_major_dataset_view_v<ViewT>
-void serialize_cagra_padded_dataset(const raft::resources& res,
-                                    std::ostream& os,
-                                    ViewT const& dataset)
+void serialize_cagra_dense_dataset(const raft::resources& res,
+                                   std::ostream& os,
+                                   ViewT const& dataset)
 {
   raft::serialize_scalar(res, os, kSerializeStridedDataset);
   if constexpr (std::is_same_v<DataT, float>) {
@@ -104,21 +104,35 @@ auto deserialize_dense_payload(raft::resources const& res, std::istream& is)
   return {n_rows, dim, stride, std::move(host_array)};
 }
 
-template <typename DataT, typename IdxT>
-auto deserialize_padded(raft::resources const& res, std::istream& is)
-  -> std::unique_ptr<device_padded_dataset<DataT, IdxT>>
+template <typename DataT, typename IdxT, typename OwningDatasetT>
+auto deserialize_device_dense(raft::resources const& res, std::istream& is)
+  -> std::unique_ptr<OwningDatasetT>
 {
   auto payload = deserialize_dense_payload<DataT, IdxT>(res, is);
-  return cuvs::neighbors::make_device_padded_dataset(res, std::get<3>(payload).view());
+  return make_device_dense_row_major_dataset_from_src<OwningDatasetT, DataT, IdxT>(
+    res,
+    std::get<3>(payload).view(),
+    std::get<1>(payload),
+    std::get<2>(payload),
+    "deserialize_dense_dataset");
 }
 
-template <typename DataT, typename IdxT>
-auto deserialize_standard(raft::resources const& res, std::istream& is)
-  -> std::unique_ptr<device_standard_dataset<DataT, IdxT>>
+template <typename DataT, typename IdxT, typename OwningDatasetT>
+auto deserialize_host_dense(raft::resources const& res, std::istream& is)
+  -> std::unique_ptr<OwningDatasetT>
 {
   auto payload = deserialize_dense_payload<DataT, IdxT>(res, is);
-  return cuvs::neighbors::make_device_standard_dataset(
-    res, std::get<3>(payload).view(), std::get<1>(payload), std::get<2>(payload));
+  auto n_rows  = std::get<0>(payload);
+  auto dim     = std::get<1>(payload);
+  auto stride  = std::get<2>(payload);
+  auto src     = std::get<3>(payload).view();
+  auto storage = raft::make_host_matrix<DataT, IdxT>(n_rows, stride);
+  std::memset(storage.data_handle(), 0, storage.size() * sizeof(DataT));
+  for (IdxT row = 0; row < n_rows; ++row) {
+    std::memcpy(
+      storage.data_handle() + row * stride, src.data_handle() + row * dim, dim * sizeof(DataT));
+  }
+  return std::make_unique<OwningDatasetT>(std::move(storage), dim);
 }
 
 template <typename DataT, typename IdxT>
@@ -165,17 +179,40 @@ auto deserialize_dense_dataset(raft::resources const& res, std::istream& is)
                static_cast<int>(dtype),
                static_cast<int>(expected_dtype));
   if constexpr (std::is_same_v<OwningDatasetT, device_padded_dataset<DataT, IdxT>>) {
-    return deserialize_padded<DataT, IdxT>(res, is);
+    return deserialize_device_dense<DataT, IdxT, OwningDatasetT>(res, is);
   } else if constexpr (std::is_same_v<OwningDatasetT, device_standard_dataset<DataT, IdxT>>) {
-    return deserialize_standard<DataT, IdxT>(res, is);
+    return deserialize_device_dense<DataT, IdxT, OwningDatasetT>(res, is);
+  } else if constexpr (std::is_same_v<OwningDatasetT, host_padded_dataset<DataT, IdxT>>) {
+    return deserialize_host_dense<DataT, IdxT, OwningDatasetT>(res, is);
+  } else if constexpr (std::is_same_v<OwningDatasetT, host_standard_dataset<DataT, IdxT>>) {
+    return deserialize_host_dense<DataT, IdxT, OwningDatasetT>(res, is);
   } else {
     static_assert(!std::is_same_v<OwningDatasetT, OwningDatasetT>,
                   "deserialize_dense_dataset: unsupported owning dataset type");
   }
 }
 
-// Reads tag + dtype prefix, validates they match DataT, and returns a concrete
-// device_padded_dataset. When a new dataset kind is supported, add a matching overload of
+template <typename DataT, typename IdxT>
+void skip_dense_dataset(raft::resources const& res, std::istream& is)
+{
+  const auto tag = raft::deserialize_scalar<dataset_instance_tag>(res, is);
+  RAFT_EXPECTS(tag == kSerializeStridedDataset,
+               "skip_dense_dataset: expected strided tag, got %u",
+               static_cast<unsigned>(tag));
+  const auto dtype                        = raft::deserialize_scalar<cudaDataType_t>(res, is);
+  constexpr cudaDataType_t expected_dtype = std::is_same_v<DataT, float>    ? CUDA_R_32F
+                                            : std::is_same_v<DataT, half>   ? CUDA_R_16F
+                                            : std::is_same_v<DataT, int8_t> ? CUDA_R_8I
+                                                                            : CUDA_R_8U;
+  RAFT_EXPECTS(dtype == expected_dtype,
+               "skip_dense_dataset: serialized dtype (%d) does not match expected (%d)",
+               static_cast<int>(dtype),
+               static_cast<int>(expected_dtype));
+  static_cast<void>(deserialize_dense_payload<DataT, IdxT>(res, is));
+}
+
+// Reads tag + dtype prefix, validates they match DataT, and returns the requested concrete
+// dense owner. When a new dataset kind is supported, add a matching overload of
 // deserialize_dataset here rather than extending this one — overload dispatch replaces the old
 // type-erased variant routing.
 template <typename DataT, typename IdxT>
@@ -190,6 +227,20 @@ auto deserialize_standard_dataset(raft::resources const& res, std::istream& is)
   -> std::unique_ptr<device_standard_dataset<DataT, IdxT>>
 {
   return deserialize_dense_dataset<DataT, IdxT, device_standard_dataset<DataT, IdxT>>(res, is);
+}
+
+template <typename DataT, typename IdxT>
+auto deserialize_host_padded_dataset(raft::resources const& res, std::istream& is)
+  -> std::unique_ptr<host_padded_dataset<DataT, IdxT>>
+{
+  return deserialize_dense_dataset<DataT, IdxT, host_padded_dataset<DataT, IdxT>>(res, is);
+}
+
+template <typename DataT, typename IdxT>
+auto deserialize_host_standard_dataset(raft::resources const& res, std::istream& is)
+  -> std::unique_ptr<host_standard_dataset<DataT, IdxT>>
+{
+  return deserialize_dense_dataset<DataT, IdxT, host_standard_dataset<DataT, IdxT>>(res, is);
 }
 
 }  // namespace cuvs::neighbors::detail

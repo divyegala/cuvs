@@ -37,6 +37,42 @@ fn is_host_compatible(device_type: ffi::DLDeviceType) -> bool {
     matches!(device_type, ffi::DLDeviceType::kDLCPU | ffi::DLDeviceType::kDLCUDAHost)
 }
 
+/// Memory space of an owning dataset returned by CAGRA deserialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatasetMemoryType {
+    Host,
+    Device,
+}
+
+/// Dense row layout of an owning dataset returned by CAGRA deserialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatasetLayout {
+    Standard,
+    Padded,
+}
+
+/// Owning dataset factory result preserving serialized memory type and layout.
+#[derive(Debug)]
+pub struct Dataset {
+    handle: ffi::cuvsDataset_t,
+}
+
+impl Dataset {
+    pub fn memory_type(&self) -> DatasetMemoryType {
+        match unsafe { (*self.handle).mem_type } {
+            ffi::cuvsDatasetMemType_t::CUVS_DATASET_MEM_TYPE_HOST => DatasetMemoryType::Host,
+            ffi::cuvsDatasetMemType_t::CUVS_DATASET_MEM_TYPE_DEVICE => DatasetMemoryType::Device,
+        }
+    }
+
+    pub fn layout(&self) -> DatasetLayout {
+        match unsafe { (*self.handle).layout } {
+            ffi::cuvsDatasetLayout_t::CUVS_DATASET_LAYOUT_STANDARD => DatasetLayout::Standard,
+            ffi::cuvsDatasetLayout_t::CUVS_DATASET_LAYOUT_PADDED => DatasetLayout::Padded,
+        }
+    }
+}
+
 /// User-owned padded dataset handle for CAGRA search attachment.
 ///
 /// This mirrors the C API contract: callers allocate padded storage explicitly
@@ -128,7 +164,7 @@ pub struct StandardDatasetView {
 #[derive(Debug)]
 pub enum DeserializeOutput<'a> {
     Graph,
-    Dataset(&'a mut Option<PaddedDataset>),
+    Dataset(&'a mut Option<Dataset>),
 }
 
 impl StandardDatasetView {
@@ -435,7 +471,7 @@ impl<'d> Index<'d> {
                         &mut out,
                     )
                 })?;
-                *out_dataset = Some(PaddedDataset { handle: out });
+                *out_dataset = Some(Dataset { handle: out });
                 Ok(())
             }
         }
@@ -446,6 +482,15 @@ impl Drop for Index<'_> {
     fn drop(&mut self) {
         if let Err(e) = check_cuvs(unsafe { ffi::cuvsCagraIndexDestroy(self.handle) }) {
             write!(stderr(), "failed to call cagraIndexDestroy {:?}", e)
+                .expect("failed to write to stderr");
+        }
+    }
+}
+
+impl Drop for Dataset {
+    fn drop(&mut self) {
+        if let Err(e) = check_cuvs(unsafe { ffi::cuvsDatasetDestroy(self.handle) }) {
+            write!(stderr(), "failed to call cuvsDatasetDestroy {:?}", e)
                 .expect("failed to write to stderr");
         }
     }
@@ -654,7 +699,7 @@ mod tests {
         );
 
         let mut loaded_index = Index::create_handle().expect("failed to create index");
-        let mut out_dataset: Option<PaddedDataset> = None;
+        let mut out_dataset: Option<Dataset> = None;
         Index::deserialize(
             &res,
             &filepath,

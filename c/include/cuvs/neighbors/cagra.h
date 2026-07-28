@@ -839,17 +839,21 @@ CUVS_EXPORT cuvsError_t cuvsCagraDeserializeGraph(cuvsResources_t res,
 /**
  * Load the CAGRA graph and dataset from file.
  *
- * The returned dataset is an owning device-padded handle. The index stores a non-owning view into
- * it, so the caller must keep the dataset alive while the index uses it and destroy it separately
- * with cuvsDatasetDestroy. The output pointer must point to a null handle on entry. Returns
- * CUVS_ERROR when the file has no dataset; the index and output handle are unchanged on failure.
+ * The returned owning dataset preserves the serialized host/device memory type and
+ * standard/padded layout. The index stores a non-owning view into it, so the caller must keep the
+ * dataset alive while the index uses it and destroy it separately with cuvsDatasetDestroy. Only a
+ * device-padded result is immediately searchable through the C API; attach a caller-owned
+ * device-padded view with cuvsCagraUpdateDataset for any other kind. The output pointer
+ * must point to a null handle on entry; deserialization acts as a factory and transfers ownership
+ * of the allocated dataset handle on success. Returns CUVS_ERROR when the file has no dataset; the
+ * index and output handle are unchanged on failure.
  *
  * Experimental, both the API and the serialization format are subject to change.
  *
  * @param[in] res cuvsResources_t opaque C handle
  * @param[in] filename the name of the file that stores the graph and dataset
  * @param[inout] index pre-created CAGRA index populated on success and unchanged on failure
- * @param[inout] out_dataset caller-owned device-padded dataset handle; must point to null on entry
+ * @param[out] out_dataset receives the allocated owning dataset handle; must point to null on entry
  */
 CUVS_EXPORT cuvsError_t cuvsCagraDeserializeGraphAndDataset(cuvsResources_t res,
                                                             const char* filename,

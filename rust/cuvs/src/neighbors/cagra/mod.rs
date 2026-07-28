@@ -21,7 +21,10 @@ mod index;
 mod params;
 
 pub use crate::neighbors::filters::{Bitset, Filter};
-pub use index::{DeserializeOutput, Index, PaddedDataset, PaddedDatasetView, StandardDatasetView};
+pub use index::{
+    Dataset, DatasetLayout, DatasetMemoryType, DeserializeOutput, Index, PaddedDataset,
+    PaddedDatasetView, StandardDatasetView,
+};
 pub use params::{IndexParams, SearchParams};
 
 use crate::dlpack::DLPackError;

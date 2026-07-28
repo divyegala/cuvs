@@ -4,6 +4,7 @@
 
 from .cagra import (
     AceParams,
+    Dataset,
     ExtendParams,
     Index,
     IndexParams,
@@ -26,6 +27,7 @@ from .cagra import (
 
 __all__ = [
     "AceParams",
+    "Dataset",
     "ExtendParams",
     "Index",
     "IndexParams",

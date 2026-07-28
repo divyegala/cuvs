@@ -44,33 +44,38 @@ def run_save_load(ann_module, dtype, filename="my_index.bin"):
     else:
         build_params = ann_module.IndexParams()
         index = ann_module.build(build_params, dataset_device)
-        keepalive = []
-        if ann_module == cagra:
-            if (
-                ann_module.get_dataset_view_kind(dataset_device)
-                == "device_standard"
-            ):
-                padded_dataset = ann_module.make_device_padded_dataset(
-                    dataset_device
-                )
-                padded_view = ann_module.make_view_from_owning_padded(
-                    padded_dataset
-                )
-                ann_module.update_dataset(index, padded_view)
-                keepalive = [padded_dataset, padded_view]
-        assert keepalive is not None
 
     assert index.trained
     filename = str(filename)
     ann_module.save(filename, index)
     if ann_module == cagra:
         loaded_index = ann_module.Index()
-        out_dataset = ann_module.PaddedDataset()
+        out_dataset = ann_module.Dataset()
         ann_module.load(
             loaded_index,
             filename,
             out_dataset=out_dataset,
         )
+        assert out_dataset.memory_type == "device"
+        assert out_dataset.layout == (
+            "padded"
+            if ann_module.get_dataset_view_kind(dataset_device).endswith(
+                "padded"
+            )
+            else "standard"
+        )
+        if (
+            out_dataset.memory_type != "device"
+            or out_dataset.layout != "padded"
+        ):
+            padded_dataset = ann_module.make_device_padded_dataset(
+                dataset_device
+            )
+            padded_view = ann_module.make_view_from_owning_padded(
+                padded_dataset
+            )
+            ann_module.update_dataset(loaded_index, padded_view)
+            ann_module.update_dataset(index, padded_view)
     else:
         loaded_index = ann_module.load(filename)
 
@@ -138,7 +143,7 @@ def test_cagra_graph_only_serialization(tmp_path):
     cagra.load(loaded, str(graph_path))
 
     missing_dataset_index = cagra.Index()
-    missing_dataset_owner = cagra.PaddedDataset()
+    missing_dataset_owner = cagra.Dataset()
     with pytest.raises(Exception, match="no dataset"):
         cagra.load(
             missing_dataset_index,
@@ -170,10 +175,12 @@ def test_cagra_deserialize_output_must_be_empty(tmp_path):
     index = cagra.build(cagra.IndexParams(), dataset)
     path = tmp_path / "cagra-full.bin"
     cagra.save(str(path), index, include_dataset=True)
-    output = cagra.PaddedDataset()
+    output = cagra.Dataset()
     first_loaded = cagra.Index()
     cagra.load(first_loaded, str(path), out_dataset=output)
 
+    assert output.memory_type == "device"
+    assert output.layout == "padded"
     second_loaded = cagra.Index()
     with pytest.raises(Exception, match="must be null"):
         cagra.load(second_loaded, str(path), out_dataset=output)

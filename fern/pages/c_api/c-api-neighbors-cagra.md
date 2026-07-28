@@ -831,7 +831,11 @@ cuvsError_t cuvsCagraDeserializeGraph(cuvsResources_t res, const char* filename,
 <a id="cuvscagradeserializegraphanddataset"></a>
 ### cuvsCagraDeserializeGraphAndDataset
 
-Load the graph and dataset. The returned device-padded dataset is caller-owned and must remain alive while the index uses it.
+Load the graph and dataset. The function allocates an owning dataset that preserves the
+serialized host/device memory type and standard/padded layout. The caller must keep it alive while
+the index uses its non-owning view and destroy it separately. Only a device-padded result is
+immediately searchable through the C API; attach a caller-owned device-padded view with
+`cuvsCagraUpdateDataset` for any other kind.
 
 ```c
 cuvsError_t cuvsCagraDeserializeGraphAndDataset(cuvsResources_t res,
@@ -849,7 +853,7 @@ Returns an error when the file has no dataset or the output pointer does not poi
 | `res` | in | [`cuvsResources_t`](/api-reference/c-api-core-c-api#cuvsresources-t) | cuvsResources_t opaque C handle |
 | `filename` | in | `const char*` | the name of the file that stores the graph and dataset |
 | `index` | inout | [`cuvsCagraIndex_t`](/api-reference/c-api-neighbors-cagra#cuvscagraindex) | Pre-created CAGRA index populated on success and unchanged on failure |
-| `out_dataset` | inout | [`cuvsDataset_t`](/api-reference/c-api-core-dataset#cuvsdataset-t) | Caller-owned device-padded dataset handle; must point to null on entry |
+| `out_dataset` | out | [`cuvsDataset_t`](/api-reference/c-api-core-dataset#cuvsdataset-t) | Receives the allocated owning dataset handle; must point to null on entry |
 
 **Returns**
 

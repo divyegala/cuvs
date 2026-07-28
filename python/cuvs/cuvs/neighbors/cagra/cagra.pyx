@@ -407,13 +407,41 @@ cdef class Index:
         return "Index(type=CAGRA, metric=L2" + (", ".join(attr_str)) + ")"
 
 
-cdef class PaddedDataset:
+cdef class Dataset:
     def __cinit__(self):
         self.dataset = NULL
 
     def __dealloc__(self):
         if self.dataset != NULL:
             check_cuvs(cuvsDatasetDestroy(self.dataset))
+
+    @property
+    def memory_type(self):
+        if self.dataset == NULL:
+            return None
+        if self.dataset.mem_type == CUVS_DATASET_MEM_TYPE_DEVICE:
+            return "device"
+        return "host"
+
+    @property
+    def layout(self):
+        if self.dataset == NULL:
+            return None
+        if self.dataset.layout == CUVS_DATASET_LAYOUT_PADDED:
+            return "padded"
+        return "standard"
+
+    @property
+    def dtype(self):
+        if self.dataset == NULL:
+            return None
+        return (self.dataset.dtype.code,
+                self.dataset.dtype.bits,
+                self.dataset.dtype.lanes)
+
+
+cdef class PaddedDataset(Dataset):
+    pass
 
 
 cdef class PaddedDatasetView:
@@ -632,12 +660,17 @@ def make_device_padded_dataset_view(dataset, resources=None):
     return padded_view
 
 
-def make_view_from_owning_padded(PaddedDataset padded_dataset):
+def make_view_from_owning_padded(Dataset padded_dataset):
     """
     Create a padded dataset view handle from an owning padded dataset handle.
     """
     if padded_dataset is None or padded_dataset.dataset == NULL:
         raise ValueError("padded_dataset is uninitialized")
+    if (padded_dataset.dataset.mem_type != CUVS_DATASET_MEM_TYPE_DEVICE or
+            padded_dataset.dataset.layout != CUVS_DATASET_LAYOUT_PADDED):
+        raise ValueError(
+            "padded_dataset must own a device-padded dataset"
+        )
     cdef PaddedDatasetView padded_view = PaddedDatasetView()
     check_cuvs(cuvsDatasetViewFromOwningPaddedMake(
         padded_dataset.dataset,
@@ -1045,7 +1078,7 @@ def save(filename, Index index, bool include_dataset=True, resources=None):
     >>> # Serialize and deserialize the cagra index built
     >>> cagra.save("my_index.bin", index)
     >>> index_loaded = cagra.Index()
-    >>> out_dataset = cagra.PaddedDataset()
+    >>> out_dataset = cagra.Dataset()
     >>> cagra.load(index_loaded, "my_index.bin", out_dataset=out_dataset)
     """
     cdef string c_filename = filename.encode('utf-8')
@@ -1077,10 +1110,11 @@ def load(index, filename, out_dataset=None, resources=None):
         Pre-created index object to populate.
     filename : string
         Name of the file.
-    out_dataset : PaddedDataset, optional
-        Pre-created owning output handle for a serialized dataset. If omitted,
-        only the graph is retained. Keep this object alive while the loaded
-        index is in use.
+    out_dataset : Dataset, optional
+        Empty owning output slot populated as a factory result using the
+        serialized host/device memory type and standard/padded layout. If
+        omitted, only the graph is retained. Keep this object alive while the
+        loaded index is in use.
     {resources_docstring}
     """
     cdef Index idx = index
@@ -1092,15 +1126,15 @@ def load(index, filename, out_dataset=None, resources=None):
             res,
             c_filename.c_str(),
             idx.index))
-    elif isinstance(out_dataset, PaddedDataset):
+    elif isinstance(out_dataset, Dataset):
         check_cuvs(cuvsCagraDeserializeGraphAndDataset(
             res,
             c_filename.c_str(),
             idx.index,
-            &(<PaddedDataset>out_dataset).dataset))
+            &(<Dataset>out_dataset).dataset))
     else:
         raise TypeError(
-            "out_dataset must be a PaddedDataset or None"
+            "out_dataset must be a Dataset or None"
         )
     idx.trained = True
 

@@ -460,19 +460,19 @@ public class CagraIndexImpl implements CagraIndex {
         if (outDataset == null) {
           var returnValue = cuvsCagraDeserializeGraph(cuvsRes, path, index);
           checkCuVSError(returnValue, "cuvsCagraDeserializeGraph");
-        } else if (outDataset instanceof CagraIndex.PaddedDataset) {
-          MemorySegment paddedDatasetOutPtr = arena.allocate(cuvsDataset_t);
-          paddedDatasetOutPtr.set(cuvsDataset_t, 0, MemorySegment.NULL);
+        } else if (outDataset instanceof CagraIndex.Dataset) {
+          MemorySegment datasetOutPtr = arena.allocate(cuvsDataset_t);
+          datasetOutPtr.set(cuvsDataset_t, 0, MemorySegment.NULL);
           var returnValue =
-              cuvsCagraDeserializeGraphAndDataset(cuvsRes, path, index, paddedDatasetOutPtr);
+              cuvsCagraDeserializeGraphAndDataset(cuvsRes, path, index, datasetOutPtr);
           checkCuVSError(returnValue, "cuvsCagraDeserializeGraphAndDataset");
-          MemorySegment paddedDatasetHandle = paddedDatasetOutPtr.get(cuvsDataset_t, 0);
+          MemorySegment datasetHandle = datasetOutPtr.get(cuvsDataset_t, 0);
           outDataset.setDelegate(
-              paddedDatasetHandle.address() == 0
+              datasetHandle.address() == 0
                   ? null
-                  : new PaddedDatasetCloseDelegate(paddedDatasetHandle));
+                  : new DatasetCloseDelegate(datasetHandle));
         } else {
-          throw new IllegalArgumentException("outDataset must be null or CagraIndex.PaddedDataset");
+          throw new IllegalArgumentException("outDataset must be null or CagraIndex.Dataset");
         }
       }
     } finally {
@@ -606,10 +606,10 @@ public class CagraIndexImpl implements CagraIndex {
     }
   }
 
-  private static final class PaddedDatasetCloseDelegate implements AutoCloseable {
+  private static final class DatasetCloseDelegate implements AutoCloseable {
     private MemorySegment handle;
 
-    private PaddedDatasetCloseDelegate(MemorySegment handle) {
+    private DatasetCloseDelegate(MemorySegment handle) {
       this.handle = handle;
     }
 

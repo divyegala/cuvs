@@ -142,7 +142,10 @@ cdef extern from "cuvs/neighbors/cagra.h" nogil:
     ctypedef cuvsDatasetView* cuvsDatasetView_t
 
     ctypedef struct cuvsDataset:
-        pass
+        uintptr_t addr
+        DLDataType dtype
+        cuvsDatasetMemType_t mem_type
+        cuvsDatasetLayout_t layout
     ctypedef cuvsDataset* cuvsDataset_t
 
     cuvsError_t cuvsDatasetDevicePaddedMake(cuvsResources_t res,
@@ -241,8 +244,12 @@ cdef class Index:
     cdef str active_index_type
 
 
-cdef class PaddedDataset:
+cdef class Dataset:
     cdef cuvsDataset_t dataset
+
+
+cdef class PaddedDataset(Dataset):
+    pass
 
 
 cdef class PaddedDatasetView:

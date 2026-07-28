@@ -29,6 +29,7 @@
 #include <raft/core/mdspan.hpp>
 #include <raft/core/operators.hpp>
 #include <raft/core/resources.hpp>
+#include <raft/core/serialize.hpp>
 #include <raft/matrix/argmin.cuh>
 #include <raft/matrix/linewise_op.cuh>
 #include <sys/types.h>
@@ -206,9 +207,10 @@ TEST(CagraC, UpdateHostPadded)
   cuvsDataset_t loaded_dataset = nullptr;
   ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(
               res, serialized_path.c_str(), loaded_index, &loaded_dataset),
-            CUVS_SUCCESS);
+            CUVS_SUCCESS)
+    << cuvsGetLastErrorText();
   ASSERT_NE(loaded_dataset, nullptr);
-  EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_DEVICE);
+  EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_HOST);
   EXPECT_EQ(loaded_dataset->layout, CUVS_DATASET_LAYOUT_PADDED);
   cuvsCagraIndexDestroy(loaded_index);
   cuvsDatasetDestroy(loaded_dataset);
@@ -222,6 +224,25 @@ TEST(CagraC, UpdateHostPadded)
   cuvsDatasetView_t device_view         = nullptr;
   ASSERT_EQ(cuvsDatasetDevicePaddedViewMake(res, &device_tensor, &device_view), CUVS_SUCCESS);
   ASSERT_EQ(cuvsCagraUpdateDataset(res, device_view, index), CUVS_SUCCESS);
+
+  auto device_serialized_path =
+    "/tmp/cuvs-cagra-device-padded-" + std::to_string(getpid()) + ".bin";
+  ASSERT_EQ(
+    cuvsCagraSerializeGraphAndDataset(res, device_serialized_path.c_str(), index), CUVS_SUCCESS);
+  cuvsCagraIndex_t loaded_device_index;
+  ASSERT_EQ(cuvsCagraIndexCreate(&loaded_device_index), CUVS_SUCCESS);
+  cuvsDataset_t loaded_device_dataset = nullptr;
+  ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(
+              res, device_serialized_path.c_str(), loaded_device_index, &loaded_device_dataset),
+            CUVS_SUCCESS)
+    << cuvsGetLastErrorText();
+  ASSERT_NE(loaded_device_dataset, nullptr);
+  EXPECT_EQ(loaded_device_dataset->mem_type, CUVS_DATASET_MEM_TYPE_DEVICE);
+  EXPECT_EQ(loaded_device_dataset->layout, CUVS_DATASET_LAYOUT_PADDED);
+
+  cuvsCagraIndexDestroy(loaded_device_index);
+  cuvsDatasetDestroy(loaded_device_dataset);
+  std::filesystem::remove(device_serialized_path);
 
   cuvsDatasetViewDestroy(device_view);
   cuvsDatasetViewDestroy(host_view);
@@ -1043,13 +1064,14 @@ TEST(CagraC, SerializeHostStandardAllDtypes) {
     cuvsDataset_t loaded_dataset = nullptr;
     ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(res, path.c_str(), loaded,
                                                   &loaded_dataset),
-              CUVS_SUCCESS);
+              CUVS_SUCCESS)
+      << cuvsGetLastErrorText();
     ASSERT_NE(loaded_dataset, nullptr);
     EXPECT_EQ(loaded_dataset->dtype.code, dtype.code);
     EXPECT_EQ(loaded_dataset->dtype.bits, dtype.bits);
     EXPECT_EQ(loaded_dataset->dtype.lanes, 1);
-    EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_DEVICE);
-    EXPECT_EQ(loaded_dataset->layout, CUVS_DATASET_LAYOUT_PADDED);
+    EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_HOST);
+    EXPECT_EQ(loaded_dataset->layout, CUVS_DATASET_LAYOUT_STANDARD);
     int64_t size = 0;
     int64_t dim = 0;
     EXPECT_EQ(cuvsCagraIndexGetSize(loaded, &size), CUVS_SUCCESS);
@@ -1148,9 +1170,11 @@ TEST(CagraC, ExplicitSerializationSemantics) {
   cuvsDataset_t loaded_dataset = nullptr;
   ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(res, full_path.c_str(), loaded,
                                                 &loaded_dataset),
-            CUVS_SUCCESS);
+            CUVS_SUCCESS)
+    << cuvsGetLastErrorText();
   ASSERT_NE(loaded_dataset, nullptr);
-  expect_search(loaded);
+  EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_HOST);
+  EXPECT_EQ(loaded_dataset->layout, CUVS_DATASET_LAYOUT_STANDARD);
 
   // Dataset-requiring failures leave a populated destination and output
   // unchanged.
@@ -1174,17 +1198,32 @@ TEST(CagraC, ExplicitSerializationSemantics) {
 
   auto truncated_path = prefix + "-truncated.bin";
   auto bad_dtype_path = prefix + "-bad-dtype.bin";
+  auto bad_kind_path = prefix + "-bad-kind.bin";
   {
     std::ofstream truncated(truncated_path, std::ios::binary);
     truncated.write("xx", 2);
     std::ofstream bad_dtype(bad_dtype_path, std::ios::binary);
     char unsupported_dtype[4] = {'<', 'i', '2', '\0'};
     bad_dtype.write(unsupported_dtype, 4);
+
+    std::filesystem::copy_file(full_path, bad_kind_path);
+    std::fstream bad_kind(
+      bad_kind_path, std::ios::in | std::ios::out | std::ios::binary);
+    raft::resources parse_res;
+    bad_kind.seekg(4);
+    static_cast<void>(raft::deserialize_scalar<int>(parse_res, bad_kind));
+    auto const kind_position = bad_kind.tellg();
+    uint32_t unsupported_kind = 99;
+    bad_kind.seekp(kind_position);
+    raft::serialize_scalar(parse_res, bad_kind, unsupported_kind);
   }
   EXPECT_EQ(cuvsCagraDeserializeGraph(res, truncated_path.c_str(), loaded),
             CUVS_ERROR);
   EXPECT_EQ(loaded->addr, loaded_addr);
   EXPECT_EQ(cuvsCagraDeserializeGraph(res, bad_dtype_path.c_str(), loaded),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+  EXPECT_EQ(cuvsCagraDeserializeGraph(res, bad_kind_path.c_str(), loaded),
             CUVS_ERROR);
   EXPECT_EQ(loaded->addr, loaded_addr);
 
@@ -1225,6 +1264,9 @@ TEST(CagraC, ExplicitSerializationSemantics) {
   cuvsDatasetView_t external_view = nullptr;
   ASSERT_EQ(cuvsDatasetViewFromOwningPaddedMake(external_owner, &external_view),
             CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraUpdateDataset(res, external_view, loaded), CUVS_SUCCESS);
+  expect_search(loaded);
+
   ASSERT_EQ(cuvsCagraUpdateDataset(res, external_view, graph_only),
             CUVS_SUCCESS);
   expect_search(graph_only);
@@ -1244,4 +1286,5 @@ TEST(CagraC, ExplicitSerializationSemantics) {
   std::filesystem::remove(truncated_path);
   std::filesystem::remove(bad_dtype_path);
   std::filesystem::remove(sentinel_path);
+  std::filesystem::remove(bad_kind_path);
 }

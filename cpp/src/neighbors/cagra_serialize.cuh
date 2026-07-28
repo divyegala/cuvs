@@ -90,6 +90,16 @@ namespace cuvs::neighbors::cagra {
       handle, filename, index, include_dataset);                                                  \
   }                                                                                               \
                                                                                                   \
+  void deserialize(                                                                               \
+    raft::resources const& handle,                                                                \
+    const std::string& filename,                                                                  \
+    cuvs::neighbors::cagra::host_padded_index<DTYPE, uint32_t>* index,                            \
+    std::unique_ptr<cuvs::neighbors::host_padded_dataset<DTYPE, int64_t>>* out_dataset)           \
+  {                                                                                               \
+    cuvs::neighbors::cagra::detail::deserialize<DTYPE, uint32_t>(                                 \
+      handle, filename, index, out_dataset);                                                      \
+  }                                                                                               \
+                                                                                                  \
   void serialize(raft::resources const& handle,                                                   \
                  std::ostream& os,                                                                \
                  const cuvs::neighbors::cagra::host_padded_index<DTYPE, uint32_t>& index,         \
@@ -97,6 +107,15 @@ namespace cuvs::neighbors::cagra {
   {                                                                                               \
     cuvs::neighbors::cagra::detail::serialize<DTYPE, uint32_t>(                                   \
       handle, os, index, include_dataset);                                                        \
+  }                                                                                               \
+                                                                                                  \
+  void deserialize(                                                                               \
+    raft::resources const& handle,                                                                \
+    std::istream& is,                                                                             \
+    cuvs::neighbors::cagra::host_padded_index<DTYPE, uint32_t>* index,                            \
+    std::unique_ptr<cuvs::neighbors::host_padded_dataset<DTYPE, int64_t>>* out_dataset)           \
+  {                                                                                               \
+    cuvs::neighbors::cagra::detail::deserialize<DTYPE, uint32_t>(handle, is, index, out_dataset); \
   }                                                                                               \
                                                                                                   \
   void serialize(raft::resources const& handle,                                                   \
@@ -108,6 +127,16 @@ namespace cuvs::neighbors::cagra {
       handle, filename, index, include_dataset);                                                  \
   }                                                                                               \
                                                                                                   \
+  void deserialize(                                                                               \
+    raft::resources const& handle,                                                                \
+    const std::string& filename,                                                                  \
+    cuvs::neighbors::cagra::host_standard_index<DTYPE, uint32_t>* index,                          \
+    std::unique_ptr<cuvs::neighbors::host_standard_dataset<DTYPE, int64_t>>* out_dataset)         \
+  {                                                                                               \
+    cuvs::neighbors::cagra::detail::deserialize<DTYPE, uint32_t>(                                 \
+      handle, filename, index, out_dataset);                                                      \
+  }                                                                                               \
+                                                                                                  \
   void serialize(raft::resources const& handle,                                                   \
                  std::ostream& os,                                                                \
                  const cuvs::neighbors::cagra::host_standard_index<DTYPE, uint32_t>& index,       \
@@ -115,6 +144,15 @@ namespace cuvs::neighbors::cagra {
   {                                                                                               \
     cuvs::neighbors::cagra::detail::serialize<DTYPE, uint32_t>(                                   \
       handle, os, index, include_dataset);                                                        \
+  }                                                                                               \
+                                                                                                  \
+  void deserialize(                                                                               \
+    raft::resources const& handle,                                                                \
+    std::istream& is,                                                                             \
+    cuvs::neighbors::cagra::host_standard_index<DTYPE, uint32_t>* index,                          \
+    std::unique_ptr<cuvs::neighbors::host_standard_dataset<DTYPE, int64_t>>* out_dataset)         \
+  {                                                                                               \
+    cuvs::neighbors::cagra::detail::deserialize<DTYPE, uint32_t>(handle, is, index, out_dataset); \
   }                                                                                               \
                                                                                                   \
   void serialize_to_hnswlib(                                                                      \

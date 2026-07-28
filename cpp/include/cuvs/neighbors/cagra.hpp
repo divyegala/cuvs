@@ -2114,11 +2114,28 @@ void search(raft::resources const& res,
  * @{
  */
 
-// Serialize and deserialize are overloaded for device_padded_index and device_standard_index.
-// Both use the same strided dataset wire format; deserialize selects the owning dataset type
-// from the index's DatasetViewT. To support a new dataset kind (e.g. vpq_f16_index), add a
-// matching pair of overloads here and a corresponding deserialize_<kind> in
-// detail/dataset_serialize.hpp (dense views use serialize_cagra_padded_dataset).
+/** Dense dataset storage kind recorded in a serialized CAGRA index. */
+enum class serialized_dataset_kind : std::uint32_t {
+  /** The serialized index does not contain a dataset payload. */
+  none = 0,
+  /** Device-resident dataset using CAGRA's padded row layout. */
+  device_padded = 1,
+  /** Device-resident dataset using its standard row layout. */
+  device_standard = 2,
+  /** Host-resident dataset using CAGRA's padded row layout. */
+  host_padded = 3,
+  /** Host-resident dataset using its standard row layout. */
+  host_standard = 4,
+};
+
+/** Current experimental CAGRA serialization format version. */
+inline constexpr int cagra_serialization_version = 6;
+
+// Serialize and deserialize are overloaded for device/host and padded/standard dense indexes.
+// They use the same strided dataset payload; the serialized dataset kind selects the matching
+// owning dataset type during deserialization. To support a new dataset kind (e.g. vpq_f16_index),
+// add matching overloads here and a corresponding deserialize_<kind> in
+// detail/dataset_serialize.hpp (dense views use serialize_cagra_dense_dataset).
 
 /**
  * Save the index to file.
@@ -2764,6 +2781,62 @@ void serialize(raft::resources const& handle,
                std::ostream& os,
                const cuvs::neighbors::cagra::host_standard_index<uint8_t>& index,
                bool include_dataset = true);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<float>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<float, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<float>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<float, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<half>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<half, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<half>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<half, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<int8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<int8_t, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<int8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<int8_t, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<uint8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<uint8_t, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<uint8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<uint8_t, int64_t>>* out_dataset = nullptr);
 
 /**
  * Write the CAGRA built index as a base layer HNSW index to an output stream
