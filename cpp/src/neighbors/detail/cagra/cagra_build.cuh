@@ -1402,8 +1402,12 @@ auto build_ace(raft::resources const& res,
       sub_index_params.attach_dataset_on_build = false;
       sub_index_params.guarantee_connectivity  = params.guarantee_connectivity;
 
-      auto sub_index = cuvs::neighbors::cagra::build(
-        res, sub_index_params, raft::make_const_mdspan(sub_dataset.view()));
+      // Copy host partition to device with padding; build_from_device_matrix accepts
+      // device_padded_dataset_view.
+      auto sub_dataset_dev = cuvs::neighbors::make_device_padded_dataset(
+        res, raft::make_const_mdspan(sub_dataset.view()));
+      auto sub_index = ::cuvs::neighbors::cagra::detail::build_from_device_matrix<T, IdxT>(
+        res, sub_index_params, sub_dataset_dev->as_dataset_view());
 
       auto optimize_end = std::chrono::high_resolution_clock::now();
       auto optimize_elapsed =
