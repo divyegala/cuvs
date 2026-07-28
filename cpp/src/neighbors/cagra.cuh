@@ -515,10 +515,11 @@ cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT> merge(
   raft::resources const& handle,
   const cagra::index_params& params,
   std::vector<cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>*>& indices,
-  merged_dataset_storage<T, IdxT>& storage,
+  DatasetViewT merged_dataset,
   const cuvs::neighbors::filtering::base_filter& row_filter)
 {
-  return cagra::detail::merge<T, IdxT, DatasetViewT>(handle, params, indices, storage, row_filter);
+  return cagra::detail::merge<T, IdxT, DatasetViewT>(
+    handle, params, indices, merged_dataset, row_filter);
 }
 
 /** @} */  // end group cagra
@@ -526,8 +527,8 @@ cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT> merge(
 }  // namespace cuvs::neighbors::cagra
 
 #define CUVS_INST_CAGRA_MERGE(T, IdxT, DatasetViewT)                                   \
-  template CUVS_EXPORT cuvs::neighbors::cagra::merged_dataset_storage<T, IdxT>         \
-  cuvs::neighbors::cagra::make_merged_storage<T, IdxT, DatasetViewT>(                  \
+  template CUVS_EXPORT int64_t                                                         \
+  cuvs::neighbors::cagra::detail::merged_dataset_size<T, IdxT, DatasetViewT>(          \
     raft::resources const& handle,                                                     \
     std::vector<cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>*> const& indices, \
     cuvs::neighbors::filtering::base_filter const& row_filter);                        \
@@ -536,5 +537,5 @@ cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT> merge(
     raft::resources const& handle,                                                     \
     const cuvs::neighbors::cagra::index_params& params,                                \
     std::vector<cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>*>& indices,       \
-    cuvs::neighbors::cagra::merged_dataset_storage<T, IdxT>& storage,                  \
+    DatasetViewT merged_dataset,                                                       \
     cuvs::neighbors::filtering::base_filter const& row_filter);

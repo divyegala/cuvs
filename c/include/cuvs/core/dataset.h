@@ -61,28 +61,15 @@ typedef struct {
 } cuvsDatasetView;
 typedef cuvsDatasetView* cuvsDatasetView_t;
 
-/**
- * @brief Generic storage kind for operation-specific dataset storage.
- */
-typedef enum {
-  CUVS_DATASET_STORAGE_KIND_EXTENDED = 0,
-  CUVS_DATASET_STORAGE_KIND_MERGED   = 1
-} cuvsDatasetStorageKind_t;
-
-/**
- * @brief Generic opaque storage handle for dataset-backed operation outputs.
- *
- * Used by operations like CAGRA extend/merge where storage shape is identical
- * but semantics differ by operation kind.
- */
-typedef struct {
-  uintptr_t addr;
-  DLDataType dtype;
-  cuvsDatasetStorageKind_t kind;
-} cuvsDatasetStorage;
-typedef cuvsDatasetStorage* cuvsDatasetStorage_t;
-
 typedef struct cuvsCagraIndex* cuvsCagraIndex_t;
+
+/**
+ * @brief Create an empty owning dataset handle.
+ *
+ * The dataset storage, memory type, layout, and dtype are populated by the operation that fills
+ * this handle.
+ */
+CUVS_EXPORT cuvsError_t cuvsDatasetCreate(cuvsDataset_t* dataset);
 
 CUVS_EXPORT cuvsError_t cuvsDatasetDevicePaddedMake(cuvsResources_t res,
                                                     DLManagedTensor* dataset,
@@ -125,14 +112,6 @@ CUVS_EXPORT cuvsError_t cuvsDatasetDestroy(cuvsDataset_t dataset);
 
 /** @brief Destroy a non-owning dataset view handle created by a `cuvsDataset*ViewMake` function. */
 CUVS_EXPORT cuvsError_t cuvsDatasetViewDestroy(cuvsDatasetView_t dataset_view);
-
-CUVS_EXPORT cuvsError_t cuvsMergedStorageMake(cuvsResources_t res,
-                                              cuvsCagraIndex_t* indices,
-                                              size_t num_indices,
-                                              cuvsFilter filter,
-                                              cuvsDatasetStorage_t* merged_storage);
-
-CUVS_EXPORT cuvsError_t cuvsDatasetStorageDestroy(cuvsDatasetStorage_t dataset_storage);
 
 #ifdef __cplusplus
 }

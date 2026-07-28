@@ -112,17 +112,6 @@ cdef extern from "cuvs/neighbors/cagra.h" nogil:
         CUVS_DATASET_MEM_TYPE_HOST
         CUVS_DATASET_MEM_TYPE_DEVICE
 
-    ctypedef enum cuvsDatasetStorageKind_t:
-        CUVS_DATASET_STORAGE_KIND_EXTENDED
-        CUVS_DATASET_STORAGE_KIND_MERGED
-
-    ctypedef struct cuvsDatasetStorage:
-        uintptr_t addr
-        DLDataType dtype
-        cuvsDatasetStorageKind_t kind
-
-    ctypedef cuvsDatasetStorage* cuvsDatasetStorage_t
-
     cuvsError_t cuvsAceParamsCreate(cuvsAceParams_t* params)
 
     cuvsError_t cuvsAceParamsDestroy(cuvsAceParams_t params)

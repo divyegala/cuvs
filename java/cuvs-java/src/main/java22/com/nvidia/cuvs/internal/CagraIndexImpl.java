@@ -126,8 +126,12 @@ public class CagraIndexImpl implements CagraIndex {
     try {
       int returnValue = cuvsCagraIndexDestroy(cagraIndexReference.getMemorySegment());
       checkCuVSError(returnValue, "cuvsCagraIndexDestroy");
-      if (cagraIndexReference.dataset != null) {
-        cagraIndexReference.dataset.close();
+      if (cagraIndexReference.datasetOwner != null) {
+        try {
+          cagraIndexReference.datasetOwner.close();
+        } catch (Exception e) {
+          throw new RuntimeException("Failed to destroy CAGRA dataset", e);
+        }
       }
     } finally {
       destroyed = true;
@@ -628,6 +632,22 @@ public class CagraIndexImpl implements CagraIndex {
     }
   }
 
+  private static final class OwningDatasetCloseDelegate implements AutoCloseable {
+    private MemorySegment handle;
+
+    private OwningDatasetCloseDelegate(MemorySegment handle) {
+      this.handle = handle;
+    }
+
+    @Override
+    public void close() {
+      if (handle != null && handle.address() != 0) {
+        checkCuVSError(cuvsDatasetDestroy(handle), "cuvsDatasetDestroy");
+        handle = MemorySegment.NULL;
+      }
+    }
+  }
+
   private static final class DevicePaddedDatasetViewCloseDelegate implements AutoCloseable {
     private MemorySegment handle;
 
@@ -873,15 +893,11 @@ public class CagraIndexImpl implements CagraIndex {
         cuvsFilter.type(mergeFilter, 0); // NO_FILTER
         cuvsFilter.addr(mergeFilter, 0);
 
-        MemorySegment mergedStorage = MemorySegment.NULL;
+        MemorySegment mergedDatasetPtr = localArena.allocate(cuvsDataset_t);
+        checkCuVSError(cuvsDatasetCreate(mergedDatasetPtr), "cuvsDatasetCreate");
+        MemorySegment mergedDataset = mergedDatasetPtr.get(cuvsDataset_t, 0);
+        AutoCloseable datasetOwner = new OwningDatasetCloseDelegate(mergedDataset);
         try {
-          MemorySegment mergedStoragePtr = localArena.allocate(cuvsDatasetStorage_t);
-          checkCuVSError(
-              cuvsMergedStorageMake(
-                  cuvsRes, indexesSegment, indexes.length, mergeFilter, mergedStoragePtr),
-              "cuvsMergedStorageMake");
-          mergedStorage = mergedStoragePtr.get(cuvsDatasetStorage_t, 0);
-
           checkCuVSError(
               cuvsCagraMerge(
                   cuvsRes,
@@ -889,18 +905,21 @@ public class CagraIndexImpl implements CagraIndex {
                   indexesSegment,
                   indexes.length,
                   mergeFilter,
-                  mergedStorage,
+                  mergedDataset,
                   mergedIndex),
               "cuvsCagraMerge");
-        } finally {
-          if (mergedStorage.address() != 0) {
-            checkCuVSError(cuvsDatasetStorageDestroy(mergedStorage), "cuvsDatasetStorageDestroy");
+          return new CagraIndexImpl(
+              new IndexReference(mergedIndex, null, datasetOwner), resources);
+        } catch (RuntimeException | Error e) {
+          try {
+            datasetOwner.close();
+          } catch (Exception closeError) {
+            e.addSuppressed(closeError);
           }
+          throw e;
         }
       }
     }
-
-    return new CagraIndexImpl(new IndexReference(mergedIndex, null), resources);
   }
 
   /**
@@ -966,6 +985,7 @@ public class CagraIndexImpl implements CagraIndex {
 
     private final MemorySegment memorySegment;
     private final CuVSMatrix dataset;
+    private final AutoCloseable datasetOwner;
 
     /**
      * Constructs CagraIndexReference with an instance of MemorySegment passed as a
@@ -979,8 +999,16 @@ public class CagraIndexImpl implements CagraIndex {
      *                           Can be null (e.g. from deserialization or merging)
      */
     private IndexReference(MemorySegment indexMemorySegment, CuVSMatrix dataset) {
+      this(indexMemorySegment, dataset, dataset);
+    }
+
+    private IndexReference(
+        MemorySegment indexMemorySegment,
+        CuVSMatrix dataset,
+        AutoCloseable datasetOwner) {
       this.memorySegment = indexMemorySegment;
       this.dataset = dataset;
+      this.datasetOwner = datasetOwner;
     }
 
     /**

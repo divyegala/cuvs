@@ -849,6 +849,7 @@ cuvsCagraIndexParams_t params,
 cuvsCagraIndex_t* indices,
 size_t num_indices,
 cuvsFilter filter,
+cuvsDataset_t merged_dataset,
 cuvsCagraIndex_t output_index);
 ```
 
@@ -872,6 +873,7 @@ Example:
 | `indices` | in | [`cuvsCagraIndex_t*`](/api-reference/c-api-neighbors-cagra#cuvscagraindex) | Array of input cuvsCagraIndex_t handles to merge |
 | `num_indices` | in | `size_t` | Number of input indices |
 | `filter` | in | [`cuvsFilter`](/api-reference/c-api-neighbors-common#cuvsfilter) | Filter that can be used to filter out vectors from the merged index |
+| `merged_dataset` | out | `cuvsDataset_t` | Empty owning dataset handle. Merge allocates and populates its device storage using the input index layout. Keep it alive while using the output index. |
 | `output_index` | out | [`cuvsCagraIndex_t`](/api-reference/c-api-neighbors-cagra#cuvscagraindex) | Output handle that will store the merged index. Must be initialized using `cuvsCagraIndexCreate` before use. |
 
 **Returns**

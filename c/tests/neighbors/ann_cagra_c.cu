@@ -645,8 +645,8 @@ TEST(CagraC, BuildMergeSearch)
   filter.addr = 0;
 
   cuvsCagraIndex_t index_array[2] = {index_main, index_add};
-  cuvsDatasetStorage_t merged_dataset = nullptr;
-  ASSERT_EQ(cuvsMergedStorageMake(res, index_array, 2, filter, &merged_dataset), CUVS_SUCCESS);
+  cuvsDataset_t merged_dataset = nullptr;
+  ASSERT_EQ(cuvsDatasetCreate(&merged_dataset), CUVS_SUCCESS);
   ASSERT_EQ(cuvsCagraMerge(res, build_params, index_array, 2, filter, merged_dataset, index_merged),
             CUVS_SUCCESS);
 
@@ -725,15 +725,15 @@ TEST(CagraC, BuildMergeSearch)
   EXPECT_NEAR(distance_host, 0.0f, 1e-6);
 
   cuvsCagraSearchParamsDestroy(search_params);
-  cuvsDatasetViewDestroy(padded_dataset);
-  cuvsDatasetViewDestroy(additional_dataset_view);
-  cuvsDatasetViewDestroy(main_dataset_view);
-  cuvsDatasetDestroy(padded_dataset_owner);
-  cuvsDatasetStorageDestroy(merged_dataset);
-  cuvsCagraIndexParamsDestroy(build_params);
   cuvsCagraIndexDestroy(index_merged);
   cuvsCagraIndexDestroy(index_add);
   cuvsCagraIndexDestroy(index_main);
+  cuvsDatasetViewDestroy(padded_dataset);
+  cuvsDatasetDestroy(padded_dataset_owner);
+  cuvsDatasetViewDestroy(additional_dataset_view);
+  cuvsDatasetViewDestroy(main_dataset_view);
+  cuvsDatasetDestroy(merged_dataset);
+  cuvsCagraIndexParamsDestroy(build_params);
   cuvsResourcesDestroy(res);
 }
 

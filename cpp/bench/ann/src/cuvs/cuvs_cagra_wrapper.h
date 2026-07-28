@@ -413,11 +413,16 @@ void cuvs_cagra<T, IdxT>::build(const T* dataset, size_t nrow)
       }
 
       cuvs::neighbors::filtering::none_sample_filter merge_row_filter;
-      auto merge_storage =
-        cuvs::neighbors::cagra::make_merged_storage(handle_, indices, merge_row_filter);
-      index_ = std::make_shared<index_type>(
-        cuvs::neighbors::cagra::merge(handle_, params, indices, merge_storage, merge_row_filter));
-      *dataset_ = std::move(merge_storage.merged_storage);
+      int64_t merged_rows = 0;
+      for (auto* index : indices) {
+        merged_rows += static_cast<int64_t>(index->size());
+      }
+      auto const stride        = static_cast<int64_t>(indices.front()->dataset().stride());
+      *dataset_                = raft::make_device_matrix<T, int64_t>(handle_, merged_rows, stride);
+      auto merged_dataset_view = cuvs::neighbors::device_padded_dataset_view<T, int64_t>(
+        raft::make_const_mdspan(dataset_->view()), static_cast<uint32_t>(dim_));
+      index_ = std::make_shared<index_type>(cuvs::neighbors::cagra::merge(
+        handle_, params, indices, merged_dataset_view, merge_row_filter));
     }
   }
 }

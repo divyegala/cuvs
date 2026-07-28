@@ -868,35 +868,6 @@ using cagra_index_t = index<cuvs::neighbors::cagra_view_element_type_t<DatasetVi
  */
 
 /**
- * @brief Row counts and strides for a CAGRA merge (metadata only; no GPU storage).
- *
- * A populated instance is carried inside `merged_dataset_storage` together with the owning
- * device matrices allocated by `make_merged_storage`.
- */
-struct merged_dataset {
-  int64_t merged_rows{};      ///< Full concatenation row count (staging for merge + filter).
-  int64_t filtered_rows{};    ///< Dataset rows the merged index will reference (filtered or full).
-  int64_t stride_elements{};  ///< Row pitch in elements (>= dim, matches input index rows).
-  uint32_t dim{};
-  bool bitset_filtered{};  ///< If true, `merged_dataset_storage` holds a second matrix for rows
-                           ///< after the bitset filter.
-};
-
-/**
- * @brief Device storage for a physical CAGRA merge, allocated by `make_merged_storage`.
- *
- * Owns the full-merge staging matrix (`merged_storage`) and, when `layout.bitset_filtered` is
- * true, the filtered output matrix (`filtered_storage`). `merge` writes into these buffers and
- * returns an index that views them; keep this object alive while using that index.
- */
-template <typename T, typename IdxT>
-struct merged_dataset_storage {
-  merged_dataset layout{};
-  raft::device_matrix<T, int64_t, raft::row_major> merged_storage;
-  std::optional<raft::device_matrix<T, int64_t, raft::row_major>> filtered_storage{};
-};
-
-/**
  * @defgroup cagra_cpp_index_build CAGRA index build functions
  * @{
  */
@@ -3150,20 +3121,6 @@ void serialize_to_hnswlib(
  * @{
  */
 
-/** @brief Allocate device merge buffers for the given indices and row filter.
- *
- * Computes row counts and stride (see `merged_dataset`), allocates `merged_storage` with shape
- * `[merged_rows, stride_elements]`, and when using a bitset row filter also allocates
- * `filtered_storage` with shape `[filtered_rows, stride_elements]`. Pass the result to `merge` with
- * the same `indices` and `row_filter`.
- */
-template <typename T, typename IdxT, cuvs::neighbors::ann_dataset_view DatasetViewT>
-merged_dataset_storage<T, IdxT> make_merged_storage(
-  raft::resources const& res,
-  std::vector<cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>*> const& indices,
-  const cuvs::neighbors::filtering::base_filter& row_filter =
-    cuvs::neighbors::filtering::none_sample_filter{});
-
 /** @brief Merge multiple CAGRA indices into a single index.
  *
  * @note This API only supports physical merge (`merge_strategy = MERGE_STRATEGY_PHYSICAL`).
@@ -3173,7 +3130,7 @@ template <typename T, typename IdxT, cuvs::neighbors::ann_dataset_view DatasetVi
 auto merge(raft::resources const& res,
            const cuvs::neighbors::cagra::index_params& params,
            std::vector<cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>*>& indices,
-           merged_dataset_storage<T, IdxT>& storage,
+           DatasetViewT merged_dataset,
            const cuvs::neighbors::filtering::base_filter& row_filter =
              cuvs::neighbors::filtering::none_sample_filter{})
   -> cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>;

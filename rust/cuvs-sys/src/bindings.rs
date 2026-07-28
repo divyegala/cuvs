@@ -335,32 +335,11 @@ const _: () = {
         [::std::mem::offset_of!(cuvsDatasetView, layout) - 24usize];
 };
 pub type cuvsDatasetView_t = *mut cuvsDatasetView;
-#[repr(u32)]
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub enum cuvsDatasetStorageKind_t {
-    CUVS_DATASET_STORAGE_KIND_EXTENDED = 0,
-    CUVS_DATASET_STORAGE_KIND_MERGED = 1,
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct cuvsDatasetStorage {
-    pub addr: usize,
-    pub dtype: DLDataType,
-    pub kind: cuvsDatasetStorageKind_t,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of cuvsDatasetStorage"][::std::mem::size_of::<cuvsDatasetStorage>() - 16usize];
-    ["Alignment of cuvsDatasetStorage"][::std::mem::align_of::<cuvsDatasetStorage>() - 8usize];
-    ["Offset of field: cuvsDatasetStorage::addr"]
-        [::std::mem::offset_of!(cuvsDatasetStorage, addr) - 0usize];
-    ["Offset of field: cuvsDatasetStorage::dtype"]
-        [::std::mem::offset_of!(cuvsDatasetStorage, dtype) - 8usize];
-    ["Offset of field: cuvsDatasetStorage::kind"]
-        [::std::mem::offset_of!(cuvsDatasetStorage, kind) - 12usize];
-};
-pub type cuvsDatasetStorage_t = *mut cuvsDatasetStorage;
 pub type cuvsCagraIndex_t = *mut cuvsCagraIndex;
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsDatasetCreate(dataset: *mut cuvsDataset_t) -> cuvsError_t;
+}
 unsafe extern "C" {
     #[must_use]
     pub fn cuvsDatasetDevicePaddedMake(
@@ -423,20 +402,6 @@ unsafe extern "C" {
         dataset: *mut DLManagedTensor,
         standard_dataset: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsMergedStorageMake(
-        res: cuvsResources_t,
-        indices: *mut cuvsCagraIndex_t,
-        num_indices: usize,
-        filter: cuvsFilter,
-        merged_storage: *mut cuvsDatasetStorage_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsDatasetStorageDestroy(dataset_storage: cuvsDatasetStorage_t) -> cuvsError_t;
 }
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -1504,7 +1469,7 @@ unsafe extern "C" {
         indices: *mut cuvsCagraIndex_t,
         num_indices: usize,
         filter: cuvsFilter,
-        merged_dataset: cuvsDatasetStorage_t,
+        merged_dataset: cuvsDataset_t,
         output_index: cuvsCagraIndex_t,
     ) -> cuvsError_t;
 }

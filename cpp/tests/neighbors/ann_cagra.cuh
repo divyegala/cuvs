@@ -1178,10 +1178,14 @@ class AnnCagraIndexFilteredMergeTest : public ::testing::TestWithParam<AnnCagraI
         indices.push_back(&index0);
         indices.push_back(&index1);
 
-        auto merge_storage =
-          cuvs::neighbors::cagra::make_merged_storage(handle_, indices, bitset_filter_obj);
+        auto merged_matrix = raft::make_device_matrix<DataT, int64_t>(
+          handle_,
+          ps.n_rows - static_cast<int64_t>(test_cagra_sample_filter::offset),
+          static_cast<int64_t>(index0.dataset().stride()));
+        auto merged_dataset = cuvs::neighbors::device_padded_dataset<DataT, int64_t>(
+          std::move(merged_matrix), static_cast<uint32_t>(ps.dim));
         auto merge_idx = cuvs::neighbors::cagra::merge(
-          handle_, index_params, indices, merge_storage, bitset_filter_obj);
+          handle_, index_params, indices, merged_dataset.as_dataset_view(), bitset_filter_obj);
 
         auto search_queries_view = raft::make_device_matrix_view<const DataT, int64_t>(
           search_queries.data(), ps.n_queries, ps.dim);
@@ -1419,9 +1423,14 @@ class AnnCagraIndexMergeTest : public ::testing::TestWithParam<AnnCagraInputs> {
         std::vector<cagra::device_padded_index<DataT, IdxT>*> indices_to_merge{&index0, &index1};
 
         if (ps.merge_strategy == cuvs::neighbors::MergeStrategy::MERGE_STRATEGY_PHYSICAL) {
-          auto merge_storage =
-            cuvs::neighbors::cagra::make_merged_storage(handle_, indices_to_merge);
-          auto merged_idx = cagra::merge(handle_, index_params, indices_to_merge, merge_storage);
+          auto const merged_rows =
+            static_cast<int64_t>(index0.size()) + static_cast<int64_t>(index1.size());
+          auto merged_matrix = raft::make_device_matrix<DataT, int64_t>(
+            handle_, merged_rows, static_cast<int64_t>(index0.dataset().stride()));
+          auto merged_dataset = cuvs::neighbors::device_padded_dataset<DataT, int64_t>(
+            std::move(merged_matrix), static_cast<uint32_t>(ps.dim));
+          auto merged_idx =
+            cagra::merge(handle_, index_params, indices_to_merge, merged_dataset.as_dataset_view());
           cagra::search(handle_,
                         search_params,
                         merged_idx,

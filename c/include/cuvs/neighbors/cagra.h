@@ -927,16 +927,22 @@ CUVS_EXPORT cuvsError_t cuvsCagraIndexFromArgs(cuvsResources_t res,
  * cuvsCagraIndexCreate(&index2);
  * cuvsCagraIndexCreate(&merged_index);
  *
- * // Assume index1 and index2 have been built using cuvsCagraBuild
+ * // Assume index1 and index2 have device datasets and were built using cuvsCagraBuild.
  *
  * cuvsCagraIndexParams_t merge_params;
  * cuvsError_t params_create_status = cuvsCagraIndexParamsCreate(&merge_params);
  *
+ * cuvsDataset_t merged_dataset;
+ * cuvsDatasetCreate(&merged_dataset);
+ * cuvsFilter filter = {.type = NO_FILTER, .addr = 0};
+ *
  * cuvsError_t merge_status = cuvsCagraMerge(res, merge_params, (cuvsCagraIndex_t[]){index1,
- * index2}, 2, merged_index);
+ * index2}, 2, filter, merged_dataset, merged_index);
  *
  * // Use merged_index for search operations
  *
+ * cuvsCagraIndexDestroy(merged_index);
+ * cuvsDatasetDestroy(merged_dataset);
  * cuvsError_t params_destroy_status = cuvsCagraIndexParamsDestroy(merge_params);
  * cuvsError_t res_destroy_status = cuvsResourcesDestroy(res);
  * @endcode
@@ -946,6 +952,9 @@ CUVS_EXPORT cuvsError_t cuvsCagraIndexFromArgs(cuvsResources_t res,
  * @param[in] indices Array of input cuvsCagraIndex_t handles to merge
  * @param[in] num_indices Number of input indices
  * @param[in] filter Filter that can be used to filter out vectors from the merged index
+ * @param[out] merged_dataset Empty owning dataset handle. Merge allocates and populates its device
+ *                            storage with the same layout as the input indices. Keep it alive while
+ *                            using \p output_index.
  * @param[out] output_index Output handle that will store the merged index.
  *                          Must be initialized using `cuvsCagraIndexCreate` before use.
  */
@@ -954,7 +963,7 @@ CUVS_EXPORT cuvsError_t cuvsCagraMerge(cuvsResources_t res,
                            cuvsCagraIndex_t* indices,
                            size_t num_indices,
                            cuvsFilter filter,
-                           cuvsDatasetStorage_t merged_dataset,
+                           cuvsDataset_t merged_dataset,
                            cuvsCagraIndex_t output_index);
 
 /**

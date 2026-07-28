@@ -48,11 +48,6 @@ struct cuvs_cagra_c_api_index_lifetime_holder {
   cuvs::neighbors::cagra::index<T, uint32_t, DatasetViewT> idx;
 };
 
-template <typename T>
-struct cagra_c_api_merged_dataset_holder {
-  cuvs::neighbors::cagra::merged_dataset_storage<T, uint32_t> storage;
-};
-
 /** Owns how to delete co-located index storage; `cuvsCagraIndex::addr` points here. */
 struct sg_cagra_c_api_index_box {
   void* index_ptr;
@@ -117,25 +112,59 @@ static void with_index_by_layout(sg_cagra_c_api_index_box* box,
   }
 }
 
+template <typename T>
+static void destroy_typed_addr(void* ptr);
+
 template <typename T, cuvs::neighbors::ann_dataset_view DatasetViewT>
 static void merge_indices_for_layout(
   raft::resources* res_ptr,
   cuvs::neighbors::cagra::index_params const& params_cpp,
   std::vector<cuvs::neighbors::cagra::index<T, uint32_t, DatasetViewT>*>& index_ptrs,
   cuvsFilter filter,
-  cuvs::neighbors::cagra::merged_dataset_storage<T, uint32_t>& merge_storage,
+  cuvsDataset_t merged_dataset,
   cuvsCagraIndex_t output_index)
 {
-  if (filter.type == NO_FILTER) {
-    auto merged_idx    = cuvs::neighbors::cagra::merge(*res_ptr, params_cpp, index_ptrs, merge_storage);
+  RAFT_EXPECTS(merged_dataset != nullptr, "cuvsCagraMerge: null merged dataset handle");
+  RAFT_EXPECTS(merged_dataset->addr == 0,
+               "cuvsCagraMerge: merged dataset handle must be empty");
+
+  constexpr auto output_layout =
+    cuvs::neighbors::is_padded_dataset_view_v<DatasetViewT> ? CUVS_DATASET_LAYOUT_PADDED
+                                                            : CUVS_DATASET_LAYOUT_STANDARD;
+
+  int64_t merged_row_count = 0;
+  for (auto* idx_ptr : index_ptrs) {
+    merged_row_count += static_cast<int64_t>(idx_ptr->size());
+  }
+
+  auto merge_into_dataset = [&](auto const& row_filter) {
+    auto const final_row_count =
+      cuvs::neighbors::cagra::detail::merged_dataset_size<T, uint32_t, DatasetViewT>(
+        *res_ptr, index_ptrs, row_filter);
+    auto const dim    = static_cast<uint32_t>(index_ptrs.front()->dim());
+    auto const stride = static_cast<int64_t>(index_ptrs.front()->dataset().stride());
+
+    auto matrix = raft::make_device_matrix<T, int64_t>(*res_ptr, final_row_count, stride);
+    using owner_t = cuvs::neighbors::owning_dataset_for_view_t<DatasetViewT>;
+    auto owner    = std::make_unique<owner_t>(std::move(matrix), dim);
+    auto view     = owner->as_dataset_view();
+    auto merged_idx =
+      cuvs::neighbors::cagra::merge(*res_ptr, params_cpp, index_ptrs, view, row_filter);
     auto* holder =
       new cuvs_cagra_c_api_index_lifetime_holder<T, DatasetViewT>{std::move(merged_idx)};
-    bind_index_lifetime_holder_to_C_index<T, DatasetViewT>(output_index, output_index->dtype, holder);
+    bind_index_lifetime_holder_to_C_index<T, DatasetViewT>(
+      output_index, output_index->dtype, holder);
+
+    merged_dataset->addr         = reinterpret_cast<uintptr_t>(owner.release());
+    merged_dataset->destroy_addr = &destroy_typed_addr<owner_t>;
+    merged_dataset->dtype        = output_index->dtype;
+    merged_dataset->mem_type     = CUVS_DATASET_MEM_TYPE_DEVICE;
+    merged_dataset->layout       = output_layout;
+  };
+
+  if (filter.type == NO_FILTER) {
+    merge_into_dataset(cuvs::neighbors::filtering::none_sample_filter{});
   } else if (filter.type == BITSET) {
-    int64_t merged_row_count = 0;
-    for (auto* idx_ptr : index_ptrs) {
-      merged_row_count += static_cast<int64_t>(idx_ptr->size());
-    }
     using filter_mdspan_type = raft::device_vector_view<std::uint32_t, int64_t, raft::row_major>;
     auto removed_indices_tensor = reinterpret_cast<DLManagedTensor*>(filter.addr);
     auto removed_indices = cuvs::core::from_dlpack<filter_mdspan_type>(removed_indices_tensor);
@@ -143,11 +172,7 @@ static void merge_indices_for_layout(
       removed_indices, merged_row_count);
     auto bitset_filter_obj =
       cuvs::neighbors::filtering::bitset_filter<uint32_t, int64_t>(removed_indices_bitset);
-    auto merged_idx = cuvs::neighbors::cagra::merge(
-      *res_ptr, params_cpp, index_ptrs, merge_storage, bitset_filter_obj);
-    auto* holder =
-      new cuvs_cagra_c_api_index_lifetime_holder<T, DatasetViewT>{std::move(merged_idx)};
-    bind_index_lifetime_holder_to_C_index<T, DatasetViewT>(output_index, output_index->dtype, holder);
+    merge_into_dataset(bitset_filter_obj);
   } else {
     RAFT_FAIL("Unsupported filter type: BITMAP");
   }
@@ -269,12 +294,6 @@ template <typename T>
 static void destroy_typed_addr(void* ptr)
 {
   delete reinterpret_cast<T*>(ptr);
-}
-
-template <typename T>
-static void destroy_merged_dataset_typed(uintptr_t addr)
-{
-  delete reinterpret_cast<cagra_c_api_merged_dataset_holder<T>*>(addr);
 }
 
 template <typename T>
@@ -871,7 +890,7 @@ void _merge(cuvsResources_t res,
             cuvsCagraIndex_t* indices,
             size_t num_indices,
             cuvsFilter filter,
-            cuvsDatasetStorage_t merged_dataset,
+            cuvsDataset_t merged_dataset,
             cuvsCagraIndex_t output_index)
 {
   auto res_ptr = reinterpret_cast<raft::resources*>(res);
@@ -913,101 +932,19 @@ void _merge(cuvsResources_t res,
                           params.build_algo,
                           total_size,
                           dim);
-  auto* merge_holder =
-    reinterpret_cast<cagra_c_api_merged_dataset_holder<T>*>(merged_dataset->addr);
-  RAFT_EXPECTS(merged_dataset->kind == CUVS_DATASET_STORAGE_KIND_MERGED,
-               "cuvsCagraMerge: storage handle kind must be MERGED");
-  RAFT_EXPECTS(merge_holder != nullptr, "cuvsCagraMerge: null merged dataset storage");
-
   if (layout == sg_cagra_c_api_index_box::dataset_layout::device_padded) {
     auto index_ptrs =
       convert_opaque_indices_to_concrete_types<T, cuvs::neighbors::device_padded_dataset_view<T, int64_t>>(
         indices, num_indices);
     merge_indices_for_layout<T, cuvs::neighbors::device_padded_dataset_view<T, int64_t>>(
-      res_ptr, params_cpp, index_ptrs, filter, merge_holder->storage, output_index);
+      res_ptr, params_cpp, index_ptrs, filter, merged_dataset, output_index);
   } else {
     auto index_ptrs =
       convert_opaque_indices_to_concrete_types<T, cuvs::neighbors::device_standard_dataset_view<T, int64_t>>(
         indices, num_indices);
     merge_indices_for_layout<T, cuvs::neighbors::device_standard_dataset_view<T, int64_t>>(
-      res_ptr, params_cpp, index_ptrs, filter, merge_holder->storage, output_index);
+      res_ptr, params_cpp, index_ptrs, filter, merged_dataset, output_index);
   }
-}
-
-template <typename T>
-void _make_merged_storage(cuvsResources_t res,
-                          cuvsCagraIndex_t* indices,
-                          size_t num_indices,
-                          cuvsFilter filter,
-                          cuvsDatasetStorage_t* output_merged_storage)
-{
-  auto res_ptr = reinterpret_cast<raft::resources*>(res);
-  auto* first_box = reinterpret_cast<sg_cagra_c_api_index_box*>(indices[0]->addr);
-  RAFT_EXPECTS(first_box != nullptr, "cuvsMergedStorageMake: null index handle");
-  auto layout = first_box->layout;
-  RAFT_EXPECTS(layout == sg_cagra_c_api_index_box::dataset_layout::device_padded ||
-                 layout == sg_cagra_c_api_index_box::dataset_layout::device_standard,
-               "cuvsMergedStorageMake: host indices are unsupported; attach device dataset to "
-               "host indices first.");
-  for (size_t i = 0; i < num_indices; ++i) {
-    auto* box = reinterpret_cast<sg_cagra_c_api_index_box*>(indices[i]->addr);
-    RAFT_EXPECTS(box != nullptr, "cuvsMergedStorageMake: null index handle");
-    RAFT_EXPECTS(box->layout == layout,
-                 "cuvsMergedStorageMake: all input indices must share the same dataset "
-                 "layout");
-  }
-
-  auto* out = new cuvsDatasetStorage{
-    0, indices[0]->dtype, CUVS_DATASET_STORAGE_KIND_MERGED};
-  cuvs::neighbors::cagra::merged_dataset_storage<T, uint32_t> storage =
-    [&]() -> cuvs::neighbors::cagra::merged_dataset_storage<T, uint32_t> {
-    if (layout == sg_cagra_c_api_index_box::dataset_layout::device_padded) {
-      auto index_ptrs =
-        convert_opaque_indices_to_concrete_types<T, cuvs::neighbors::device_padded_dataset_view<T, int64_t>>(
-          indices, num_indices);
-      if (filter.type == NO_FILTER) { return cuvs::neighbors::cagra::make_merged_storage(*res_ptr, index_ptrs); }
-      if (filter.type == BITSET) {
-        int64_t merged_row_count = 0;
-        for (auto* idx_ptr : index_ptrs) {
-          merged_row_count += static_cast<int64_t>(idx_ptr->size());
-        }
-        using filter_mdspan_type = raft::device_vector_view<std::uint32_t, int64_t, raft::row_major>;
-        auto removed_indices_tensor = reinterpret_cast<DLManagedTensor*>(filter.addr);
-        auto removed_indices = cuvs::core::from_dlpack<filter_mdspan_type>(removed_indices_tensor);
-        cuvs::core::bitset_view<std::uint32_t, int64_t> removed_indices_bitset(
-          removed_indices, merged_row_count);
-        auto bitset_filter_obj =
-          cuvs::neighbors::filtering::bitset_filter<uint32_t, int64_t>(removed_indices_bitset);
-        return cuvs::neighbors::cagra::make_merged_storage(*res_ptr, index_ptrs, bitset_filter_obj);
-      }
-      RAFT_FAIL("Unsupported filter type: BITMAP");
-    } else if (layout == sg_cagra_c_api_index_box::dataset_layout::device_standard) {
-      auto index_ptrs =
-      convert_opaque_indices_to_concrete_types<T, cuvs::neighbors::device_standard_dataset_view<T, int64_t>>(
-        indices, num_indices);
-      if (filter.type == NO_FILTER) { return cuvs::neighbors::cagra::make_merged_storage(*res_ptr, index_ptrs); }
-      if (filter.type == BITSET) {
-        int64_t merged_row_count = 0;
-        for (auto* idx_ptr : index_ptrs) {
-          merged_row_count += static_cast<int64_t>(idx_ptr->size());
-        }
-        using filter_mdspan_type = raft::device_vector_view<std::uint32_t, int64_t, raft::row_major>;
-        auto removed_indices_tensor = reinterpret_cast<DLManagedTensor*>(filter.addr);
-        auto removed_indices = cuvs::core::from_dlpack<filter_mdspan_type>(removed_indices_tensor);
-        cuvs::core::bitset_view<std::uint32_t, int64_t> removed_indices_bitset(
-          removed_indices, merged_row_count);
-        auto bitset_filter_obj =
-          cuvs::neighbors::filtering::bitset_filter<uint32_t, int64_t>(removed_indices_bitset);
-        return cuvs::neighbors::cagra::make_merged_storage(*res_ptr, index_ptrs, bitset_filter_obj);
-      }
-      RAFT_FAIL("Unsupported filter type: BITMAP");
-    } else {
-      RAFT_FAIL("cuvsMergedStorageMake: unsupported index layout");
-    }
-  }();
-  auto* storage_holder = new cagra_c_api_merged_dataset_holder<T>{std::move(storage)};
-  out->addr            = reinterpret_cast<uintptr_t>(storage_holder);
-  *output_merged_storage = out;
 }
 
 template <typename T, typename IdxT>
@@ -1225,6 +1162,15 @@ extern "C" cuvsError_t cuvsCagraIndexGetGraph(cuvsCagraIndex_t index, DLManagedT
     } else {
       RAFT_FAIL("Unsupported index dtype: %d and bits: %d", index->dtype.code, index->dtype.bits);
     }
+  });
+}
+
+extern "C" cuvsError_t cuvsDatasetCreate(cuvsDataset_t* dataset)
+{
+  return cuvs::core::translate_exceptions([=] {
+    RAFT_EXPECTS(dataset != nullptr, "cuvsDatasetCreate: output handle must not be null");
+    *dataset = new cuvsDataset{
+      0, nullptr, DLDataType{}, CUVS_DATASET_MEM_TYPE_DEVICE, CUVS_DATASET_LAYOUT_STANDARD};
   });
 }
 
@@ -1493,59 +1439,6 @@ extern "C" cuvsError_t cuvsCagraUpdateDataset(cuvsResources_t res,
   return dispatch_attach_dataset(res, device_padded_dataset, index);
 }
 
-extern "C" cuvsError_t cuvsDatasetStorageDestroy(cuvsDatasetStorage_t dataset_storage)
-{
-  return cuvs::core::translate_exceptions([=] {
-    if (dataset_storage == nullptr) { return; }
-    RAFT_EXPECTS(dataset_storage->kind == CUVS_DATASET_STORAGE_KIND_MERGED,
-                 "cuvsDatasetStorageDestroy: unsupported storage handle kind");
-    if (dataset_storage->addr != 0) {
-      if (dataset_storage->dtype.code == kDLFloat && dataset_storage->dtype.bits == 32) {
-        destroy_merged_dataset_typed<float>(dataset_storage->addr);
-      } else if (dataset_storage->dtype.code == kDLFloat && dataset_storage->dtype.bits == 16) {
-        destroy_merged_dataset_typed<half>(dataset_storage->addr);
-      } else if (dataset_storage->dtype.code == kDLInt && dataset_storage->dtype.bits == 8) {
-        destroy_merged_dataset_typed<int8_t>(dataset_storage->addr);
-      } else if (dataset_storage->dtype.code == kDLUInt && dataset_storage->dtype.bits == 8) {
-        destroy_merged_dataset_typed<uint8_t>(dataset_storage->addr);
-      } else {
-        RAFT_FAIL("Unsupported dataset storage dtype: %d and bits: %d",
-                  dataset_storage->dtype.code,
-                  dataset_storage->dtype.bits);
-      }
-    }
-    delete dataset_storage;
-  });
-}
-
-extern "C" cuvsError_t cuvsMergedStorageMake(cuvsResources_t res,
-                                             cuvsCagraIndex_t* indices,
-                                             size_t num_indices,
-                                             cuvsFilter filter,
-                                             cuvsDatasetStorage_t* merged_storage)
-{
-  return cuvs::core::translate_exceptions([=] {
-    RAFT_EXPECTS(indices != nullptr && num_indices > 0,
-                 "cuvsMergedStorageMake: indices array cannot be null or empty");
-    auto dtype = (*indices[0]).dtype;
-    for (size_t i = 1; i < num_indices; ++i) {
-      RAFT_EXPECTS((*indices[i]).dtype.code == dtype.code && (*indices[i]).dtype.bits == dtype.bits,
-                   "All input indices must have the same data type");
-    }
-    if (dtype.code == kDLFloat && dtype.bits == 32) {
-      _make_merged_storage<float>(res, indices, num_indices, filter, merged_storage);
-    } else if (dtype.code == kDLFloat && dtype.bits == 16) {
-      _make_merged_storage<half>(res, indices, num_indices, filter, merged_storage);
-    } else if (dtype.code == kDLInt && dtype.bits == 8) {
-      _make_merged_storage<int8_t>(res, indices, num_indices, filter, merged_storage);
-    } else if (dtype.code == kDLUInt && dtype.bits == 8) {
-      _make_merged_storage<uint8_t>(res, indices, num_indices, filter, merged_storage);
-    } else {
-      RAFT_FAIL("Unsupported index data type: code=%d, bits=%d", dtype.code, dtype.bits);
-    }
-  });
-}
-
 /**
  * Build from an already-constructed C++ dataset view. `DatasetViewT` selects the
  * `cuvs::neighbors::cagra::build` overload, and therefore the resulting index type.
@@ -1808,25 +1701,27 @@ extern "C" cuvsError_t cuvsCagraMerge(cuvsResources_t res,
                                       cuvsCagraIndex_t* indices,
                                       size_t num_indices,
                                       cuvsFilter filter,
-                                      cuvsDatasetStorage_t merged_dataset,
+                                      cuvsDataset_t merged_dataset,
                                       cuvsCagraIndex_t output_index)
 {
   return cuvs::core::translate_exceptions([=] {
     // Basic checks on inputs
     RAFT_EXPECTS(indices != nullptr && num_indices > 0, "indices array cannot be null or empty");
     RAFT_EXPECTS(params != nullptr, "params cannot be null");
+    RAFT_EXPECTS(indices[0] != nullptr && indices[0]->addr != 0,
+                 "All input indices must be built (non-empty)");
 
     // Use first index dtype as reference
     auto dtype = (*indices[0]).dtype;
     for (size_t i = 1; i < num_indices; ++i) {
+      RAFT_EXPECTS(indices[i] != nullptr && indices[i]->addr != 0,
+                   "All input indices must be built (non-empty)");
       RAFT_EXPECTS((*indices[i]).dtype.code == dtype.code && (*indices[i]).dtype.bits == dtype.bits,
                    "All input indices must have the same data type");
-      RAFT_EXPECTS((*indices[i]).addr != 0, "All input indices must be built (non-empty)");
     }
     RAFT_EXPECTS(output_index != nullptr, "Output index pointer must not be null");
-    RAFT_EXPECTS(merged_dataset != nullptr, "Merged dataset storage must not be null");
-    RAFT_EXPECTS(merged_dataset->dtype.code == dtype.code && merged_dataset->dtype.bits == dtype.bits,
-                 "dtype mismatch between merged dataset storage and indices");
+    RAFT_EXPECTS(merged_dataset != nullptr, "Merged dataset handle must not be null");
+    RAFT_EXPECTS(merged_dataset->addr == 0, "Merged dataset handle must be empty");
     output_index->dtype = dtype;  // output index type matches inputs
     destroy_sg_cagra_c_api_box(output_index->addr);
     output_index->addr = 0;
