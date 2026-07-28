@@ -415,11 +415,14 @@ void deserialize(
   }
 
   bool has_source_indices = content_map & 0x2u;
+  std::optional<raft::host_vector<IdxT, int64_t>> source_indices;
   if (has_source_indices) {
-    auto source_indices = raft::make_host_vector<IdxT, int64_t>(n_rows);
-    deserialize_mdspan(res, is, source_indices.view());
-    index_->update_source_indices(res, raft::make_const_mdspan(source_indices.view()));
+    source_indices.emplace(raft::make_host_vector<IdxT, int64_t>(n_rows));
+    deserialize_mdspan(res, is, source_indices->view());
+    index_->update_source_indices(res, raft::make_const_mdspan(source_indices->view()));
   }
+  // Graph and source-index updates can enqueue copies from host staging. Keep both staging buffers
+  // alive through this single synchronization.
   raft::resource::sync_stream(res);
   if (dataset_owner) { *out_dataset = std::move(dataset_owner); }
 }
