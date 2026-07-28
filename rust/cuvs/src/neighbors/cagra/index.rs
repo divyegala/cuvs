@@ -46,12 +46,6 @@ pub struct PaddedDataset {
     handle: ffi::cuvsDataset_t,
 }
 
-/// User-owned standard dataset handle returned by CAGRA deserialization.
-#[derive(Debug)]
-pub struct StandardDataset {
-    handle: ffi::cuvsDataset_t,
-}
-
 /// Non-owning padded dataset view handle.
 #[derive(Debug)]
 pub struct PaddedDatasetView {
@@ -130,11 +124,11 @@ pub struct StandardDatasetView {
     handle: ffi::cuvsDatasetView_t,
 }
 
-/// Typed output selector for CAGRA deserialization.
+/// Output selector for CAGRA graph-only or graph-and-dataset deserialization.
 #[derive(Debug)]
 pub enum DeserializeOutput<'a> {
-    Padded(&'a mut Option<PaddedDataset>),
-    Standard(&'a mut Option<StandardDataset>),
+    Graph,
+    Dataset(&'a mut Option<PaddedDataset>),
 }
 
 impl StandardDatasetView {
@@ -361,7 +355,7 @@ impl<'d> Index<'d> {
     ///         &res,
     ///         "/path/to/index.bin",
     ///         &mut loaded_index,
-    ///         DeserializeOutput::Standard(&mut out_dataset),
+    ///         DeserializeOutput::Dataset(&mut out_dataset),
     ///     )?;
     ///
     ///     // The loaded index can be used for search just like the original
@@ -376,7 +370,15 @@ impl<'d> Index<'d> {
     ) -> Result<()> {
         let c_filename = path_to_cstring(filename.as_ref())?;
         check_cuvs(unsafe {
-            ffi::cuvsCagraSerialize(res.handle(), c_filename.as_ptr(), self.handle, include_dataset)
+            if include_dataset {
+                ffi::cuvsCagraSerializeGraphAndDataset(
+                    res.handle(),
+                    c_filename.as_ptr(),
+                    self.handle,
+                )
+            } else {
+                ffi::cuvsCagraSerializeGraph(res.handle(), c_filename.as_ptr(), self.handle)
+            }
         })?;
         Ok(())
     }
@@ -414,52 +416,29 @@ impl<'d> Index<'d> {
         index: &mut Index<'static>,
         out_dataset: DeserializeOutput<'_>,
     ) -> Result<()> {
+        let c_filename = path_to_cstring(filename.as_ref())?;
         match out_dataset {
-            DeserializeOutput::Padded(out) => Self::deserialize_padded(res, filename, index, out),
-            DeserializeOutput::Standard(out) => {
-                Self::deserialize_standard(res, filename, index, out)
+            DeserializeOutput::Graph => {
+                check_cuvs(unsafe {
+                    ffi::cuvsCagraDeserializeGraph(res.handle(), c_filename.as_ptr(), index.handle)
+                })?;
+                Ok(())
+            }
+            DeserializeOutput::Dataset(out_dataset) => {
+                let mut out =
+                    out_dataset.as_ref().map_or(std::ptr::null_mut(), |dataset| dataset.handle);
+                check_cuvs(unsafe {
+                    ffi::cuvsCagraDeserializeGraphAndDataset(
+                        res.handle(),
+                        c_filename.as_ptr(),
+                        index.handle,
+                        &mut out,
+                    )
+                })?;
+                *out_dataset = Some(PaddedDataset { handle: out });
+                Ok(())
             }
         }
-    }
-
-    fn deserialize_padded<P: AsRef<Path>>(
-        res: &Resources,
-        filename: P,
-        index: &mut Index<'static>,
-        out_dataset: &mut Option<PaddedDataset>,
-    ) -> Result<()> {
-        let c_filename = path_to_cstring(filename.as_ref())?;
-        let mut out: ffi::cuvsDataset_t = std::ptr::null_mut();
-        unsafe {
-            check_cuvs(ffi::cuvsCagraDeserializePadded(
-                res.handle(),
-                c_filename.as_ptr(),
-                index.handle,
-                &mut out,
-            ))?;
-        }
-        *out_dataset = if out.is_null() { None } else { Some(PaddedDataset { handle: out }) };
-        Ok(())
-    }
-
-    fn deserialize_standard<P: AsRef<Path>>(
-        res: &Resources,
-        filename: P,
-        index: &mut Index<'static>,
-        out_dataset: &mut Option<StandardDataset>,
-    ) -> Result<()> {
-        let c_filename = path_to_cstring(filename.as_ref())?;
-        let mut out: ffi::cuvsDataset_t = std::ptr::null_mut();
-        unsafe {
-            check_cuvs(ffi::cuvsCagraDeserializeStandard(
-                res.handle(),
-                c_filename.as_ptr(),
-                index.handle,
-                &mut out,
-            ))?;
-        }
-        *out_dataset = if out.is_null() { None } else { Some(StandardDataset { handle: out }) };
-        Ok(())
     }
 }
 
@@ -485,15 +464,6 @@ impl Drop for PaddedDatasetView {
     fn drop(&mut self) {
         if let Err(e) = check_cuvs(unsafe { ffi::cuvsDatasetViewDestroy(self.handle) }) {
             write!(stderr(), "failed to call cuvsDatasetViewDestroy {:?}", e)
-                .expect("failed to write to stderr");
-        }
-    }
-}
-
-impl Drop for StandardDataset {
-    fn drop(&mut self) {
-        if let Err(e) = check_cuvs(unsafe { ffi::cuvsDatasetDestroy(self.handle) }) {
-            write!(stderr(), "failed to call cuvsDatasetDestroy {:?}", e)
                 .expect("failed to write to stderr");
         }
     }
@@ -675,7 +645,7 @@ mod tests {
             .expect("failed to build cagra index");
 
         let filepath = std::env::temp_dir().join("test_cagra_index.bin");
-        index.serialize(&res, &filepath, false).expect("failed to serialize cagra index");
+        index.serialize(&res, &filepath, true).expect("failed to serialize cagra index");
 
         assert!(filepath.exists(), "serialized index file should exist");
         assert!(
@@ -684,12 +654,12 @@ mod tests {
         );
 
         let mut loaded_index = Index::create_handle().expect("failed to create index");
-        let mut out_dataset: Option<StandardDataset> = None;
+        let mut out_dataset: Option<PaddedDataset> = None;
         Index::deserialize(
             &res,
             &filepath,
             &mut loaded_index,
-            DeserializeOutput::Standard(&mut out_dataset),
+            DeserializeOutput::Dataset(&mut out_dataset),
         )
         .expect("failed to deserialize cagra index");
 
@@ -715,6 +685,9 @@ mod tests {
 
         assert!(filepath.exists(), "serialized index file should exist");
 
+        let mut loaded_index = Index::create_handle().expect("failed to create index");
+        Index::deserialize(&res, &filepath, &mut loaded_index, DeserializeOutput::Graph)
+            .expect("failed to deserialize graph-only cagra index");
         let _ = std::fs::remove_file(&filepath);
     }
 

@@ -64,7 +64,7 @@ public class CagraExample {
       File indexFile = new File(indexFileName);
       InputStream inputStream = new FileInputStream(indexFile);
       CagraIndex loadedIndex = CagraIndex.newBuilder(resources).build();
-      CagraIndex.StandardDataset outDatasetOwner = new CagraIndex.StandardDataset();
+      CagraIndex.PaddedDataset outDatasetOwner = new CagraIndex.PaddedDataset();
       loadedIndex.deserialize(inputStream, outDatasetOwner);
 
       // Configure search parameters

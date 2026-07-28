@@ -189,23 +189,26 @@ cdef extern from "cuvs/neighbors/cagra.h" nogil:
         cuvsDatasetView_t device_padded_dataset,
         cuvsCagraIndex_t index)
 
-    cuvsError_t cuvsCagraSerialize(cuvsResources_t res,
-                                   const char * filename,
-                                   cuvsCagraIndex_t index,
-                                   bool include_dataset)
+    cuvsError_t cuvsCagraSerializeGraph(cuvsResources_t res,
+                                        const char * filename,
+                                        cuvsCagraIndex_t index)
+    cuvsError_t cuvsCagraSerializeGraphAndDataset(
+        cuvsResources_t res,
+        const char * filename,
+        cuvsCagraIndex_t index)
 
     cuvsError_t cuvsCagraSerializeToHnswlib(cuvsResources_t res,
                                             const char * filename,
                                             cuvsCagraIndex_t index)
 
-    cuvsError_t cuvsCagraDeserializePadded(cuvsResources_t res,
-                                           const char * filename,
-                                           cuvsCagraIndex_t index,
-                                           cuvsDataset_t* out_padded_dataset)
-    cuvsError_t cuvsCagraDeserializeStandard(cuvsResources_t res,
-                                             const char * filename,
-                                             cuvsCagraIndex_t index,
-                                             cuvsDataset_t* out_standard_dataset)
+    cuvsError_t cuvsCagraDeserializeGraph(cuvsResources_t res,
+                                          const char * filename,
+                                          cuvsCagraIndex_t index)
+    cuvsError_t cuvsCagraDeserializeGraphAndDataset(
+        cuvsResources_t res,
+        const char * filename,
+        cuvsCagraIndex_t index,
+        cuvsDataset_t* out_dataset)
 
     cuvsError_t cuvsCagraIndexFromArgs(cuvsResources_t res,
                                        cuvsDistanceType metric,
@@ -239,10 +242,6 @@ cdef class Index:
 
 
 cdef class PaddedDataset:
-    cdef cuvsDataset_t dataset
-
-
-cdef class StandardDataset:
     cdef cuvsDataset_t dataset
 
 

@@ -2338,8 +2338,8 @@ auto build_cagra_host_graph_from_knn_params(raft::resources const& res,
 /**
  * Build from a host row-major matrix without uploading the full dataset early when IVF-PQ graph
  * construction can consume host batches directly. The iterative path uploads and pads inside
- * `iterative_build_graph`. The returned index contains only the optimized graph; call
- * `index::update_device_dataset_same_layout` with a device dataset view before search.
+ * `iterative_build_graph`. When requested, the returned index retains the input host dataset as a
+ * non-owning view; it still requires a device dataset before search.
  */
 template <typename T, typename IdxT = uint32_t, typename DatasetViewT>
   requires cuvs::neighbors::is_host_dataset_view_v<DatasetViewT>
@@ -2380,6 +2380,10 @@ auto build_from_host_matrix(raft::resources const& res,
 
   RAFT_LOG_TRACE("Graph optimized, creating index");
 
+  if (params.attach_dataset_on_build) {
+    return cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>(
+      res, params.metric, dataset, raft::make_const_mdspan(cagra_graph.view()));
+  }
   cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT> out(res, params.metric);
   out.update_graph(res, raft::make_const_mdspan(cagra_graph.view()));
   return out;

@@ -101,14 +101,9 @@ public interface CagraIndex extends AutoCloseable {
     }
   }
 
-  /** Output dataset handle for padded deserialize path. */
+  /** Caller-owned padded dataset returned by graph-and-dataset deserialization. */
   final class PaddedDataset extends DeserializeDataset {
     public PaddedDataset() {}
-  }
-
-  /** Output dataset handle for standard deserialize path. */
-  final class StandardDataset extends DeserializeDataset {
-    public StandardDataset() {}
   }
 
   /**
@@ -147,9 +142,9 @@ public interface CagraIndex extends AutoCloseable {
   /**
    * Deserializes into this pre-allocated index and optionally populates an output dataset handle.
    * <p>
-   * Pass a {@link PaddedDataset} or {@link StandardDataset} to receive ownership of deserialized
-   * dataset payload. Passing {@code null} mirrors the C/C++ optional out-dataset contract; this is
-   * valid only when serialized data does not contain dataset payload.
+   * Pass a {@link PaddedDataset} to receive ownership of a deserialized dataset payload. Passing
+   * {@code null} loads only the graph, even when the serialized file contains a dataset. The caller
+   * must keep the returned dataset alive while the index uses it.
    */
   void deserialize(InputStream inputStream, DeserializeDataset outDataset) throws Throwable;
 

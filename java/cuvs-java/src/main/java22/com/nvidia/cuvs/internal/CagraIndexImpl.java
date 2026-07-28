@@ -443,6 +443,9 @@ public class CagraIndexImpl implements CagraIndex {
   public void deserialize(InputStream inputStream, CagraIndex.DeserializeDataset outDataset)
       throws Throwable {
     checkNotDestroyed();
+    if (outDataset != null && outDataset.isPresent()) {
+      throw new IllegalArgumentException("outDataset must be empty before deserialization");
+    }
     MemorySegment index = cagraIndexReference.getMemorySegment();
     Path tmpIndexFile =
         Files.createTempFile(resources.tempDirectory(), UUID.randomUUID().toString(), ".cag")
@@ -455,33 +458,21 @@ public class CagraIndexImpl implements CagraIndex {
         var cuvsRes = resourcesAccessor.handle();
         MemorySegment path = arena.allocateFrom(tmpIndexFile.toString());
         if (outDataset == null) {
-          // With no typed out-dataset handle we cannot infer target layout from Java types.
-          // Mirror optional out-dataset behavior by calling standard deserialize with null out ptr.
-          // Native layer raises if serialized payload includes dataset.
-          var returnValue = cuvsCagraDeserializeStandard(cuvsRes, path, index, MemorySegment.NULL);
-          checkCuVSError(returnValue, "cuvsCagraDeserializeStandard");
+          var returnValue = cuvsCagraDeserializeGraph(cuvsRes, path, index);
+          checkCuVSError(returnValue, "cuvsCagraDeserializeGraph");
         } else if (outDataset instanceof CagraIndex.PaddedDataset) {
           MemorySegment paddedDatasetOutPtr = arena.allocate(cuvsDataset_t);
-          var returnValue = cuvsCagraDeserializePadded(cuvsRes, path, index, paddedDatasetOutPtr);
-          checkCuVSError(returnValue, "cuvsCagraDeserializePadded");
+          paddedDatasetOutPtr.set(cuvsDataset_t, 0, MemorySegment.NULL);
+          var returnValue =
+              cuvsCagraDeserializeGraphAndDataset(cuvsRes, path, index, paddedDatasetOutPtr);
+          checkCuVSError(returnValue, "cuvsCagraDeserializeGraphAndDataset");
           MemorySegment paddedDatasetHandle = paddedDatasetOutPtr.get(cuvsDataset_t, 0);
           outDataset.setDelegate(
               paddedDatasetHandle.address() == 0
                   ? null
                   : new PaddedDatasetCloseDelegate(paddedDatasetHandle));
-        } else if (outDataset instanceof CagraIndex.StandardDataset) {
-          MemorySegment standardDatasetOutPtr = arena.allocate(cuvsDataset_t);
-          var returnValue =
-              cuvsCagraDeserializeStandard(cuvsRes, path, index, standardDatasetOutPtr);
-          checkCuVSError(returnValue, "cuvsCagraDeserializeStandard");
-          MemorySegment standardDatasetHandle = standardDatasetOutPtr.get(cuvsDataset_t, 0);
-          outDataset.setDelegate(
-              standardDatasetHandle.address() == 0
-                  ? null
-                  : new StandardDatasetCloseDelegate(standardDatasetHandle));
         } else {
-          throw new IllegalArgumentException(
-              "outDataset must be null, CagraIndex.PaddedDataset, or CagraIndex.StandardDataset");
+          throw new IllegalArgumentException("outDataset must be null or CagraIndex.PaddedDataset");
         }
       }
     } finally {
@@ -513,12 +504,11 @@ public class CagraIndexImpl implements CagraIndex {
 
       long cuvsRes = resourcesAccessor.handle();
       var returnValue =
-          cuvsCagraSerialize(
+          cuvsCagraSerializeGraphAndDataset(
               cuvsRes,
               localArena.allocateFrom(tempFilePath.toString()),
-              cagraIndexReference.getMemorySegment(),
-              true);
-      checkCuVSError(returnValue, "cuvsCagraSerialize");
+              cagraIndexReference.getMemorySegment());
+      checkCuVSError(returnValue, "cuvsCagraSerializeGraphAndDataset");
 
       try (var fileInputStream = Files.newInputStream(tempFilePath)) {
         byte[] chunk = new byte[bufferLength];
@@ -659,22 +649,6 @@ public class CagraIndexImpl implements CagraIndex {
     public void close() {
       if (handle != null && handle.address() != 0) {
         checkCuVSError(cuvsDatasetViewDestroy(handle), "cuvsDatasetViewDestroy");
-        handle = MemorySegment.NULL;
-      }
-    }
-  }
-
-  private static final class StandardDatasetCloseDelegate implements AutoCloseable {
-    private MemorySegment handle;
-
-    private StandardDatasetCloseDelegate(MemorySegment handle) {
-      this.handle = handle;
-    }
-
-    @Override
-    public void close() {
-      if (handle != null && handle.address() != 0) {
-        checkCuVSError(cuvsDatasetDestroy(handle), "cuvsDatasetDestroy");
         handle = MemorySegment.NULL;
       }
     }

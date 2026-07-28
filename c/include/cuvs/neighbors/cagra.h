@@ -763,31 +763,34 @@ CUVS_EXPORT cuvsError_t cuvsCagraSearch(cuvsResources_t res,
  * @{
  */
 /**
- * Save the index to file.
+ * Save the CAGRA graph to file without its dataset.
  *
  * Experimental, both the API and the serialization format are subject to change.
  *
- * @code{.c}
- * #include <cuvs/neighbors/cagra.h>
+ * @param[in] res cuvsResources_t opaque C handle
+ * @param[in] filename the file name for saving the graph
+ * @param[in] index CAGRA index
+ */
+CUVS_EXPORT cuvsError_t cuvsCagraSerializeGraph(cuvsResources_t res,
+                                                const char* filename,
+                                                cuvsCagraIndex_t index);
+
+/**
+ * Save the CAGRA graph and its attached dataset to file.
  *
- * // Create cuvsResources_t
- * cuvsResources_t res;
- * cuvsError_t res_create_status = cuvsResourcesCreate(&res);
+ * The index stores a non-owning dataset view. The caller must keep the dataset backing that view
+ * alive while this function runs. Returns CUVS_ERROR without modifying the destination file if
+ * the index has no attached dataset.
  *
- * // create an index with `cuvsCagraBuild`
- * cuvsCagraSerialize(res, "/path/to/index", index, true);
- * @endcode
+ * Experimental, both the API and the serialization format are subject to change.
  *
  * @param[in] res cuvsResources_t opaque C handle
- * @param[in] filename the file name for saving the index
- * @param[in] index CAGRA index
- * @param[in] include_dataset Whether or not to write out the dataset to the file.
- *
+ * @param[in] filename the file name for saving the graph and dataset
+ * @param[in] index CAGRA index with an attached host or device dataset
  */
-CUVS_EXPORT cuvsError_t cuvsCagraSerialize(cuvsResources_t res,
-                               const char* filename,
-                               cuvsCagraIndex_t index,
-                               bool include_dataset);
+CUVS_EXPORT cuvsError_t cuvsCagraSerializeGraphAndDataset(cuvsResources_t res,
+                                                          const char* filename,
+                                                          cuvsCagraIndex_t index);
 
 /**
  * Save the CAGRA index to file in hnswlib format.
@@ -818,35 +821,40 @@ CUVS_EXPORT cuvsError_t cuvsCagraSerializeToHnswlib(cuvsResources_t res,
                                         cuvsCagraIndex_t index);
 
 /**
- * Load index from file.
+ * Load the CAGRA graph from file without retaining a serialized dataset.
+ *
+ * This succeeds whether or not the file contains a dataset. Use cuvsCagraUpdateDataset to attach a
+ * caller-owned device-padded dataset view before searching the graph-only index.
  *
  * Experimental, both the API and the serialization format are subject to change.
  *
  * @param[in] res cuvsResources_t opaque C handle
  * @param[in] filename the name of the file that stores the index
- * @param[in] deserialize_layout target index layout to deserialize into (padded or standard)
- * @param[inout] index cuvsCagraIndex_t CAGRA index loaded from disk. This index needs to be already
- *                                      created with cuvsCagraIndexCreate.
+ * @param[inout] index pre-created CAGRA index populated on success and unchanged on failure
  */
-CUVS_EXPORT cuvsError_t cuvsCagraDeserializePadded(cuvsResources_t res,
-                                                    const char* filename,
-                                                    cuvsCagraIndex_t index,
-                                                    cuvsDataset_t* out_padded_dataset);
+CUVS_EXPORT cuvsError_t cuvsCagraDeserializeGraph(cuvsResources_t res,
+                                                  const char* filename,
+                                                  cuvsCagraIndex_t index);
 
 /**
- * Load standard-layout index from file.
+ * Load the CAGRA graph and dataset from file.
+ *
+ * The returned dataset is an owning device-padded handle. The index stores a non-owning view into
+ * it, so the caller must keep the dataset alive while the index uses it and destroy it separately
+ * with cuvsDatasetDestroy. The output pointer must point to a null handle on entry. Returns
+ * CUVS_ERROR when the file has no dataset; the index and output handle are unchanged on failure.
  *
  * Experimental, both the API and the serialization format are subject to change.
  *
  * @param[in] res cuvsResources_t opaque C handle
- * @param[in] filename the name of the file that stores the index
- * @param[inout] index cuvsCagraIndex_t CAGRA index loaded from disk. This index needs to be already
- *                                      created with cuvsCagraIndexCreate.
+ * @param[in] filename the name of the file that stores the graph and dataset
+ * @param[inout] index pre-created CAGRA index populated on success and unchanged on failure
+ * @param[inout] out_dataset caller-owned device-padded dataset handle; must point to null on entry
  */
-CUVS_EXPORT cuvsError_t cuvsCagraDeserializeStandard(cuvsResources_t res,
-                                                     const char* filename,
-                                                     cuvsCagraIndex_t index,
-                                                     cuvsDataset_t* out_standard_dataset);
+CUVS_EXPORT cuvsError_t cuvsCagraDeserializeGraphAndDataset(cuvsResources_t res,
+                                                            const char* filename,
+                                                            cuvsCagraIndex_t index,
+                                                            cuvsDataset_t* out_dataset);
 
 /**
  * Load index from a dataset and graph

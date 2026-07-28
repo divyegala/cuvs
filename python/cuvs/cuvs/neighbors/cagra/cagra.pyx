@@ -416,15 +416,6 @@ cdef class PaddedDataset:
             check_cuvs(cuvsDatasetDestroy(self.dataset))
 
 
-cdef class StandardDataset:
-    def __cinit__(self):
-        self.dataset = NULL
-
-    def __dealloc__(self):
-        if self.dataset != NULL:
-            check_cuvs(cuvsDatasetDestroy(self.dataset))
-
-
 cdef class PaddedDatasetView:
     def __cinit__(self):
         self.view = NULL
@@ -1059,10 +1050,16 @@ def save(filename, Index index, bool include_dataset=True, resources=None):
     """
     cdef string c_filename = filename.encode('utf-8')
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
-    check_cuvs(cuvsCagraSerialize(res,
-                                  c_filename.c_str(),
-                                  index.index,
-                                  include_dataset))
+    if include_dataset:
+        check_cuvs(cuvsCagraSerializeGraphAndDataset(
+            res,
+            c_filename.c_str(),
+            index.index))
+    else:
+        check_cuvs(cuvsCagraSerializeGraph(
+            res,
+            c_filename.c_str(),
+            index.index))
 
 
 @auto_sync_resources
@@ -1080,41 +1077,30 @@ def load(index, filename, out_dataset=None, resources=None):
         Pre-created index object to populate.
     filename : string
         Name of the file.
-    out_dataset : PaddedDataset or StandardDataset, optional
-        Optional pre-created owning dataset output handle. The concrete type
-        dispatches to the corresponding deserialize entrypoint.
+    out_dataset : PaddedDataset, optional
+        Pre-created owning output handle for a serialized dataset. If omitted,
+        only the graph is retained. Keep this object alive while the loaded
+        index is in use.
     {resources_docstring}
     """
     cdef Index idx = index
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef string c_filename = filename.encode('utf-8')
-    cdef cuvsDataset_t out_padded_dataset = NULL
-    cdef cuvsDataset_t out_standard_dataset = NULL
-    cdef cuvsDataset_t* out_padded_ptr
-    cdef cuvsDataset_t* out_standard_ptr
 
-    if isinstance(out_dataset, PaddedDataset):
-        out_padded_ptr = &out_padded_dataset
-        check_cuvs(cuvsCagraDeserializePadded(
+    if out_dataset is None:
+        check_cuvs(cuvsCagraDeserializeGraph(
+            res,
+            c_filename.c_str(),
+            idx.index))
+    elif isinstance(out_dataset, PaddedDataset):
+        check_cuvs(cuvsCagraDeserializeGraphAndDataset(
             res,
             c_filename.c_str(),
             idx.index,
-            out_padded_ptr
-        ))
-        (<PaddedDataset>out_dataset).dataset = out_padded_dataset
-    elif isinstance(out_dataset, StandardDataset):
-        out_standard_ptr = &out_standard_dataset
-        check_cuvs(cuvsCagraDeserializeStandard(
-            res,
-            c_filename.c_str(),
-            idx.index,
-            out_standard_ptr
-        ))
-        (<StandardDataset>out_dataset).dataset = out_standard_dataset
+            &(<PaddedDataset>out_dataset).dataset))
     else:
         raise TypeError(
-            "out_dataset must be a PaddedDataset or StandardDataset "
-            "to choose deserialize target layout"
+            "out_dataset must be a PaddedDataset or None"
         )
     idx.trained = True
 

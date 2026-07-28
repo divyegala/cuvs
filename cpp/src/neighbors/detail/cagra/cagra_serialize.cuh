@@ -92,8 +92,7 @@ void serialize(raft::resources const& res,
   raft::serialize_scalar(res, os, content_map);
   if (include_dataset) {
     RAFT_LOG_DEBUG("Saving CAGRA index with dataset");
-    if constexpr (cuvs::neighbors::is_device_padded_dataset_view_v<DatasetViewT> ||
-                  cuvs::neighbors::is_device_standard_dataset_view_v<DatasetViewT>) {
+    if constexpr (cuvs::neighbors::is_dense_row_major_dataset_view_v<DatasetViewT>) {
       neighbors::detail::serialize_cagra_padded_dataset<T, int64_t>(res, os, index_.dataset());
     } else {
       // Future dataset types (e.g. VPQ) require a new branch here and a corresponding

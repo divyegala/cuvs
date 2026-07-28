@@ -395,16 +395,19 @@ Go does not currently expose CAGRA save/load wrappers.
 cuvsResources_t res;
 cuvsCagraIndex_t index;
 cuvsCagraIndex_t loaded_index;
+cuvsDataset_t loaded_dataset = NULL;
 
 cuvsResourcesCreate(&res);
 cuvsCagraIndexCreate(&index);
 cuvsCagraIndexCreate(&loaded_index);
 
 // ... build index ...
-cuvsCagraSerialize(res, "/tmp/cuvs-cagra.bin", index, true);
-cuvsCagraDeserialize(res, "/tmp/cuvs-cagra.bin", loaded_index);
+cuvsCagraSerializeGraphAndDataset(res, "/tmp/cuvs-cagra.bin", index);
+cuvsCagraDeserializeGraphAndDataset(
+  res, "/tmp/cuvs-cagra.bin", loaded_index, &loaded_dataset);
 
 cuvsCagraIndexDestroy(loaded_index);
+cuvsDatasetDestroy(loaded_dataset);
 cuvsCagraIndexDestroy(index);
 cuvsResourcesDestroy(res);
 ```

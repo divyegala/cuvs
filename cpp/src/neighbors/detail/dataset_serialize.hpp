@@ -15,6 +15,7 @@
 
 #include <cuda_fp16.h>
 
+#include <cstring>
 #include <fstream>
 #include <memory>
 
@@ -26,7 +27,7 @@ constexpr dataset_instance_tag kSerializeStridedDataset = 2;
 constexpr dataset_instance_tag kSerializeVPQDataset     = 3;
 
 template <typename DataT, typename IdxT, typename ViewT>
-  requires cuvs::neighbors::is_dense_row_major_device_dataset_view_v<ViewT>
+  requires cuvs::neighbors::is_dense_row_major_dataset_view_v<ViewT>
 void serialize(const raft::resources& res, std::ostream& os, ViewT const& dataset)
 {
   auto n_rows = dataset.n_rows();
@@ -37,20 +38,27 @@ void serialize(const raft::resources& res, std::ostream& os, ViewT const& datase
   raft::serialize_scalar(res, os, stride);
   auto src = dataset.view();
   auto dst = raft::make_host_matrix<DataT, IdxT>(n_rows, dim);
-  raft::copy_matrix(dst.data_handle(),
-                    dim,
-                    src.data_handle(),
-                    stride,
-                    dim,
-                    n_rows,
-                    raft::resource::get_cuda_stream(res));
-  raft::resource::sync_stream(res);
+  if constexpr (cuvs::neighbors::is_device_dataset_view_v<ViewT>) {
+    raft::copy_matrix(dst.data_handle(),
+                      dim,
+                      src.data_handle(),
+                      stride,
+                      dim,
+                      n_rows,
+                      raft::resource::get_cuda_stream(res));
+    raft::resource::sync_stream(res);
+  } else {
+    for (IdxT row = 0; row < n_rows; ++row) {
+      std::memcpy(
+        dst.data_handle() + row * dim, src.data_handle() + row * stride, dim * sizeof(DataT));
+    }
+  }
   raft::serialize_mdspan(res, os, dst.view());
 }
 
 /** Write CAGRA index dataset blob (tag + element dtype + strided payload). */
 template <typename DataT, typename IdxT, typename ViewT>
-  requires cuvs::neighbors::is_dense_row_major_device_dataset_view_v<ViewT>
+  requires cuvs::neighbors::is_dense_row_major_dataset_view_v<ViewT>
 void serialize_cagra_padded_dataset(const raft::resources& res,
                                     std::ostream& os,
                                     ViewT const& dataset)
