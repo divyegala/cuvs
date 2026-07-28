@@ -419,6 +419,12 @@ extern "C" cuvsError_t cuvsTieredIndexExtend(cuvsResources_t res,
                                              cuvsTieredIndex_t index_c_ptr)
 {
   return cuvs::core::translate_exceptions([=] {
+    // Validate the tensor before reading the index: CAGRA layout dispatch would
+    // otherwise dereference a possibly invalid index handle first.
+    RAFT_EXPECTS(new_vectors != nullptr, "cuvsTieredIndexExtend: null tensor handle");
+    RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(new_vectors->dl_tensor),
+                 "cuvsTieredIndexExtend: tensor should have device compatible memory");
+
     auto index = *index_c_ptr;
     switch (index.algo) {
       case CUVS_TIERED_INDEX_ALGO_CAGRA: {
