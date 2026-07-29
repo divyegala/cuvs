@@ -967,7 +967,7 @@ class AnnCagraFilterTest : public ::testing::TestWithParam<AnnCagraInputs> {
         auto candidate_fprs = std::vector<float>{0.01f};
         if (ps.n_rows == 1000 && ps.dim == 8 && ps.k == 16 &&
             ps.metric == cuvs::distance::DistanceType::L2Expanded &&
-            ps.algo == search_algo::SINGLE_CTA && !ps.compression.has_value()) {
+            ps.algo == search_algo::SINGLE_CTA) {
           // Keep this sweep narrow to avoid exploding test time while still validating the knob.
           candidate_fprs = {0.25f, 0.05f, 0.01f};
         }
