@@ -5,6 +5,7 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"unsafe"
 
 	cuvs "github.com/rapidsai/cuvs/go"
@@ -38,12 +39,8 @@ func MakeDevicePaddedDataset[T any](Resources cuvs.Resource, dataset *cuvs.Tenso
 	}
 	datasetTensor := (*C.DLManagedTensor)(unsafe.Pointer(dataset.C_tensor))
 	var paddedDataset C.cuvsDataset_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMake(
-		C.cuvsResources_t(Resources.Resource),
-		datasetTensor,
-		C.CUVS_DATASET_LAYOUT_PADDED,
-		C.CUVS_DATASET_MEM_TYPE_DEVICE,
-		&paddedDataset,
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeDevicePadded(
+		C.cuvsResources_t(Resources.Resource), datasetTensor, &paddedDataset,
 	)))
 	if err != nil {
 		return nil, err
@@ -73,12 +70,8 @@ func MakeDevicePaddedDatasetView[T any](Resources cuvs.Resource, dataset *cuvs.T
 	}
 	datasetTensor := (*C.DLManagedTensor)(unsafe.Pointer(dataset.C_tensor))
 	var paddedView C.cuvsDatasetView_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeView(
-		C.cuvsResources_t(Resources.Resource),
-		datasetTensor,
-		C.CUVS_DATASET_LAYOUT_PADDED,
-		C.CUVS_DATASET_MEM_TYPE_DEVICE,
-		&paddedView,
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeDevicePaddedView(
+		C.cuvsResources_t(Resources.Resource), datasetTensor, &paddedView,
 	)))
 	if err != nil {
 		return nil, err
@@ -119,12 +112,8 @@ func MakeDeviceStandardDatasetView[T any](Resources cuvs.Resource, dataset *cuvs
 	}
 	datasetTensor := (*C.DLManagedTensor)(unsafe.Pointer(dataset.C_tensor))
 	var standardView C.cuvsDatasetView_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeView(
-		C.cuvsResources_t(Resources.Resource),
-		datasetTensor,
-		C.CUVS_DATASET_LAYOUT_STANDARD,
-		C.CUVS_DATASET_MEM_TYPE_DEVICE,
-		&standardView,
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeDeviceStandardView(
+		C.cuvsResources_t(Resources.Resource), datasetTensor, &standardView,
 	)))
 	if err != nil {
 		return nil, err
@@ -203,9 +192,26 @@ func BuildIndex[T any](Resources cuvs.Resource, params *IndexParams, dataset *cu
 		}
 	}()
 
-	err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeView(
-		C.cuvsResources_t(Resources.Resource), datasetTensor, layout, memType, &datasetView,
-	)))
+	switch {
+	case memType == C.CUVS_DATASET_MEM_TYPE_DEVICE && layout == C.CUVS_DATASET_LAYOUT_PADDED:
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeDevicePaddedView(
+			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
+		)))
+	case memType == C.CUVS_DATASET_MEM_TYPE_DEVICE && layout == C.CUVS_DATASET_LAYOUT_STANDARD:
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeDeviceStandardView(
+			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
+		)))
+	case memType == C.CUVS_DATASET_MEM_TYPE_HOST && layout == C.CUVS_DATASET_LAYOUT_PADDED:
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeHostPaddedView(
+			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
+		)))
+	case memType == C.CUVS_DATASET_MEM_TYPE_HOST && layout == C.CUVS_DATASET_LAYOUT_STANDARD:
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeHostStandardView(
+			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
+		)))
+	default:
+		return fmt.Errorf("unsupported dataset mem_type=%v layout=%v", memType, layout)
+	}
 	if err != nil {
 		return err
 	}

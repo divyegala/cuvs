@@ -540,8 +540,20 @@ def build(IndexParams index_params, dataset, resources=None):
         try:
             check_cuvs(cuvsCagraGetDatasetMemTypeAndLayout(
                 dataset_dlpack, &mem_type, &layout))
-            check_cuvs(cuvsDatasetMakeView(
-                res, dataset_dlpack, layout, mem_type, &dataset_view))
+            if mem_type == CUVS_DATASET_MEM_TYPE_DEVICE:
+                if layout == CUVS_DATASET_LAYOUT_PADDED:
+                    check_cuvs(cuvsDatasetMakeDevicePaddedView(
+                        res, dataset_dlpack, &dataset_view))
+                else:
+                    check_cuvs(cuvsDatasetMakeDeviceStandardView(
+                        res, dataset_dlpack, &dataset_view))
+            else:
+                if layout == CUVS_DATASET_LAYOUT_PADDED:
+                    check_cuvs(cuvsDatasetMakeHostPaddedView(
+                        res, dataset_dlpack, &dataset_view))
+                else:
+                    check_cuvs(cuvsDatasetMakeHostStandardView(
+                        res, dataset_dlpack, &dataset_view))
             check_cuvs(cuvsCagraBuild(res, params, dataset_view, idx.index))
             idx.trained = True
             idx.active_index_type = dataset_ai.dtype.name
@@ -595,11 +607,9 @@ def make_device_padded_dataset(dataset, resources=None):
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef PaddedDataset padded = PaddedDataset()
     with cuda_interruptible():
-        check_cuvs(cuvsDatasetMake(
+        check_cuvs(cuvsDatasetMakeDevicePadded(
             res,
             dataset_dlpack,
-            CUVS_DATASET_LAYOUT_PADDED,
-            CUVS_DATASET_MEM_TYPE_DEVICE,
             &padded.dataset
         ))
     return padded
@@ -623,11 +633,9 @@ def make_device_padded_dataset_view(dataset, resources=None):
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef PaddedDatasetView padded_view = PaddedDatasetView()
     with cuda_interruptible():
-        check_cuvs(cuvsDatasetMakeView(
+        check_cuvs(cuvsDatasetMakeDevicePaddedView(
             res,
             dataset_dlpack,
-            CUVS_DATASET_LAYOUT_PADDED,
-            CUVS_DATASET_MEM_TYPE_DEVICE,
             &padded_view.view
         ))
     return padded_view
@@ -665,11 +673,9 @@ def make_device_standard_dataset_view(dataset, resources=None):
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef StandardDatasetView standard_view = StandardDatasetView()
     with cuda_interruptible():
-        check_cuvs(cuvsDatasetMakeView(
+        check_cuvs(cuvsDatasetMakeDeviceStandardView(
             res,
             dataset_dlpack,
-            CUVS_DATASET_LAYOUT_STANDARD,
-            CUVS_DATASET_MEM_TYPE_DEVICE,
             &standard_view.view
         ))
     return standard_view

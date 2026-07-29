@@ -589,7 +589,7 @@ CUVS_EXPORT cuvsError_t cuvsCagraIndexGetGraph(cuvsCagraIndex_t index, DLManaged
  * \p device_padded_dataset and must keep it alive while \p index uses it.
  *
  * @param[in] res             cuvsResources_t opaque C handle
- * @param[in] padded_dataset  padded dataset view handle created by \ref cuvsDatasetMakeView
+ * @param[in] padded_dataset  padded dataset view handle created by \ref cuvsDatasetMakeDevicePaddedView
  * @param[inout] index        CAGRA index handle
  * @return cuvsError_t
  */
@@ -651,8 +651,7 @@ CUVS_EXPORT cuvsError_t cuvsCagraGetDatasetMemTypeAndLayout(DLManagedTensor* dat
  *
  * // Wrap it in a dataset view handle
  * cuvsDatasetView_t dataset_view;
- * cuvsError_t view_create_status = cuvsDatasetMakeView(
- *   res, &dataset, CUVS_DATASET_LAYOUT_PADDED, CUVS_DATASET_MEM_TYPE_DEVICE, &dataset_view);
+ * cuvsError_t view_create_status = cuvsDatasetMakeDevicePaddedView(res, &dataset, &dataset_view);
  *
  * // Create default index params
  * cuvsCagraIndexParams_t params;
