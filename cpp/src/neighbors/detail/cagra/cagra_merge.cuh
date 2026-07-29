@@ -61,14 +61,15 @@ cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT> merge(
   const cuvs::neighbors::filtering::base_filter& row_filter)
 {
   using cagra_index_t = cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>;
-  using ds_idx_type   = typename cagra_index_t::dataset_index_type;
 
-  std::size_t dim              = 0;
-  std::size_t new_dataset_size = 0;
-  int64_t stride               = -1;
+  int64_t merged_rows = 0;
+  uint32_t dim        = 0;
+  int64_t stride      = -1;
 
   RAFT_EXPECTS(row_filter.get_filter_type() != cuvs::neighbors::filtering::FilterType::Bitmap,
                "Bitmap filter isn't supported inside cagra::merge");
+  RAFT_EXPECTS(row_filter.get_filter_type() != cuvs::neighbors::filtering::FilterType::Bloom,
+               "Bloom filter isn't supported inside cagra::merge");
 
   for (cagra_index_t* index : indices) {
     RAFT_EXPECTS(index != nullptr,
