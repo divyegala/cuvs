@@ -109,7 +109,7 @@
         "abi_tag": "cutile_abi_relaxed",
         "tile_m": 128,
         "tile_n": 128,
-        "tile_k": 32
+        "tile_k": 16
       }
     ],
     "_data": [

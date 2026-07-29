@@ -37,26 +37,36 @@ def make_kernel(
     *,
     index_type: str = "int32",
     gpu_code: str = "sm_80",
+    matrix_layout: str = "strict",
 ):
-    """Build a cuTile kernel with index width and tile sizes baked in."""
+    """Build a cuTile kernel with index width, tile, and reduction baked in."""
     if data_type not in ("half", "float"):
         raise ValueError(f"Unsupported data_type {data_type!r}")
     if metric not in METRICS:
         raise ValueError(f"Unsupported metric {metric!r}")
     if index_type not in INDEX_TYPES:
         raise ValueError(f"Unsupported index_type {index_type!r}")
+    if matrix_layout not in ("strict", "relaxed"):
+        raise ValueError(f"Unsupported matrix_layout {matrix_layout!r}")
 
     acc_dtype = ct.float32
     idx_dtype = _idx_dtype(index_type)
     out_dist_dtype = ct.float16 if data_type == "half" else ct.float32
-    items_per_thread = 4 if gpu_code in ("sm_100", "sm_120") else 2
+    if gpu_code == "sm_120":
+        reduction_groups, reduction_items = (
+            (8, 2) if matrix_layout == "strict" else (2, 8)
+        )
+    elif gpu_code == "sm_100":
+        reduction_groups, reduction_items = 4, 4
+    else:
+        reduction_groups, reduction_items = 4, 2
     core_shape = (
         tile_m,
-        tile_n // (4 * items_per_thread),
-        4,
-        items_per_thread,
+        tile_n // (reduction_groups * reduction_items),
+        reduction_groups,
+        reduction_items,
     )
-    best_shape = (tile_m, 1, 4, 1)
+    best_shape = (tile_m, 1, reduction_groups, 1)
     inner_reduction_axes = (1, 3)
     outer_reduction_axes = (2,)
 
@@ -80,10 +90,8 @@ def make_kernel(
     ):
         bidm = ct.bid(0)
 
-        # Reduce groups and per-thread items inside each N tile, carry four
-        # partial winners across N tiles, then reduce those winners once.
-        # Blackwell uses four items per logical thread slot; earlier targets
-        # retain the existing two-item grouping.
+        # Reduce groups and per-thread items inside each N tile, carry the
+        # remaining group winners across N tiles, then reduce them once.
 
         best_dist = ct.full(best_shape, 3.4e38, acc_dtype)
         best_idx = ct.zeros(best_shape, idx_dtype)

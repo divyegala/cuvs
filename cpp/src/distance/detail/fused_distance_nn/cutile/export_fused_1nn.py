@@ -185,6 +185,7 @@ def export_binary(
         tile_k,
         index_type=index_type,
         gpu_code=gpu_code,
+        matrix_layout=matrix_layout,
     )
     signature = _kernel_signature(
         data_type,
