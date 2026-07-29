@@ -382,7 +382,11 @@ return err
 
 ### Saving and loading an index
 
-Serialize a CAGRA index when you want to reuse the graph without rebuilding it. Include the dataset when the loaded index should be searchable immediately; omit it only when your workflow will attach or provide the dataset separately.
+Serialize a CAGRA index when you want to reuse the graph without rebuilding it. Including the
+dataset preserves whether it is host/device resident and standard/padded. Only a device-padded
+result is immediately searchable through the C API; attach a caller-owned device-padded view with
+`cuvsCagraUpdateDataset` for any other kind. Omit the dataset when your workflow will attach it
+separately.
 
 Go does not currently expose CAGRA save/load wrappers.
 
@@ -395,16 +399,19 @@ Go does not currently expose CAGRA save/load wrappers.
 cuvsResources_t res;
 cuvsCagraIndex_t index;
 cuvsCagraIndex_t loaded_index;
+cuvsDataset_t loaded_dataset = NULL;
 
 cuvsResourcesCreate(&res);
 cuvsCagraIndexCreate(&index);
 cuvsCagraIndexCreate(&loaded_index);
 
 // ... build index ...
-cuvsCagraSerialize(res, "/tmp/cuvs-cagra.bin", index, true);
-cuvsCagraDeserialize(res, "/tmp/cuvs-cagra.bin", loaded_index);
+cuvsCagraSerializeGraphAndDataset(res, "/tmp/cuvs-cagra.bin", index);
+cuvsCagraDeserializeGraphAndDataset(
+  res, "/tmp/cuvs-cagra.bin", loaded_index, &loaded_dataset);
 
 cuvsCagraIndexDestroy(loaded_index);
+cuvsDatasetDestroy(loaded_dataset);
 cuvsCagraIndexDestroy(index);
 cuvsResourcesDestroy(res);
 ```

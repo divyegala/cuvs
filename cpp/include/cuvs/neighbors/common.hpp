@@ -700,6 +700,16 @@ struct owning_dataset_for_view<device_standard_dataset_view<DataT, IdxT>> {
 };
 
 template <typename DataT, typename IdxT>
+struct owning_dataset_for_view<host_padded_dataset_view<DataT, IdxT>> {
+  using type = host_padded_dataset<DataT, IdxT>;
+};
+
+template <typename DataT, typename IdxT>
+struct owning_dataset_for_view<host_standard_dataset_view<DataT, IdxT>> {
+  using type = host_standard_dataset<DataT, IdxT>;
+};
+
+template <typename DataT, typename IdxT>
 struct owning_dataset_for_view<device_vpq_dataset_view<DataT, IdxT>> {
   using type = device_vpq_dataset<DataT, IdxT>;
 };

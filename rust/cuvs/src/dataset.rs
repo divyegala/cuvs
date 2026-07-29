@@ -152,10 +152,6 @@ impl PaddedDataset {
             unsafe { init_handle(|out| ffi::cuvsDatasetMakeViewWrapper(self.handle, out))? };
         Ok(DatasetView { handle, kind: self.kind, _dataset: PhantomData })
     }
-
-    pub(crate) fn from_raw(handle: ffi::cuvsDataset_t) -> Self {
-        Self { handle, kind: DatasetKind::DevicePadded }
-    }
 }
 
 impl Drop for PaddedDataset {
@@ -166,22 +162,34 @@ impl Drop for PaddedDataset {
     }
 }
 
-/// Owning standard-layout device storage returned by deserialization.
+/// Owning dataset storage returned by CAGRA deserialization.
+///
+/// The allocation preserves the serialized host/device residency and
+/// standard/padded row layout. CAGRA keeps only a non-owning view, so this
+/// owner must remain alive while the deserialized index uses it.
 #[derive(Debug)]
-pub struct StandardDataset {
+pub struct Dataset {
     handle: ffi::cuvsDataset_t,
+    kind: DatasetKind,
 }
 
-impl StandardDataset {
+impl Dataset {
     pub(crate) fn from_raw(handle: ffi::cuvsDataset_t) -> Self {
-        Self { handle }
+        debug_assert!(!handle.is_null());
+        let kind = unsafe { DatasetKind::from_ffi((*handle).mem_type, (*handle).layout) };
+        Self { handle, kind }
+    }
+
+    /// Return this allocation's immutable residency/layout classification.
+    pub fn kind(&self) -> DatasetKind {
+        self.kind
     }
 }
 
-impl Drop for StandardDataset {
+impl Drop for Dataset {
     fn drop(&mut self) {
         if let Err(e) = check_cuvs(unsafe { ffi::cuvsDatasetDestroy(self.handle) }) {
-            report_drop_failure("standard dataset", &e);
+            report_drop_failure("deserialized dataset", &e);
         }
     }
 }

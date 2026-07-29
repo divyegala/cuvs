@@ -407,7 +407,7 @@ cdef class Index:
         return "Index(type=CAGRA, metric=L2" + (", ".join(attr_str)) + ")"
 
 
-cdef class PaddedDataset:
+cdef class Dataset:
     def __cinit__(self):
         self.dataset = NULL
 
@@ -415,14 +415,37 @@ cdef class PaddedDataset:
         if self.dataset != NULL:
             check_cuvs(cuvsDatasetDestroy(self.dataset))
 
+    @property
+    def memory_type(self):
+        if self.dataset == NULL:
+            return None
+        if self.dataset.mem_type == CUVS_DATASET_MEM_TYPE_DEVICE:
+            return "device"
+        return "host"
 
-cdef class StandardDataset:
-    def __cinit__(self):
-        self.dataset = NULL
+    @property
+    def layout(self):
+        if self.dataset == NULL:
+            return None
+        if self.dataset.layout == CUVS_DATASET_LAYOUT_PADDED:
+            return "padded"
+        return "standard"
 
-    def __dealloc__(self):
-        if self.dataset != NULL:
-            check_cuvs(cuvsDatasetDestroy(self.dataset))
+    @property
+    def dtype(self):
+        if self.dataset == NULL:
+            return None
+        return (self.dataset.dtype.code,
+                self.dataset.dtype.bits,
+                self.dataset.dtype.lanes)
+
+
+cdef class PaddedDataset(Dataset):
+    pass
+
+
+cdef class StandardDataset(Dataset):
+    pass
 
 
 cdef class PaddedDatasetView:
@@ -1049,10 +1072,16 @@ def save(filename, Index index, bool include_dataset=True, resources=None):
     """
     cdef string c_filename = filename.encode('utf-8')
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
-    check_cuvs(cuvsCagraSerialize(res,
-                                  c_filename.c_str(),
-                                  index.index,
-                                  include_dataset))
+    if include_dataset:
+        check_cuvs(cuvsCagraSerializeGraphAndDataset(
+            res,
+            c_filename.c_str(),
+            index.index))
+    else:
+        check_cuvs(cuvsCagraSerializeGraph(
+            res,
+            c_filename.c_str(),
+            index.index))
 
 
 @auto_sync_resources
@@ -1071,40 +1100,30 @@ def load(index, filename, out_dataset=None, resources=None):
     filename : string
         Name of the file.
     out_dataset : PaddedDataset or StandardDataset, optional
-        Optional pre-created owning dataset output handle. The concrete type
-        dispatches to the corresponding deserialize entrypoint.
+        Empty owning output slot populated by the native factory deserializer.
+        The concrete wrapper type must match the serialized dataset layout. If
+        omitted, only the graph is retained. Keep this object alive while the
+        loaded index is in use.
     {resources_docstring}
     """
     cdef Index idx = index
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef string c_filename = filename.encode('utf-8')
-    cdef cuvsDataset_t out_padded_dataset = NULL
-    cdef cuvsDataset_t out_standard_dataset = NULL
-    cdef cuvsDataset_t* out_padded_ptr
-    cdef cuvsDataset_t* out_standard_ptr
 
-    if isinstance(out_dataset, PaddedDataset):
-        out_padded_ptr = &out_padded_dataset
-        check_cuvs(cuvsCagraDeserializePadded(
+    if out_dataset is None:
+        check_cuvs(cuvsCagraDeserializeGraph(
+            res,
+            c_filename.c_str(),
+            idx.index))
+    elif isinstance(out_dataset, (PaddedDataset, StandardDataset)):
+        check_cuvs(cuvsCagraDeserializeGraphAndDataset(
             res,
             c_filename.c_str(),
             idx.index,
-            out_padded_ptr
-        ))
-        (<PaddedDataset>out_dataset).dataset = out_padded_dataset
-    elif isinstance(out_dataset, StandardDataset):
-        out_standard_ptr = &out_standard_dataset
-        check_cuvs(cuvsCagraDeserializeStandard(
-            res,
-            c_filename.c_str(),
-            idx.index,
-            out_standard_ptr
-        ))
-        (<StandardDataset>out_dataset).dataset = out_standard_dataset
+            &(<Dataset>out_dataset).dataset))
     else:
         raise TypeError(
-            "out_dataset must be a PaddedDataset or StandardDataset "
-            "to choose deserialize target layout"
+            "out_dataset must be a PaddedDataset, StandardDataset, or None"
         )
     idx.trained = True
 

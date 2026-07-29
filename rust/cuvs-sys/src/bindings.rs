@@ -1403,11 +1403,18 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsCagraSerialize(
+    pub fn cuvsCagraSerializeGraph(
         res: cuvsResources_t,
         filename: *const ::std::os::raw::c_char,
         index: cuvsCagraIndex_t,
-        include_dataset: bool,
+    ) -> cuvsError_t;
+}
+unsafe extern "C" {
+    #[must_use]
+    pub fn cuvsCagraSerializeGraphAndDataset(
+        res: cuvsResources_t,
+        filename: *const ::std::os::raw::c_char,
+        index: cuvsCagraIndex_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
@@ -1420,20 +1427,19 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsCagraDeserializePadded(
+    pub fn cuvsCagraDeserializeGraph(
         res: cuvsResources_t,
         filename: *const ::std::os::raw::c_char,
         index: cuvsCagraIndex_t,
-        out_padded_dataset: *mut cuvsDataset_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsCagraDeserializeStandard(
+    pub fn cuvsCagraDeserializeGraphAndDataset(
         res: cuvsResources_t,
         filename: *const ::std::os::raw::c_char,
         index: cuvsCagraIndex_t,
-        out_standard_dataset: *mut cuvsDataset_t,
+        out_dataset: *mut cuvsDataset_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {

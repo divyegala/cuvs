@@ -108,14 +108,11 @@ def run_cagra_build_search_test(
         with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
             temp_filename = f.name
         cagra.save(temp_filename, index)
-        layout = (
-            "standard"
-            if cagra.get_dataset_view_kind(
-                dataset_device if array_type == "device" else dataset
-            ).endswith("standard")
-            else "padded"
-        )
         index = cagra.Index()
+        expected_kind = cagra.get_dataset_view_kind(
+            dataset_device if array_type == "device" else dataset
+        )
+        layout = "standard" if expected_kind.endswith("standard") else "padded"
         out_dataset = (
             cagra.StandardDataset()
             if layout == "standard"
@@ -126,13 +123,20 @@ def run_cagra_build_search_test(
             temp_filename,
             out_dataset=out_dataset,
         )
-        if layout == "standard":
+        assert (
+            f"{out_dataset.memory_type}_{out_dataset.layout}" == expected_kind
+        )
+        index_keepalive = [out_dataset]
+        if (
+            out_dataset.memory_type != "device"
+            or out_dataset.layout != "padded"
+        ):
             padded_dataset = cagra.make_padded_dataset(dataset_device)
             padded_view = cagra.make_view_wrapper(padded_dataset)
             cagra.update_dataset(index, padded_view)
-            index_keepalive = [out_dataset, padded_dataset, padded_view]
-        else:
-            index_keepalive = [out_dataset]
+            index_keepalive.extend(
+                [dataset_device, padded_dataset, padded_view]
+            )
     else:
         index_keepalive = []
         view_kind = cagra.get_dataset_view_kind(

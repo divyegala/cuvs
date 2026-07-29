@@ -45,7 +45,31 @@ inline constexpr bool is_host_cagra_hnsw_serialize_index_v =
   std::is_same_v<CagraIndexT, cuvs::neighbors::cagra::host_padded_index<T, IdxT>> ||
   std::is_same_v<CagraIndexT, cuvs::neighbors::cagra::host_standard_index<T, IdxT>>;
 
-constexpr int serialization_version = 5;
+constexpr int serialization_version = cuvs::neighbors::cagra::cagra_serialization_version;
+
+template <cuvs::neighbors::ann_dataset_view DatasetViewT>
+constexpr auto serialized_dataset_kind_for_view() -> cuvs::neighbors::cagra::serialized_dataset_kind
+{
+  using kind = cuvs::neighbors::cagra::serialized_dataset_kind;
+  if constexpr (cuvs::neighbors::is_device_padded_dataset_view_v<DatasetViewT>) {
+    return kind::device_padded;
+  } else if constexpr (cuvs::neighbors::is_device_standard_dataset_view_v<DatasetViewT>) {
+    return kind::device_standard;
+  } else if constexpr (cuvs::neighbors::is_host_padded_dataset_view_v<DatasetViewT>) {
+    return kind::host_padded;
+  } else if constexpr (cuvs::neighbors::is_host_standard_dataset_view_v<DatasetViewT>) {
+    return kind::host_standard;
+  } else {
+    static_assert(sizeof(DatasetViewT) == 0,
+                  "serialized_dataset_kind_for_view: unsupported dataset view type");
+  }
+}
+
+constexpr bool is_valid_serialized_dataset_kind(std::uint32_t raw)
+{
+  using kind = cuvs::neighbors::cagra::serialized_dataset_kind;
+  return raw <= static_cast<std::uint32_t>(kind::host_standard);
+}
 
 /**
  * Save the index to file.
@@ -73,11 +97,16 @@ void serialize(raft::resources const& res,
   RAFT_LOG_DEBUG(
     "Saving CAGRA index, size %zu, dim %u", static_cast<size_t>(index_.size()), index_.dim());
 
+  include_dataset &= (index_.dataset().n_rows() > 0);
+  auto const dataset_kind = include_dataset ? serialized_dataset_kind_for_view<DatasetViewT>()
+                                            : cuvs::neighbors::cagra::serialized_dataset_kind::none;
+
   std::string dtype_string = raft::numpy_serializer::get_numpy_dtype<T>().to_string();
   dtype_string.resize(4);
   os << dtype_string;
 
   raft::serialize_scalar(res, os, serialization_version);
+  raft::serialize_scalar(res, os, static_cast<std::uint32_t>(dataset_kind));
   raft::serialize_scalar(res, os, index_.size());
   raft::serialize_scalar(res, os, index_.dim());
   raft::serialize_scalar(res, os, index_.graph_degree());
@@ -85,16 +114,14 @@ void serialize(raft::resources const& res,
 
   raft::serialize_mdspan(res, os, index_.graph());
 
-  include_dataset &= (index_.dataset().n_rows() > 0);
   bool has_source_indices = index_.source_indices().has_value();
   uint32_t content_map    = 0x1u * include_dataset + 0x2u * has_source_indices;
 
   raft::serialize_scalar(res, os, content_map);
   if (include_dataset) {
     RAFT_LOG_DEBUG("Saving CAGRA index with dataset");
-    if constexpr (cuvs::neighbors::is_device_padded_dataset_view_v<DatasetViewT> ||
-                  cuvs::neighbors::is_device_standard_dataset_view_v<DatasetViewT>) {
-      neighbors::detail::serialize_cagra_padded_dataset<T, int64_t>(res, os, index_.dataset());
+    if constexpr (cuvs::neighbors::is_dense_row_major_dataset_view_v<DatasetViewT>) {
+      neighbors::detail::serialize_cagra_dense_dataset<T, int64_t>(res, os, index_.dataset());
     } else {
       // Future dataset types (e.g. VPQ) require a new branch here and a corresponding
       // deserialize overload. Use static_assert to catch unsupported types at compile time.
@@ -314,6 +341,12 @@ void deserialize(
   if (ver != serialization_version) {
     RAFT_FAIL("serialization version mismatch, expected %d, got %d ", serialization_version, ver);
   }
+  auto const dataset_kind_raw = raft::deserialize_scalar<std::uint32_t>(res, is);
+  RAFT_EXPECTS(is_valid_serialized_dataset_kind(dataset_kind_raw),
+               "cagra::deserialize: invalid serialized dataset kind %u",
+               dataset_kind_raw);
+  auto const dataset_kind =
+    static_cast<cuvs::neighbors::cagra::serialized_dataset_kind>(dataset_kind_raw);
   auto n_rows       = raft::deserialize_scalar<IdxT>(res, is);
   auto dim          = raft::deserialize_scalar<std::uint32_t>(res, is);
   auto graph_degree = raft::deserialize_scalar<std::uint32_t>(res, is);
@@ -338,35 +371,60 @@ void deserialize(
   auto graph = raft::make_host_matrix<IdxT, int64_t>(n_rows, graph_degree);
   deserialize_mdspan(res, is, graph.view());
 
-  *index_ = cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>(res, metric);
-  index_->update_graph(res, raft::make_const_mdspan(graph.view()));
-
   auto content_map = raft::deserialize_scalar<uint32_t>(res, is);
   bool has_dataset = content_map & 0x1u;
+  using kind       = cuvs::neighbors::cagra::serialized_dataset_kind;
+  RAFT_EXPECTS(has_dataset == (dataset_kind != kind::none),
+               "cagra::deserialize: dataset kind and content map disagree");
+
+  using owner_t = cuvs::neighbors::owning_dataset_for_view_t<DatasetViewT>;
+  std::unique_ptr<owner_t> dataset_owner{};
   if (has_dataset) {
-    RAFT_EXPECTS(out_dataset != nullptr,
-                 "deserialize: index contains a dataset; pass a non-null out_dataset to own it.");
-    if constexpr (cuvs::neighbors::is_device_padded_dataset_view_v<DatasetViewT>) {
-      *out_dataset = cuvs::neighbors::detail::deserialize_padded_dataset<T, int64_t>(res, is);
-      index_->update_device_dataset_same_layout(res, (*out_dataset)->as_dataset_view());
-    } else if constexpr (cuvs::neighbors::is_device_standard_dataset_view_v<DatasetViewT>) {
-      *out_dataset = cuvs::neighbors::detail::deserialize_standard_dataset<T, int64_t>(res, is);
-      index_->update_device_dataset_same_layout(res, (*out_dataset)->as_dataset_view());
+    if (out_dataset == nullptr) {
+      cuvs::neighbors::detail::skip_dense_dataset<T, int64_t>(res, is);
     } else {
-      static_assert(sizeof(DatasetViewT) == 0,
-                    "deserialize: dataset deserialization is not yet implemented for this "
-                    "DatasetViewT");
+      auto const expected_kind = serialized_dataset_kind_for_view<DatasetViewT>();
+      RAFT_EXPECTS(
+        dataset_kind == expected_kind,
+        "cagra::deserialize: serialized dataset kind %u does not match requested kind %u",
+        dataset_kind_raw,
+        static_cast<std::uint32_t>(expected_kind));
+      if constexpr (cuvs::neighbors::is_device_padded_dataset_view_v<DatasetViewT>) {
+        dataset_owner = cuvs::neighbors::detail::deserialize_padded_dataset<T, int64_t>(res, is);
+      } else if constexpr (cuvs::neighbors::is_device_standard_dataset_view_v<DatasetViewT>) {
+        dataset_owner = cuvs::neighbors::detail::deserialize_standard_dataset<T, int64_t>(res, is);
+      } else if constexpr (cuvs::neighbors::is_host_padded_dataset_view_v<DatasetViewT>) {
+        dataset_owner =
+          cuvs::neighbors::detail::deserialize_host_padded_dataset<T, int64_t>(res, is);
+      } else if constexpr (cuvs::neighbors::is_host_standard_dataset_view_v<DatasetViewT>) {
+        dataset_owner =
+          cuvs::neighbors::detail::deserialize_host_standard_dataset<T, int64_t>(res, is);
+      } else {
+        static_assert(sizeof(DatasetViewT) == 0,
+                      "deserialize: dataset deserialization is not implemented for this view");
+      }
     }
   }
 
-  bool has_source_indices = content_map & 0x2u;
-  if (has_source_indices) {
-    auto source_indices = raft::make_host_vector<IdxT, int64_t>(n_rows);
-    deserialize_mdspan(res, is, source_indices.view());
-    index_->update_source_indices(res, raft::make_const_mdspan(source_indices.view()));
-    raft::resource::sync_stream(
-      res);  // Don't let the vector out of the scope before the copy is finished
+  if (dataset_owner) {
+    *index_ = cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>(
+      res, metric, dataset_owner->as_dataset_view(), raft::make_const_mdspan(graph.view()));
+  } else {
+    *index_ = cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT>(res, metric);
+    index_->update_graph(res, raft::make_const_mdspan(graph.view()));
   }
+
+  bool has_source_indices = content_map & 0x2u;
+  std::optional<raft::host_vector<IdxT, int64_t>> source_indices;
+  if (has_source_indices) {
+    source_indices.emplace(raft::make_host_vector<IdxT, int64_t>(n_rows));
+    deserialize_mdspan(res, is, source_indices->view());
+    index_->update_source_indices(res, raft::make_const_mdspan(source_indices->view()));
+  }
+  // Graph and source-index updates can enqueue copies from host staging. Keep both staging buffers
+  // alive through this single synchronization.
+  raft::resource::sync_stream(res);
+  if (dataset_owner) { *out_dataset = std::move(dataset_owner); }
 }
 
 template <typename T, typename IdxT, cuvs::neighbors::ann_dataset_view DatasetViewT>

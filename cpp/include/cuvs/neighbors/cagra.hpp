@@ -196,9 +196,10 @@ struct index_params : cuvs::neighbors::index_params {
    * Whether to attach the dataset to the index after graph construction, i.e.:
    *
    *  - `true` (default) means `build` attaches the input dataset as a **non-owning view** to the
-   * index, so the index is ready to search immediately after `build` returns.  The caller is
-   * responsible for keeping the underlying dataset storage alive for as long as the index is used.
-   *  - `false` means `build` only builds the graph and the caller is expected to attach the dataset
+   * index. The caller is responsible for keeping the underlying dataset storage alive for as long
+   * as the index is used. A device-backed index is ready to search immediately; a host-backed index
+   * retains the dataset for operations such as serialization but is not searchable.
+   *  - `false` means `build` only builds the graph and the caller is expected to attach a dataset
    * separately via `cuvs::neighbors::cagra::index::update_device_dataset_same_layout` before
    * searching.
    *
@@ -206,10 +207,9 @@ struct index_params : cuvs::neighbors::index_params {
    * Setting `attach_dataset_on_build = false` is useful when the caller needs to apply specific
    * memory placement or transformation (e.g. moving to managed memory) before attaching.
    *
-   * **Note:** this flag is only effective when building from a device dataset view
-   * (e.g. `device_padded_dataset_view`). For host builds (`host_padded_dataset_view`), it is
-   * ignored — host indices are not directly searchable. Call `attach_dataset` with a user-provided
-   * device-padded dataset view to obtain a search-ready `device_padded_index`.
+   * Host indexes are not directly searchable. Call `attach_dataset` with a user-provided
+   * device-padded dataset view to obtain a search-ready `device_padded_index`. Disk-based ACE
+   * builds manage file-backed dataset state separately and ignore this flag.
    *
    * @code{.cpp}
    *   auto dataset = cuvs::neighbors::make_device_padded_dataset(res, host_matrix.view());
@@ -569,7 +569,7 @@ struct CUVS_EXPORT index : cuvs::neighbors::index {
   /** Construct an index from a `dataset_view` and knn_graph.
    *
    * Stores a shallow copy of the dataset view. The index stores a **non-owning** view; the caller
-   * must keep underlying device storage alive for the index lifetime.
+   * must keep the underlying host or device storage alive for the index lifetime.
    *
    * Example — **non-owning** `make_device_padded_dataset_view` (wraps an existing device matrix;
    * that matrix must outlive the index):
@@ -611,8 +611,10 @@ struct CUVS_EXPORT index : cuvs::neighbors::index {
                  "Dataset and knn_graph must have equal number of rows");
     update_graph(res, knn_graph);
 
-    if (metric_ == cuvs::distance::DistanceType::CosineExpanded) {
-      if (dataset.n_rows() > 0) { compute_dataset_norms_(res); }
+    if constexpr (cuvs::neighbors::is_device_dataset_view_v<DatasetViewT>) {
+      if (metric_ == cuvs::distance::DistanceType::CosineExpanded && dataset.n_rows() > 0) {
+        compute_dataset_norms_(res);
+      }
     }
 
     raft::resource::sync_stream(res);
@@ -928,16 +930,15 @@ using cagra_index_t = index<cuvs::neighbors::cagra_view_element_type_t<DatasetVi
  * VPQ-compressed device views are rejected: dense graph construction requires uncompressed data.
  * Use a separate VPQ index workflow after building the graph from an uncompressed dataset.
  *
- * When `index_params.attach_dataset_on_build = true` (the default) **and the input is a device
- * view**, the `dataset` view is stored in the returned index as a **non-owning view** — no copy is
- * made. The caller must keep the underlying storage alive for the lifetime of the index. The
- * returned index is then ready to search immediately.
+ * When `index_params.attach_dataset_on_build = true` (the default), a dense `dataset` view is
+ * stored in the returned index as a **non-owning view** — no copy is made. The caller must keep the
+ * underlying storage alive for the lifetime of the index. An index backed by a device view is then
+ * ready to search immediately.
  *
- * When `index_params.attach_dataset_on_build = false`, or when building from a **host view**, only
- * the search graph is built and the returned index holds no dataset.
+ * When `index_params.attach_dataset_on_build = false`, only the search graph is built and the
+ * returned index holds no dataset.
  *
- * For host views, the returned host index cannot be searched regardless of
- * `attach_dataset_on_build` (the flag is ignored). Call `attach_dataset` with a user-provided
+ * An index backed by a host view cannot be searched. Call `attach_dataset` with a user-provided
  * device-padded dataset view to obtain a search-ready `device_padded_index`.
  *
  * Note: disk-based ACE builds (`ace_params::use_disk = true`) always set a file-descriptor
@@ -2163,11 +2164,28 @@ void search(raft::resources const& res,
  * @{
  */
 
-// Serialize and deserialize are overloaded for device_padded_index and device_standard_index.
-// Both use the same strided dataset wire format; deserialize selects the owning dataset type
-// from the index's DatasetViewT. To support a new dataset kind (e.g. vpq_f16_index), add a
-// matching pair of overloads here and a corresponding deserialize_<kind> in
-// detail/dataset_serialize.hpp (dense views use serialize_cagra_padded_dataset).
+/** Dense dataset storage kind recorded in a serialized CAGRA index. */
+enum class serialized_dataset_kind : std::uint32_t {
+  /** The serialized index does not contain a dataset payload. */
+  none = 0,
+  /** Device-resident dataset using CAGRA's padded row layout. */
+  device_padded = 1,
+  /** Device-resident dataset using its standard row layout. */
+  device_standard = 2,
+  /** Host-resident dataset using CAGRA's padded row layout. */
+  host_padded = 3,
+  /** Host-resident dataset using its standard row layout. */
+  host_standard = 4,
+};
+
+/** Current experimental CAGRA serialization format version. */
+inline constexpr int cagra_serialization_version = 6;
+
+// Serialize and deserialize are overloaded for device/host and padded/standard dense indexes.
+// They use the same strided dataset payload; the serialized dataset kind selects the matching
+// owning dataset type during deserialization. To support a new dataset kind (e.g. vpq_f16_index),
+// add matching overloads here and a corresponding deserialize_<kind> in
+// detail/dataset_serialize.hpp (dense views use serialize_cagra_dense_dataset).
 
 /**
  * Save the index to file.
@@ -2717,6 +2735,158 @@ void deserialize(raft::resources const& handle,
                  cuvs::neighbors::cagra::device_standard_index<uint8_t>* index,
                  std::unique_ptr<cuvs::neighbors::device_standard_dataset<uint8_t, int64_t>>*
                    out_dataset = nullptr);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_padded_index<float>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_padded_index<float>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_standard_index<float>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_standard_index<float>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_padded_index<half>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_padded_index<half>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_standard_index<half>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_standard_index<half>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_padded_index<int8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_padded_index<int8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_standard_index<int8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_standard_index<int8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_padded_index<uint8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_padded_index<uint8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               const std::string& filename,
+               const cuvs::neighbors::cagra::host_standard_index<uint8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc serialize */
+void serialize(raft::resources const& handle,
+               std::ostream& os,
+               const cuvs::neighbors::cagra::host_standard_index<uint8_t>& index,
+               bool include_dataset = true);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<float>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<float, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<float>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<float, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<half>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<half, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<half>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<half, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<int8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<int8_t, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<int8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<int8_t, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_padded_index<uint8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_padded_dataset<uint8_t, int64_t>>* out_dataset = nullptr);
+
+/** @copydoc deserialize */
+void deserialize(
+  raft::resources const& handle,
+  const std::string& filename,
+  cuvs::neighbors::cagra::host_standard_index<uint8_t>* index,
+  std::unique_ptr<cuvs::neighbors::host_standard_dataset<uint8_t, int64_t>>* out_dataset = nullptr);
 
 /**
  * Write the CAGRA built index as a base layer HNSW index to an output stream

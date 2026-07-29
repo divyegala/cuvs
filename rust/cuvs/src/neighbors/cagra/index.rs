@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use super::{CagraError, IndexParams, SearchParams};
-use crate::dataset::{DatasetKind, DatasetView, PaddedDataset, StandardDataset};
+use crate::dataset::{Dataset, DatasetKind, DatasetView};
 use crate::dlpack::{AsDlTensor, AsDlTensorMut, DLTensorView, DLTensorViewMut};
 use crate::error::check_cuvs;
 use crate::ffi_utils::{init_handle, path_to_cstring, report_drop_failure};
@@ -171,9 +171,9 @@ impl<'d> Index<'d> {
     /// * `filename` - The file path for saving the index
     /// * `include_dataset` - Whether to write out the dataset to the file
     ///
-    /// Deserialize a self-contained file with [`Index::deserialize_padded`]
-    /// for immediate search, or [`Index::deserialize_standard`] to preserve
-    /// standard layout before attaching device-padded storage.
+    /// Deserialize a graph-only file with [`Index::deserialize_graph`], or
+    /// recreate the serialized dataset's residency and layout with
+    /// [`Index::deserialize_graph_and_dataset`].
     pub fn serialize<P: AsRef<Path>>(
         &self,
         res: &Resources,
@@ -198,44 +198,36 @@ impl<'d> Index<'d> {
         serialize_to_hnswlib_impl(&self.handle, res, filename.as_ref())
     }
 
-    /// Load a device-padded CAGRA index and optional owning dataset from file.
-    pub fn deserialize_padded<P: AsRef<Path>>(
+    /// Load only the graph, ignoring any dataset stored in the file.
+    pub fn deserialize_graph<P: AsRef<Path>>(
         res: &Resources,
         filename: P,
-    ) -> Result<DeserializedIndex<PaddedDataset>> {
+    ) -> Result<DeserializedIndex<Dataset>> {
         let c_filename = path_to_cstring(filename.as_ref())?;
         let handle = IndexHandle::new()?;
-        let mut out: ffi::cuvsDataset_t = std::ptr::null_mut();
         check_cuvs(unsafe {
-            ffi::cuvsCagraDeserializePadded(
-                res.handle(),
-                c_filename.as_ptr(),
-                handle.raw(),
-                &mut out,
-            )
+            ffi::cuvsCagraDeserializeGraph(res.handle(), c_filename.as_ptr(), handle.raw())
         })?;
-        let dataset = (!out.is_null()).then(|| PaddedDataset::from_raw(out));
-        Ok(DeserializedIndex { handle, dataset })
+        Ok(DeserializedIndex { handle, dataset: None })
     }
 
-    /// Load a device-standard CAGRA index and optional owning dataset from file.
-    pub fn deserialize_standard<P: AsRef<Path>>(
+    /// Load the graph and recreate its serialized dataset allocation.
+    pub fn deserialize_graph_and_dataset<P: AsRef<Path>>(
         res: &Resources,
         filename: P,
-    ) -> Result<DeserializedIndex<StandardDataset>> {
+    ) -> Result<DeserializedIndex<Dataset>> {
         let c_filename = path_to_cstring(filename.as_ref())?;
         let handle = IndexHandle::new()?;
         let mut out: ffi::cuvsDataset_t = std::ptr::null_mut();
         check_cuvs(unsafe {
-            ffi::cuvsCagraDeserializeStandard(
+            ffi::cuvsCagraDeserializeGraphAndDataset(
                 res.handle(),
                 c_filename.as_ptr(),
                 handle.raw(),
                 &mut out,
             )
         })?;
-        let dataset = (!out.is_null()).then(|| StandardDataset::from_raw(out));
-        Ok(DeserializedIndex { handle, dataset })
+        Ok(DeserializedIndex { handle, dataset: Some(Dataset::from_raw(out)) })
     }
 }
 
@@ -285,8 +277,8 @@ impl<D> DeserializedIndex<D> {
     }
 }
 
-impl DeserializedIndex<PaddedDataset> {
-    /// Search a padded deserialized index.
+impl DeserializedIndex<Dataset> {
+    /// Search an index whose deserialized owner is device-padded.
     pub fn search<Q, N, D>(
         &self,
         res: &Resources,
@@ -338,12 +330,15 @@ impl DeserializedIndex<PaddedDataset> {
     }
 
     fn require_dataset(&self) -> Result<()> {
-        if self.dataset.is_none() {
-            return Err(CagraError::Validation(
+        match self.dataset.as_ref().map(Dataset::kind) {
+            Some(DatasetKind::DevicePadded) => Ok(()),
+            Some(kind) => Err(CagraError::Validation(format!(
+                "cannot search a deserialized {kind:?} index; attach a device-padded dataset"
+            ))),
+            None => Err(CagraError::Validation(
                 "cannot search a graph-only index without an attached dataset".to_string(),
-            ));
+            )),
         }
-        Ok(())
     }
 }
 
@@ -380,7 +375,11 @@ fn serialize_impl(
 ) -> Result<()> {
     let filename = path_to_cstring(filename)?;
     check_cuvs(unsafe {
-        ffi::cuvsCagraSerialize(res.handle(), filename.as_ptr(), handle.raw(), include_dataset)
+        if include_dataset {
+            ffi::cuvsCagraSerializeGraphAndDataset(res.handle(), filename.as_ptr(), handle.raw())
+        } else {
+            ffi::cuvsCagraSerializeGraph(res.handle(), filename.as_ptr(), handle.raw())
+        }
     })
     .map_err(CagraError::from)
 }
@@ -396,6 +395,7 @@ fn serialize_to_hnswlib_impl(handle: &IndexHandle, res: &Resources, filename: &P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dataset::PaddedDataset;
     use crate::neighbors::filters::{Bitset, Filter};
     use crate::test_utils::DeviceTensor;
     use ndarray::s;
@@ -628,9 +628,9 @@ mod tests {
         drop(index);
         drop(dataset_device);
 
-        let loaded =
-            Index::deserialize_padded(&res, &filepath).expect("failed to deserialize cagra index");
-        assert!(loaded.has_dataset());
+        let loaded = Index::deserialize_graph_and_dataset(&res, &filepath)
+            .expect("failed to deserialize cagra index");
+        assert_eq!(loaded.dataset().map(Dataset::kind), Some(DatasetKind::DevicePadded));
 
         let queries =
             DeviceTensor::from_host(&res, &dataset.slice(s![0..1, ..]).to_owned()).unwrap();
@@ -664,9 +664,9 @@ mod tests {
         drop(index);
         drop(dataset_device);
 
-        let loaded = Index::deserialize_standard(&res, &filepath)
+        let loaded = Index::deserialize_graph_and_dataset(&res, &filepath)
             .expect("failed to deserialize standard cagra index");
-        assert!(loaded.has_dataset());
+        assert_eq!(loaded.dataset().map(Dataset::kind), Some(DatasetKind::DeviceStandard));
 
         let dataset_device = DeviceTensor::from_host(&res, &dataset).unwrap();
         let owner = PaddedDataset::new(&res, &dataset_device).unwrap();
@@ -692,7 +692,7 @@ mod tests {
         index.serialize(&res, &filepath, false).unwrap();
         drop(index);
 
-        let loaded = Index::deserialize_padded(&res, &filepath).unwrap();
+        let loaded = Index::deserialize_graph(&res, &filepath).unwrap();
         assert!(!loaded.has_dataset());
 
         let queries =

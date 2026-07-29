@@ -4,15 +4,21 @@
  */
 
 #include "test_utils.cuh"
+#include <array>
 #include <cstddef>
 #include <cuvs/core/c_api.h>
 #include <cuvs/distance/distance.hpp>
 #include <dlpack/dlpack.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <cstring>
 #include <cuvs/neighbors/cagra.h>
 #include <cuvs/neighbors/hnsw.h>
+#include <string>
+#include <type_traits>
+#include <unistd.h>
 
 #include <cuda_runtime.h>
 #include <gtest/gtest.h>
@@ -23,6 +29,7 @@
 #include <raft/core/mdspan.hpp>
 #include <raft/core/operators.hpp>
 #include <raft/core/resources.hpp>
+#include <raft/core/serialize.hpp>
 #include <raft/matrix/argmin.cuh>
 #include <raft/matrix/linewise_op.cuh>
 #include <sys/types.h>
@@ -202,6 +209,23 @@ TEST(CagraC, UpdateHostPadded)
   cuvsCagraIndexCreate(&index);
   ASSERT_EQ(cuvsCagraBuild(res, build_params, host_view, index), CUVS_SUCCESS);
 
+  auto serialized_path =
+    "/tmp/cuvs-cagra-host-padded-" + std::to_string(getpid()) + ".bin";
+  ASSERT_EQ(cuvsCagraSerializeGraphAndDataset(res, serialized_path.c_str(), index), CUVS_SUCCESS);
+  cuvsCagraIndex_t loaded_index;
+  ASSERT_EQ(cuvsCagraIndexCreate(&loaded_index), CUVS_SUCCESS);
+  cuvsDataset_t loaded_dataset = nullptr;
+  ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(
+              res, serialized_path.c_str(), loaded_index, &loaded_dataset),
+            CUVS_SUCCESS)
+    << cuvsGetLastErrorText();
+  ASSERT_NE(loaded_dataset, nullptr);
+  EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_HOST);
+  EXPECT_EQ(loaded_dataset->layout, CUVS_DATASET_LAYOUT_PADDED);
+  cuvsCagraIndexDestroy(loaded_index);
+  cuvsDatasetDestroy(loaded_dataset);
+  std::filesystem::remove(serialized_path);
+
   rmm::device_uvector<float> device_dataset(16, stream);
   raft::copy(device_dataset.data(), host_dataset, 16, stream);
   DLManagedTensor device_tensor              = host_tensor;
@@ -210,6 +234,25 @@ TEST(CagraC, UpdateHostPadded)
   cuvsDatasetView_t device_view         = nullptr;
   ASSERT_EQ(cuvsDatasetMakePaddedView(res, &device_tensor, &device_view), CUVS_SUCCESS);
   ASSERT_EQ(cuvsCagraUpdateDataset(res, device_view, index), CUVS_SUCCESS);
+
+  auto device_serialized_path =
+    "/tmp/cuvs-cagra-device-padded-" + std::to_string(getpid()) + ".bin";
+  ASSERT_EQ(
+    cuvsCagraSerializeGraphAndDataset(res, device_serialized_path.c_str(), index), CUVS_SUCCESS);
+  cuvsCagraIndex_t loaded_device_index;
+  ASSERT_EQ(cuvsCagraIndexCreate(&loaded_device_index), CUVS_SUCCESS);
+  cuvsDataset_t loaded_device_dataset = nullptr;
+  ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(
+              res, device_serialized_path.c_str(), loaded_device_index, &loaded_device_dataset),
+            CUVS_SUCCESS)
+    << cuvsGetLastErrorText();
+  ASSERT_NE(loaded_device_dataset, nullptr);
+  EXPECT_EQ(loaded_device_dataset->mem_type, CUVS_DATASET_MEM_TYPE_DEVICE);
+  EXPECT_EQ(loaded_device_dataset->layout, CUVS_DATASET_LAYOUT_PADDED);
+
+  cuvsCagraIndexDestroy(loaded_device_index);
+  cuvsDatasetDestroy(loaded_device_dataset);
+  std::filesystem::remove(device_serialized_path);
 
   cuvsDatasetViewDestroy(device_view);
   cuvsDatasetViewDestroy(host_view);
@@ -995,4 +1038,278 @@ TEST(CagraC, BuildSearchACEDisk)
   cuvsHnswIndexParamsDestroy(hnsw_params);
   cuvsHnswIndexDestroy(hnsw_index);
   cuvsResourcesDestroy(res);
+}
+
+TEST(CagraC, SerializeHostStandardAllDtypes) {
+  auto round_trip = [](auto type_tag, DLDataType dtype, const char *suffix) {
+    using T = decltype(type_tag);
+    cuvsResources_t res;
+    ASSERT_EQ(cuvsResourcesCreate(&res), CUVS_SUCCESS);
+
+    std::array<T, 8> values{};
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if constexpr (std::is_same_v<T, half>) {
+        values[i] = __float2half(static_cast<float>(i));
+      } else {
+        values[i] = static_cast<T>(i);
+      }
+    }
+    int64_t shape[2] = {4, 2};
+    DLManagedTensor tensor{};
+    tensor.dl_tensor.data = values.data();
+    tensor.dl_tensor.device.device_type = kDLCPU;
+    tensor.dl_tensor.ndim = 2;
+    tensor.dl_tensor.dtype = dtype;
+    tensor.dl_tensor.shape = shape;
+
+    cuvsDatasetView_t dataset_view = nullptr;
+    ASSERT_EQ(cuvsDatasetMakeStandardView(res, &tensor, &dataset_view),
+              CUVS_SUCCESS);
+    cuvsCagraIndexParams_t params;
+    ASSERT_EQ(cuvsCagraIndexParamsCreate(&params), CUVS_SUCCESS);
+    cuvsCagraIndex_t index;
+    ASSERT_EQ(cuvsCagraIndexCreate(&index), CUVS_SUCCESS);
+    ASSERT_EQ(cuvsCagraBuild(res, params, dataset_view, index), CUVS_SUCCESS);
+
+    auto path = "/tmp/cuvs-cagra-host-standard-" + std::string(suffix) + "-" +
+                std::to_string(getpid()) + ".bin";
+    ASSERT_EQ(cuvsCagraSerializeGraphAndDataset(res, path.c_str(), index),
+              CUVS_SUCCESS);
+
+    cuvsCagraIndex_t loaded;
+    ASSERT_EQ(cuvsCagraIndexCreate(&loaded), CUVS_SUCCESS);
+    cuvsDataset_t loaded_dataset = nullptr;
+    ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(res, path.c_str(), loaded,
+                                                  &loaded_dataset),
+              CUVS_SUCCESS)
+      << cuvsGetLastErrorText();
+    ASSERT_NE(loaded_dataset, nullptr);
+    EXPECT_EQ(loaded_dataset->dtype.code, dtype.code);
+    EXPECT_EQ(loaded_dataset->dtype.bits, dtype.bits);
+    EXPECT_EQ(loaded_dataset->dtype.lanes, 1);
+    EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_HOST);
+    EXPECT_EQ(loaded_dataset->layout, CUVS_DATASET_LAYOUT_STANDARD);
+    int64_t size = 0;
+    int64_t dim = 0;
+    EXPECT_EQ(cuvsCagraIndexGetSize(loaded, &size), CUVS_SUCCESS);
+    EXPECT_EQ(cuvsCagraIndexGetDims(loaded, &dim), CUVS_SUCCESS);
+    EXPECT_EQ(size, 4);
+    EXPECT_EQ(dim, 2);
+
+    // The index is non-owning: both objects are independently destroyable.
+    cuvsCagraIndexDestroy(loaded);
+    cuvsDatasetDestroy(loaded_dataset);
+    cuvsCagraIndexDestroy(index);
+    cuvsCagraIndexParamsDestroy(params);
+    cuvsDatasetViewDestroy(dataset_view);
+    cuvsResourcesDestroy(res);
+    std::filesystem::remove(path);
+  };
+
+  round_trip(float{}, {kDLFloat, 32, 1}, "f32");
+  round_trip(half{}, {kDLFloat, 16, 1}, "f16");
+  round_trip(int8_t{}, {kDLInt, 8, 1}, "i8");
+  round_trip(uint8_t{}, {kDLUInt, 8, 1}, "u8");
+}
+
+TEST(CagraC, ExplicitSerializationSemantics) {
+  cuvsResources_t res;
+  ASSERT_EQ(cuvsResourcesCreate(&res), CUVS_SUCCESS);
+  cudaStream_t stream;
+  ASSERT_EQ(cuvsStreamGet(res, &stream), CUVS_SUCCESS);
+
+  int64_t dataset_shape[2] = {4, 2};
+  DLManagedTensor host_tensor{};
+  host_tensor.dl_tensor.data = dataset;
+  host_tensor.dl_tensor.device.device_type = kDLCPU;
+  host_tensor.dl_tensor.ndim = 2;
+  host_tensor.dl_tensor.dtype = {kDLFloat, 32, 1};
+  host_tensor.dl_tensor.shape = dataset_shape;
+
+  cuvsDatasetView_t host_view = nullptr;
+  ASSERT_EQ(cuvsDatasetMakeStandardView(res, &host_tensor, &host_view),
+            CUVS_SUCCESS);
+  cuvsCagraIndexParams_t params;
+  ASSERT_EQ(cuvsCagraIndexParamsCreate(&params), CUVS_SUCCESS);
+  cuvsCagraIndex_t source;
+  ASSERT_EQ(cuvsCagraIndexCreate(&source), CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraBuild(res, params, host_view, source), CUVS_SUCCESS);
+
+  auto prefix = "/tmp/cuvs-cagra-explicit-" + std::to_string(getpid());
+  auto full_path = prefix + "-full.bin";
+  auto graph_path = prefix + "-graph.bin";
+  ASSERT_EQ(cuvsCagraSerializeGraphAndDataset(res, full_path.c_str(), source),
+            CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraSerializeGraph(res, graph_path.c_str(), source),
+            CUVS_SUCCESS);
+
+  auto expect_search = [&](cuvsCagraIndex_t index) {
+    rmm::device_uvector<float> queries_d(8, stream);
+    raft::copy(queries_d.data(), reinterpret_cast<float *>(queries), 8, stream);
+    int64_t queries_shape[2] = {4, 2};
+    DLManagedTensor queries_tensor{};
+    queries_tensor.dl_tensor.data = queries_d.data();
+    queries_tensor.dl_tensor.device.device_type = kDLCUDA;
+    queries_tensor.dl_tensor.ndim = 2;
+    queries_tensor.dl_tensor.dtype = {kDLFloat, 32, 1};
+    queries_tensor.dl_tensor.shape = queries_shape;
+
+    rmm::device_uvector<uint32_t> neighbors_d(4, stream);
+    int64_t result_shape[2] = {4, 1};
+    DLManagedTensor neighbors_tensor{};
+    neighbors_tensor.dl_tensor.data = neighbors_d.data();
+    neighbors_tensor.dl_tensor.device.device_type = kDLCUDA;
+    neighbors_tensor.dl_tensor.ndim = 2;
+    neighbors_tensor.dl_tensor.dtype = {kDLUInt, 32, 1};
+    neighbors_tensor.dl_tensor.shape = result_shape;
+
+    rmm::device_uvector<float> distances_d(4, stream);
+    DLManagedTensor distances_tensor{};
+    distances_tensor.dl_tensor.data = distances_d.data();
+    distances_tensor.dl_tensor.device.device_type = kDLCUDA;
+    distances_tensor.dl_tensor.ndim = 2;
+    distances_tensor.dl_tensor.dtype = {kDLFloat, 32, 1};
+    distances_tensor.dl_tensor.shape = result_shape;
+
+    cuvsCagraSearchParams_t search_params;
+    ASSERT_EQ(cuvsCagraSearchParamsCreate(&search_params), CUVS_SUCCESS);
+    cuvsFilter no_filter{0, NO_FILTER};
+    ASSERT_EQ(cuvsCagraSearch(res, search_params, index, &queries_tensor,
+                              &neighbors_tensor, &distances_tensor, no_filter),
+              CUVS_SUCCESS);
+    EXPECT_TRUE(cuvs::devArrMatchHost(neighbors_exp, neighbors_d.data(), 4,
+                                      cuvs::Compare<uint32_t>()));
+    cuvsCagraSearchParamsDestroy(search_params);
+  };
+
+  cuvsCagraIndex_t loaded;
+  ASSERT_EQ(cuvsCagraIndexCreate(&loaded), CUVS_SUCCESS);
+  cuvsDataset_t loaded_dataset = nullptr;
+  ASSERT_EQ(cuvsCagraDeserializeGraphAndDataset(res, full_path.c_str(), loaded,
+                                                &loaded_dataset),
+            CUVS_SUCCESS)
+    << cuvsGetLastErrorText();
+  ASSERT_NE(loaded_dataset, nullptr);
+  EXPECT_EQ(loaded_dataset->mem_type, CUVS_DATASET_MEM_TYPE_HOST);
+  EXPECT_EQ(loaded_dataset->layout, CUVS_DATASET_LAYOUT_STANDARD);
+
+  // Dataset-requiring failures leave a populated destination and output
+  // unchanged.
+  auto loaded_addr = loaded->addr;
+  cuvsDataset_t no_dataset = nullptr;
+  EXPECT_EQ(cuvsCagraDeserializeGraphAndDataset(res, graph_path.c_str(), loaded,
+                                                &no_dataset),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+  EXPECT_EQ(no_dataset, nullptr);
+  EXPECT_EQ(cuvsCagraDeserializeGraphAndDataset(res, full_path.c_str(), loaded,
+                                                nullptr),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+  auto populated_output = loaded_dataset;
+  EXPECT_EQ(cuvsCagraDeserializeGraphAndDataset(res, full_path.c_str(), loaded,
+                                                &populated_output),
+            CUVS_ERROR);
+  EXPECT_EQ(populated_output, loaded_dataset);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+
+  auto truncated_path = prefix + "-truncated.bin";
+  auto truncated_payload_path = prefix + "-truncated-payload.bin";
+  auto bad_dtype_path = prefix + "-bad-dtype.bin";
+  auto bad_kind_path = prefix + "-bad-kind.bin";
+  std::filesystem::copy_file(full_path, truncated_payload_path);
+  auto const full_size = std::filesystem::file_size(truncated_payload_path);
+  std::filesystem::resize_file(truncated_payload_path, full_size - 1);
+  {
+    std::ofstream truncated(truncated_path, std::ios::binary);
+    truncated.write("xx", 2);
+    std::ofstream bad_dtype(bad_dtype_path, std::ios::binary);
+    char unsupported_dtype[4] = {'<', 'i', '2', '\0'};
+    bad_dtype.write(unsupported_dtype, 4);
+
+    std::filesystem::copy_file(full_path, bad_kind_path);
+    std::fstream bad_kind(
+      bad_kind_path, std::ios::in | std::ios::out | std::ios::binary);
+    raft::resources parse_res;
+    bad_kind.seekg(4);
+    static_cast<void>(raft::deserialize_scalar<int>(parse_res, bad_kind));
+    auto const kind_position = bad_kind.tellg();
+    uint32_t unsupported_kind = 99;
+    bad_kind.seekp(kind_position);
+    raft::serialize_scalar(parse_res, bad_kind, unsupported_kind);
+  }
+  EXPECT_EQ(cuvsCagraDeserializeGraph(res, truncated_path.c_str(), loaded),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+  EXPECT_EQ(cuvsCagraDeserializeGraph(res, truncated_payload_path.c_str(), loaded),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+  EXPECT_EQ(cuvsCagraDeserializeGraph(res, bad_dtype_path.c_str(), loaded),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+  EXPECT_EQ(cuvsCagraDeserializeGraph(res, bad_kind_path.c_str(), loaded),
+            CUVS_ERROR);
+  EXPECT_EQ(loaded->addr, loaded_addr);
+
+  // Graph-only mode also accepts a graph-and-dataset file and discards its
+  // payload safely.
+  cuvsCagraIndex_t graph_from_full;
+  ASSERT_EQ(cuvsCagraIndexCreate(&graph_from_full), CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraDeserializeGraph(res, full_path.c_str(), graph_from_full),
+            CUVS_SUCCESS);
+  auto sentinel_path = prefix + "-sentinel.bin";
+  {
+    std::ofstream sentinel(sentinel_path, std::ios::binary);
+    sentinel << "sentinel";
+  }
+  EXPECT_EQ(cuvsCagraSerializeGraphAndDataset(res, sentinel_path.c_str(),
+                                              graph_from_full),
+            CUVS_ERROR);
+  std::ifstream sentinel(sentinel_path, std::ios::binary);
+  std::string sentinel_contents;
+  sentinel >> sentinel_contents;
+  EXPECT_EQ(sentinel_contents, "sentinel");
+
+  // A graph-only file becomes search-ready after attaching a caller-owned
+  // padded view.
+  cuvsCagraIndex_t graph_only;
+  ASSERT_EQ(cuvsCagraIndexCreate(&graph_only), CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraDeserializeGraph(res, graph_path.c_str(), graph_only),
+            CUVS_SUCCESS);
+  rmm::device_uvector<float> device_dataset(8, stream);
+  raft::copy(device_dataset.data(), reinterpret_cast<float *>(dataset), 8,
+             stream);
+  DLManagedTensor device_tensor = host_tensor;
+  device_tensor.dl_tensor.data = device_dataset.data();
+  device_tensor.dl_tensor.device.device_type = kDLCUDA;
+  cuvsDataset_t external_owner = nullptr;
+  ASSERT_EQ(cuvsDatasetMakePadded(res, &device_tensor, &external_owner),
+            CUVS_SUCCESS);
+  cuvsDatasetView_t external_view = nullptr;
+  ASSERT_EQ(cuvsDatasetMakeViewWrapper(external_owner, &external_view),
+            CUVS_SUCCESS);
+  ASSERT_EQ(cuvsCagraUpdateDataset(res, external_view, loaded), CUVS_SUCCESS);
+  expect_search(loaded);
+
+  ASSERT_EQ(cuvsCagraUpdateDataset(res, external_view, graph_only),
+            CUVS_SUCCESS);
+  expect_search(graph_only);
+
+  cuvsDatasetViewDestroy(external_view);
+  cuvsCagraIndexDestroy(graph_only);
+  cuvsDatasetDestroy(external_owner);
+  cuvsCagraIndexDestroy(graph_from_full);
+  cuvsCagraIndexDestroy(loaded);
+  cuvsDatasetDestroy(loaded_dataset);
+  cuvsCagraIndexDestroy(source);
+  cuvsCagraIndexParamsDestroy(params);
+  cuvsDatasetViewDestroy(host_view);
+  cuvsResourcesDestroy(res);
+  std::filesystem::remove(full_path);
+  std::filesystem::remove(graph_path);
+  std::filesystem::remove(truncated_path);
+  std::filesystem::remove(truncated_payload_path);
+  std::filesystem::remove(bad_dtype_path);
+  std::filesystem::remove(sentinel_path);
+  std::filesystem::remove(bad_kind_path);
 }
