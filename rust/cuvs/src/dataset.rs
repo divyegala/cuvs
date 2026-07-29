@@ -83,18 +83,16 @@ impl<'a> DatasetView<'a> {
 
             let handle = init_handle(|out| match kind {
                 DatasetKind::DevicePadded => {
-                    ffi::cuvsDatasetMakeDevicePaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
+                    ffi::cuvsDatasetMakePaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
                 }
-                DatasetKind::DeviceStandard => ffi::cuvsDatasetMakeDeviceStandardView(
-                    res.handle(),
-                    dataset_c.as_mut_ptr(),
-                    out,
-                ),
+                DatasetKind::DeviceStandard => {
+                    ffi::cuvsDatasetMakeStandardView(res.handle(), dataset_c.as_mut_ptr(), out)
+                }
                 DatasetKind::HostPadded => {
-                    ffi::cuvsDatasetMakeHostPaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
+                    ffi::cuvsDatasetMakePaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
                 }
                 DatasetKind::HostStandard => {
-                    ffi::cuvsDatasetMakeHostStandardView(res.handle(), dataset_c.as_mut_ptr(), out)
+                    ffi::cuvsDatasetMakeStandardView(res.handle(), dataset_c.as_mut_ptr(), out)
                 }
             })?;
             Ok(Self { handle, kind, _dataset: PhantomData })
@@ -145,7 +143,7 @@ impl DevicePaddedDataset {
         }
         unsafe {
             let handle = init_handle(|out| {
-                ffi::cuvsDatasetMakeDevicePadded(res.handle(), dataset_c.as_mut_ptr(), out)
+                ffi::cuvsDatasetMakePadded(res.handle(), dataset_c.as_mut_ptr(), out)
             })?;
             Ok(Self { handle })
         }
@@ -153,9 +151,8 @@ impl DevicePaddedDataset {
 
     /// Borrow this allocation as a device-padded view.
     pub fn as_view(&self) -> Result<DatasetView<'_>> {
-        let handle = unsafe {
-            init_handle(|out| ffi::cuvsDatasetMakeViewFromOwningPadded(self.handle, out))?
-        };
+        let handle =
+            unsafe { init_handle(|out| ffi::cuvsDatasetMakeViewWrapper(self.handle, out))? };
         Ok(DatasetView { handle, kind: DatasetKind::DevicePadded, _dataset: PhantomData })
     }
 

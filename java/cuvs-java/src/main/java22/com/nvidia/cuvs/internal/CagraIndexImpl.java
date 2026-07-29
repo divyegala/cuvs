@@ -187,20 +187,20 @@ public class CagraIndexImpl implements CagraIndex {
           MemorySegment datasetViewPtr = localArena.allocate(cuvsDatasetView_t);
           if (memType == CUVS_DATASET_MEM_TYPE_DEVICE()) {
             if (layout == CUVS_DATASET_LAYOUT_PADDED()) {
-              returnValue = cuvsDatasetMakeDevicePaddedView(cuvsRes, datasetTensor, datasetViewPtr);
-              checkCuVSError(returnValue, "cuvsDatasetMakeDevicePaddedView");
+              returnValue = cuvsDatasetMakePaddedView(cuvsRes, datasetTensor, datasetViewPtr);
+              checkCuVSError(returnValue, "cuvsDatasetMakePaddedView");
             } else {
               returnValue =
-                  cuvsDatasetMakeDeviceStandardView(cuvsRes, datasetTensor, datasetViewPtr);
-              checkCuVSError(returnValue, "cuvsDatasetMakeDeviceStandardView");
+                  cuvsDatasetMakeStandardView(cuvsRes, datasetTensor, datasetViewPtr);
+              checkCuVSError(returnValue, "cuvsDatasetMakeStandardView");
             }
           } else {
             if (layout == CUVS_DATASET_LAYOUT_PADDED()) {
-              returnValue = cuvsDatasetMakeHostPaddedView(cuvsRes, datasetTensor, datasetViewPtr);
-              checkCuVSError(returnValue, "cuvsDatasetMakeHostPaddedView");
+              returnValue = cuvsDatasetMakePaddedView(cuvsRes, datasetTensor, datasetViewPtr);
+              checkCuVSError(returnValue, "cuvsDatasetMakePaddedView");
             } else {
-              returnValue = cuvsDatasetMakeHostStandardView(cuvsRes, datasetTensor, datasetViewPtr);
-              checkCuVSError(returnValue, "cuvsDatasetMakeHostStandardView");
+              returnValue = cuvsDatasetMakeStandardView(cuvsRes, datasetTensor, datasetViewPtr);
+              checkCuVSError(returnValue, "cuvsDatasetMakeStandardView");
             }
           }
           datasetView = datasetViewPtr.get(cuvsDatasetView_t, 0);
@@ -385,8 +385,8 @@ public class CagraIndexImpl implements CagraIndex {
       var cuvsRes = resourcesAccessor.handle();
       var datasetTensor = datasetInternal.toTensor(localArena);
       MemorySegment paddedViewPtr = localArena.allocate(cuvsDatasetView_t);
-      var returnValue = cuvsDatasetMakeDevicePaddedView(cuvsRes, datasetTensor, paddedViewPtr);
-      checkCuVSError(returnValue, "cuvsDatasetMakeDevicePaddedView");
+      var returnValue = cuvsDatasetMakePaddedView(cuvsRes, datasetTensor, paddedViewPtr);
+      checkCuVSError(returnValue, "cuvsDatasetMakePaddedView");
       MemorySegment paddedView = paddedViewPtr.get(cuvsDatasetView_t, 0);
 
       var out = new CagraIndex.DevicePaddedDatasetView();
@@ -409,8 +409,8 @@ public class CagraIndexImpl implements CagraIndex {
       var cuvsRes = resourcesAccessor.handle();
       var datasetTensor = datasetInternal.toTensor(localArena);
       MemorySegment standardViewPtr = localArena.allocate(cuvsDatasetView_t);
-      var returnValue = cuvsDatasetMakeDeviceStandardView(cuvsRes, datasetTensor, standardViewPtr);
-      checkCuVSError(returnValue, "cuvsDatasetMakeDeviceStandardView");
+      var returnValue = cuvsDatasetMakeStandardView(cuvsRes, datasetTensor, standardViewPtr);
+      checkCuVSError(returnValue, "cuvsDatasetMakeStandardView");
       MemorySegment standardView = standardViewPtr.get(cuvsDatasetView_t, 0);
 
       var out = new CagraIndex.DeviceStandardDatasetView();

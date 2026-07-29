@@ -421,7 +421,7 @@ int run_mg_cagra_test(mg_test_params params,
   device_dataset_tensor.dl_tensor.device.device_type = kDLCUDA;
   device_dataset_tensor.dl_tensor.device.device_id = 0;
   cuvsError_t padded_result =
-    cuvsDatasetMakeDevicePaddedView(res, &device_dataset_tensor, &padded_view);
+    cuvsDatasetMakePaddedView(res, &device_dataset_tensor, &padded_view);
   if (padded_result != CUVS_SUCCESS) {
     printf("MG CAGRA padded dataset view creation failed\n");
     goto cleanup;
