@@ -125,9 +125,9 @@ public interface CagraIndex extends AutoCloseable {
     public PaddedDataset() {}
   }
 
-  /** Caller-owned deserialize result preserving serialized memory type and layout. */
-  final class Dataset extends DeserializeDataset {
-    public Dataset() {}
+  /** Owning standard dataset handle populated by deserialization. */
+  final class StandardDataset extends DeserializeDataset {
+    public StandardDataset() {}
   }
 
   /**
@@ -179,10 +179,10 @@ public interface CagraIndex extends AutoCloseable {
   /**
    * Deserializes into this pre-allocated index and optionally populates an output dataset handle.
    * <p>
-   * Pass a {@link Dataset} to receive ownership of a deserialized dataset payload with its recorded
-   * host/device memory type and standard/padded layout. Passing {@code null} loads only the graph,
-   * even when the serialized file contains a dataset. The caller must keep the returned dataset
-   * alive while the index uses it.
+   * Pass an empty {@link PaddedDataset} or {@link StandardDataset} matching the serialized layout
+   * to receive ownership of the deserialized dataset payload. Passing {@code null} loads only the
+   * graph, even when the serialized file contains a dataset. The caller must keep the returned
+   * dataset alive while the index uses it.
    */
   void deserialize(InputStream inputStream, DeserializeDataset outDataset) throws Throwable;
 

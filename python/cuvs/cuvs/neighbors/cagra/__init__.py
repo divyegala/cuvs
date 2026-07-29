@@ -4,12 +4,12 @@
 
 from .cagra import (
     AceParams,
-    Dataset,
     ExtendParams,
     Index,
     IndexParams,
     PaddedDataset,
     PaddedDatasetView,
+    StandardDataset,
     StandardDatasetView,
     SearchParams,
     build,
@@ -28,12 +28,12 @@ from .cagra import (
 
 __all__ = [
     "AceParams",
-    "Dataset",
     "ExtendParams",
     "Index",
     "IndexParams",
     "PaddedDataset",
     "PaddedDatasetView",
+    "StandardDataset",
     "StandardDatasetView",
     "SearchParams",
     "build",

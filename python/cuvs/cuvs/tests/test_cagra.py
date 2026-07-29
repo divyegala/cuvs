@@ -109,14 +109,19 @@ def run_cagra_build_search_test(
             temp_filename = f.name
         cagra.save(temp_filename, index)
         index = cagra.Index()
-        out_dataset = cagra.Dataset()
+        expected_kind = cagra.get_dataset_view_kind(
+            dataset_device if array_type == "device" else dataset
+        )
+        layout = "standard" if expected_kind.endswith("standard") else "padded"
+        out_dataset = (
+            cagra.StandardDataset()
+            if layout == "standard"
+            else cagra.PaddedDataset()
+        )
         cagra.load(
             index,
             temp_filename,
             out_dataset=out_dataset,
-        )
-        expected_kind = cagra.get_dataset_view_kind(
-            dataset_device if array_type == "device" else dataset
         )
         assert (
             f"{out_dataset.memory_type}_{out_dataset.layout}" == expected_kind

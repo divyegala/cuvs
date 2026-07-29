@@ -494,7 +494,8 @@ public class CagraIndexImpl implements CagraIndex {
         if (outDataset == null) {
           var returnValue = cuvsCagraDeserializeGraph(cuvsRes, path, index);
           checkCuVSError(returnValue, "cuvsCagraDeserializeGraph");
-        } else if (outDataset instanceof CagraIndex.Dataset) {
+        } else if (outDataset instanceof CagraIndex.PaddedDataset
+            || outDataset instanceof CagraIndex.StandardDataset) {
           MemorySegment datasetOutPtr = arena.allocate(cuvsDataset_t);
           datasetOutPtr.set(cuvsDataset_t, 0, MemorySegment.NULL);
           var returnValue =
@@ -508,7 +509,9 @@ public class CagraIndexImpl implements CagraIndex {
                 new DatasetCloseDelegate(datasetHandle), datasetHandle.address());
           }
         } else {
-          throw new IllegalArgumentException("outDataset must be null or CagraIndex.Dataset");
+          throw new IllegalArgumentException(
+              "outDataset must be null, CagraIndex.PaddedDataset, or "
+                  + "CagraIndex.StandardDataset");
         }
       }
     } finally {

@@ -246,6 +246,10 @@ cdef class PaddedDataset(Dataset):
     pass
 
 
+cdef class StandardDataset(Dataset):
+    pass
+
+
 cdef class PaddedDatasetView:
     cdef cuvsDatasetView_t view
 

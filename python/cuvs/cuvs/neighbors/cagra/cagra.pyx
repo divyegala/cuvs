@@ -444,6 +444,10 @@ cdef class PaddedDataset(Dataset):
     pass
 
 
+cdef class StandardDataset(Dataset):
+    pass
+
+
 cdef class PaddedDatasetView:
     def __cinit__(self):
         self.view = NULL
@@ -1063,7 +1067,7 @@ def save(filename, Index index, bool include_dataset=True, resources=None):
     >>> # Serialize and deserialize the cagra index built
     >>> cagra.save("my_index.bin", index)
     >>> index_loaded = cagra.Index()
-    >>> out_dataset = cagra.Dataset()
+    >>> out_dataset = cagra.PaddedDataset()
     >>> cagra.load(index_loaded, "my_index.bin", out_dataset=out_dataset)
     """
     cdef string c_filename = filename.encode('utf-8')
@@ -1095,9 +1099,9 @@ def load(index, filename, out_dataset=None, resources=None):
         Pre-created index object to populate.
     filename : string
         Name of the file.
-    out_dataset : Dataset, optional
-        Empty owning output slot populated as a factory result using the
-        serialized host/device memory type and standard/padded layout. If
+    out_dataset : PaddedDataset or StandardDataset, optional
+        Empty owning output slot populated by the native factory deserializer.
+        The concrete wrapper type must match the serialized dataset layout. If
         omitted, only the graph is retained. Keep this object alive while the
         loaded index is in use.
     {resources_docstring}
@@ -1111,7 +1115,7 @@ def load(index, filename, out_dataset=None, resources=None):
             res,
             c_filename.c_str(),
             idx.index))
-    elif isinstance(out_dataset, Dataset):
+    elif isinstance(out_dataset, (PaddedDataset, StandardDataset)):
         check_cuvs(cuvsCagraDeserializeGraphAndDataset(
             res,
             c_filename.c_str(),
@@ -1119,7 +1123,7 @@ def load(index, filename, out_dataset=None, resources=None):
             &(<Dataset>out_dataset).dataset))
     else:
         raise TypeError(
-            "out_dataset must be a Dataset or None"
+            "out_dataset must be a PaddedDataset, StandardDataset, or None"
         )
     idx.trained = True
 
