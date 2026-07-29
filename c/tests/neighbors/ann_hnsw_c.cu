@@ -63,15 +63,10 @@ TEST(CagraHnswC, BuildSearch)
   ASSERT_EQ(cuvsDatasetViewDestroy(dataset_view), CUVS_SUCCESS);
 
   // A host build yields a graph-only host index. The hnswlib format stores the vectors alongside
-  // the graph, so attach a device padded dataset before serializing.
-  rmm::device_uvector<float> dataset_d(4 * 2, stream);
-  raft::copy(dataset_d.data(), (float*)dataset, 4 * 2, stream);
-  DLManagedTensor device_dataset_tensor              = dataset_tensor;
-  device_dataset_tensor.dl_tensor.data               = dataset_d.data();
-  device_dataset_tensor.dl_tensor.device.device_type = kDLCUDA;
-  device_dataset_tensor.dl_tensor.device.device_id   = 0;
+  // the graph, so copy the host tensor into device-padded storage before serializing.
   cuvsDataset_t padded_dataset_owner                 = nullptr;
-  ASSERT_EQ(cuvsDatasetMakePadded(res, &device_dataset_tensor, &padded_dataset_owner),
+  ASSERT_EQ(cuvsDatasetMakePadded(
+              res, &dataset_tensor, CUVS_DATASET_MEM_TYPE_DEVICE, &padded_dataset_owner),
             CUVS_SUCCESS);
   cuvsDatasetView_t padded_dataset_view = nullptr;
   ASSERT_EQ(cuvsDatasetMakeViewWrapper(padded_dataset_owner, &padded_dataset_view),

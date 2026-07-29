@@ -371,8 +371,15 @@ public class CagraIndexImpl implements CagraIndex {
         var resourcesAccessor = resources.access()) {
       var cuvsRes = resourcesAccessor.handle();
       var datasetTensor = datasetInternal.toTensor(localArena);
+      var targetMemType = localArena.allocate(C_INT);
+      var layout = localArena.allocate(C_INT);
+      var returnValue =
+          cuvsCagraGetDatasetMemTypeAndLayout(datasetTensor, targetMemType, layout);
+      checkCuVSError(returnValue, "cuvsCagraGetDatasetMemTypeAndLayout");
       MemorySegment paddedDatasetPtr = localArena.allocate(cuvsDataset_t);
-      var returnValue = cuvsDatasetMakePadded(cuvsRes, datasetTensor, paddedDatasetPtr);
+      returnValue =
+          cuvsDatasetMakePadded(
+              cuvsRes, datasetTensor, targetMemType.get(C_INT, 0), paddedDatasetPtr);
       checkCuVSError(returnValue, "cuvsDatasetMakePadded");
       MemorySegment paddedDataset = paddedDatasetPtr.get(cuvsDataset_t, 0);
 

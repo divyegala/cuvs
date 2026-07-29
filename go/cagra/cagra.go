@@ -39,9 +39,17 @@ func MakePaddedDataset[T any](Resources cuvs.Resource, dataset *cuvs.Tensor[T]) 
 		return nil, errors.New("dataset is nil")
 	}
 	datasetTensor := (*C.DLManagedTensor)(unsafe.Pointer(dataset.C_tensor))
+	var memType C.cuvsDatasetMemType_t
+	var layout C.cuvsDatasetLayout_t
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsCagraGetDatasetMemTypeAndLayout(
+		datasetTensor, &memType, &layout,
+	)))
+	if err != nil {
+		return nil, err
+	}
 	var paddedDataset C.cuvsDataset_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePadded(
-		C.cuvsResources_t(Resources.Resource), datasetTensor, &paddedDataset,
+	err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePadded(
+		C.cuvsResources_t(Resources.Resource), datasetTensor, memType, &paddedDataset,
 	)))
 	if err != nil {
 		return nil, err

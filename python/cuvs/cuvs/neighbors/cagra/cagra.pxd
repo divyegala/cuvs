@@ -150,6 +150,7 @@ cdef extern from "cuvs/neighbors/cagra.h" nogil:
 
     cuvsError_t cuvsDatasetMakePadded(cuvsResources_t res,
                                       DLManagedTensor* dataset,
+                                      cuvsDatasetMemType_t target_mem_type,
                                       cuvsDataset_t* padded_dataset)
     cuvsError_t cuvsDatasetDestroy(cuvsDataset_t dataset)
     cuvsError_t cuvsDatasetMakeViewWrapper(

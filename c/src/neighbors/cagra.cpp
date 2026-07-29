@@ -311,15 +311,22 @@ static void make_device_padded_dataset(raft::resources* res_ptr,
                                        cuvsDataset_t* output_padded_dataset)
 {
   auto dataset = dataset_tensor->dl_tensor;
-  RAFT_EXPECTS(cuvs::core::is_dlpack_device_compatible(dataset),
-               "cuvsDatasetMakePadded: dataset must have device-compatible memory");
-  using mdspan_type = raft::device_matrix_view<T const, int64_t, raft::row_major>;
-  auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
-  auto owner = cuvs::neighbors::make_device_padded_dataset(*res_ptr, mds);
+  using owner_type = cuvs::neighbors::device_padded_dataset<T, int64_t>;
+  std::unique_ptr<owner_type> owner;
+  if (cuvs::core::is_dlpack_device_compatible(dataset)) {
+    using mdspan_type = raft::device_matrix_view<T const, int64_t, raft::row_major>;
+    auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
+    owner             = cuvs::neighbors::make_device_padded_dataset(*res_ptr, mds);
+  } else if (cuvs::core::is_dlpack_host_compatible(dataset)) {
+    using mdspan_type = raft::host_matrix_view<T const, int64_t, raft::row_major>;
+    auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
+    owner             = cuvs::neighbors::make_device_padded_dataset(*res_ptr, mds);
+  } else {
+    RAFT_FAIL("cuvsDatasetMakePadded: unsupported source tensor memory type");
+  }
   auto* out  = new cuvsDataset{};
   out->addr  = reinterpret_cast<uintptr_t>(owner.release());
-  out->destroy_addr =
-    &destroy_typed_addr<cuvs::neighbors::device_padded_dataset<T, int64_t>>;
+  out->destroy_addr = &destroy_typed_addr<owner_type>;
   out->dtype    = dataset.dtype;
   out->mem_type = CUVS_DATASET_MEM_TYPE_DEVICE;
   out->layout   = CUVS_DATASET_LAYOUT_PADDED;
@@ -332,15 +339,35 @@ static void make_host_padded_dataset(raft::resources* res_ptr,
                                      cuvsDataset_t* output_padded_dataset)
 {
   auto dataset = dataset_tensor->dl_tensor;
-  RAFT_EXPECTS(cuvs::core::is_dlpack_host_compatible(dataset),
-               "cuvsDatasetMakePadded: dataset must have host-compatible memory");
-  using mdspan_type = raft::host_matrix_view<T const, int64_t, raft::row_major>;
-  auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
-  auto owner = cuvs::neighbors::make_host_padded_dataset(*res_ptr, mds);
+  using owner_type = cuvs::neighbors::host_padded_dataset<T, int64_t>;
+  std::unique_ptr<owner_type> owner;
+  if (cuvs::core::is_dlpack_host_compatible(dataset)) {
+    using mdspan_type = raft::host_matrix_view<T const, int64_t, raft::row_major>;
+    auto mds          = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
+    owner             = cuvs::neighbors::make_host_padded_dataset(*res_ptr, mds);
+  } else if (cuvs::core::is_dlpack_device_compatible(dataset)) {
+    using mdspan_type = raft::device_matrix_view<T const, int64_t, raft::row_major>;
+    auto src           = cuvs::core::from_dlpack<mdspan_type>(dataset_tensor);
+    auto logical_dim   = static_cast<uint32_t>(src.extent(1));
+    auto target_stride = cuvs::neighbors::cagra_required_row_width<T>(logical_dim);
+    auto host_data     = raft::make_host_matrix<T, int64_t>(src.extent(0), target_stride);
+    std::memset(host_data.data_handle(), 0, host_data.size() * sizeof(T));
+    auto stream = raft::resource::get_cuda_stream(*res_ptr);
+    raft::copy_matrix(host_data.data_handle(),
+                      target_stride,
+                      src.data_handle(),
+                      src.stride(0),
+                      logical_dim,
+                      src.extent(0),
+                      stream);
+    raft::resource::sync_stream(*res_ptr);
+    owner = std::make_unique<owner_type>(std::move(host_data), logical_dim);
+  } else {
+    RAFT_FAIL("cuvsDatasetMakePadded: unsupported source tensor memory type");
+  }
   auto* out  = new cuvsDataset{};
   out->addr  = reinterpret_cast<uintptr_t>(owner.release());
-  out->destroy_addr =
-    &destroy_typed_addr<cuvs::neighbors::host_padded_dataset<T, int64_t>>;
+  out->destroy_addr = &destroy_typed_addr<owner_type>;
   out->dtype    = dataset.dtype;
   out->mem_type = CUVS_DATASET_MEM_TYPE_HOST;
   out->layout   = CUVS_DATASET_LAYOUT_PADDED;
@@ -1293,6 +1320,7 @@ extern "C" cuvsError_t cuvsDatasetCreate(cuvsDataset_t* dataset)
 
 extern "C" cuvsError_t cuvsDatasetMakePadded(cuvsResources_t res,
                                              DLManagedTensor* dataset_tensor,
+                                             cuvsDatasetMemType_t target_mem_type,
                                              cuvsDataset_t* padded_dataset)
 {
   return cuvs::core::translate_exceptions([=] {
@@ -1302,12 +1330,14 @@ extern "C" cuvsError_t cuvsDatasetMakePadded(cuvsResources_t res,
     auto dataset  = dataset_tensor->dl_tensor;
     auto* res_ptr = reinterpret_cast<raft::resources*>(res);
     auto make_typed = [&]<typename T>() {
-      if (cuvs::core::is_dlpack_device_compatible(dataset)) {
-        make_device_padded_dataset<T>(res_ptr, dataset_tensor, padded_dataset);
-      } else if (cuvs::core::is_dlpack_host_compatible(dataset)) {
-        make_host_padded_dataset<T>(res_ptr, dataset_tensor, padded_dataset);
-      } else {
-        RAFT_FAIL("cuvsDatasetMakePadded: unsupported tensor memory type");
+      switch (target_mem_type) {
+        case CUVS_DATASET_MEM_TYPE_DEVICE:
+          make_device_padded_dataset<T>(res_ptr, dataset_tensor, padded_dataset);
+          break;
+        case CUVS_DATASET_MEM_TYPE_HOST:
+          make_host_padded_dataset<T>(res_ptr, dataset_tensor, padded_dataset);
+          break;
+        default: RAFT_FAIL("cuvsDatasetMakePadded: invalid target memory type");
       }
     };
 
