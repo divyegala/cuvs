@@ -395,7 +395,7 @@ fn serialize_to_hnswlib_impl(handle: &IndexHandle, res: &Resources, filename: &P
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::DevicePaddedDataset;
+    use crate::dataset::PaddedDataset;
     use crate::neighbors::filters::{Bitset, Filter};
     use crate::test_utils::DeviceTensor;
     use ndarray::s;
@@ -514,7 +514,7 @@ mod tests {
         let dataset_device = DeviceTensor::from_host(&res, &dataset).unwrap();
         let params = IndexParams::builder().build().unwrap();
         let index = Index::build(&res, &params, &dataset_device).unwrap();
-        let owner = DevicePaddedDataset::new(&res, &dataset_device).unwrap();
+        let owner = PaddedDataset::new(&res, &dataset_device).unwrap();
         let padded_view = owner.as_view().unwrap();
 
         let index = index.update_dataset(&res, &padded_view).unwrap();
@@ -669,7 +669,7 @@ mod tests {
         assert_eq!(loaded.dataset().map(Dataset::kind), Some(DatasetKind::DeviceStandard));
 
         let dataset_device = DeviceTensor::from_host(&res, &dataset).unwrap();
-        let owner = DevicePaddedDataset::new(&res, &dataset_device).unwrap();
+        let owner = PaddedDataset::new(&res, &dataset_device).unwrap();
         let padded_view = owner.as_view().unwrap();
         let index = loaded.update_dataset(&res, &padded_view).unwrap();
         drop(dataset_device);

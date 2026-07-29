@@ -65,6 +65,12 @@ cuvs::neighbors::cagra::index<T, IdxT, DatasetViewT> merge(
   int64_t merged_rows = 0;
   uint32_t dim        = 0;
   int64_t stride      = -1;
+
+  RAFT_EXPECTS(row_filter.get_filter_type() != cuvs::neighbors::filtering::FilterType::Bitmap,
+               "Bitmap filter isn't supported inside cagra::merge");
+  RAFT_EXPECTS(row_filter.get_filter_type() != cuvs::neighbors::filtering::FilterType::Bloom,
+               "Bloom filter isn't supported inside cagra::merge");
+
   for (cagra_index_t* index : indices) {
     RAFT_EXPECTS(index != nullptr,
                  "Null pointer detected in 'indices'. Ensure all elements are valid before usage.");

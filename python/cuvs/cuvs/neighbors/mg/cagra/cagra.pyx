@@ -165,8 +165,8 @@ def build(IndexParams index_params, dataset, resources=None):
     >>> build_params = cagra.IndexParams(metric="sqeuclidean")
     >>> index = cagra.build(build_params, dataset)
     >>> device_dataset = device_ndarray(dataset)
-    >>> padded_dataset = sg_cagra.make_device_padded_dataset(device_dataset)
-    >>> padded_view = sg_cagra.make_view_from_owning_padded(padded_dataset)
+    >>> padded_dataset = sg_cagra.make_padded_dataset(device_dataset)
+    >>> padded_view = sg_cagra.make_view_wrapper(padded_dataset)
     >>> _ = cagra.update_dataset(index, padded_view)
     >>> distances, neighbors = cagra.search(cagra.SearchParams(),
     ...                                         index, dataset, k)

@@ -66,8 +66,8 @@ public class HnswBuildAndSearchIT extends CuVSTestCase {
     // Host-built indexes are graph-only. Dim=2 is not 16-byte aligned, so allocate an owning
     // device-padded dataset, then update via a view. Keep padded alive until the index is closed.
     try (var deviceDataset = CuVSMatrix.ofArray(dataset).toDevice(resources);
-        var paddedDataset = index.makeDevicePaddedDataset(deviceDataset);
-        var paddedView = index.makeViewFromOwningPadded(paddedDataset)) {
+        var paddedDataset = index.makePaddedDataset(deviceDataset);
+        var paddedView = index.makeViewWrapper(paddedDataset)) {
       index.updateDataset(paddedView);
 
       // Saving the HNSW index on to the disk.
