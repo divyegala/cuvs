@@ -20,7 +20,7 @@
 mod index;
 mod params;
 
-pub use crate::dataset::{DatasetKind, DatasetView, DevicePaddedDataset, StandardDataset};
+pub use crate::dataset::{DatasetKind, DatasetView, PaddedDataset, StandardDataset};
 pub use crate::neighbors::filters::{Bitset, Filter};
 pub use index::{DeserializedIndex, Index};
 pub use params::{IndexParams, SearchParams};

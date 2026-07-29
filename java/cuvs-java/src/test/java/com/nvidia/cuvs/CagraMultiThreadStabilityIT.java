@@ -92,7 +92,7 @@ public class CagraMultiThreadStabilityIT extends CuVSTestCase {
                   .build();
           // Dim=256 floats is already 16-byte aligned, so wrap a padded view directly.
           // Close order is reverse declaration: view, then index, then deviceDataset.
-          var paddedView = index.makeDevicePaddedDatasetView(deviceDataset)) {
+          var paddedView = index.makePaddedDatasetView(deviceDataset)) {
 
         index.updateDataset(paddedView);
 

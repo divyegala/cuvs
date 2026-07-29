@@ -32,8 +32,9 @@ type StandardDatasetView struct {
 	view C.cuvsDatasetView_t
 }
 
-// Creates an owning device padded dataset from a device tensor.
-func MakeDevicePaddedDataset[T any](Resources cuvs.Resource, dataset *cuvs.Tensor[T]) (*PaddedDataset, error) {
+// MakePaddedDataset creates an owning padded dataset from a tensor.
+// Memory residency is inferred from the tensor.
+func MakePaddedDataset[T any](Resources cuvs.Resource, dataset *cuvs.Tensor[T]) (*PaddedDataset, error) {
 	if dataset == nil || dataset.C_tensor == nil {
 		return nil, errors.New("dataset is nil")
 	}
@@ -48,8 +49,8 @@ func MakeDevicePaddedDataset[T any](Resources cuvs.Resource, dataset *cuvs.Tenso
 	return &PaddedDataset{dataset: paddedDataset}, nil
 }
 
-// Creates a non-owning padded view from an owning padded dataset.
-func MakeViewFromOwningPadded(paddedDataset *PaddedDataset) (*PaddedDatasetView, error) {
+// MakeViewWrapper creates a non-owning view from an owning padded dataset.
+func MakeViewWrapper(paddedDataset *PaddedDataset) (*PaddedDatasetView, error) {
 	if paddedDataset == nil || paddedDataset.dataset == nil {
 		return nil, errors.New("paddedDataset is nil")
 	}
@@ -63,8 +64,9 @@ func MakeViewFromOwningPadded(paddedDataset *PaddedDataset) (*PaddedDatasetView,
 	return &PaddedDatasetView{view: paddedView}, nil
 }
 
-// Creates a non-owning device padded dataset view from a device tensor.
-func MakeDevicePaddedDatasetView[T any](Resources cuvs.Resource, dataset *cuvs.Tensor[T]) (*PaddedDatasetView, error) {
+// MakePaddedDatasetView creates a non-owning padded dataset view from a tensor.
+// Memory residency is inferred from the tensor.
+func MakePaddedDatasetView[T any](Resources cuvs.Resource, dataset *cuvs.Tensor[T]) (*PaddedDatasetView, error) {
 	if dataset == nil || dataset.C_tensor == nil {
 		return nil, errors.New("dataset is nil")
 	}
@@ -105,8 +107,9 @@ func (view *PaddedDatasetView) Close() error {
 	return nil
 }
 
-// Creates a non-owning device standard dataset view from a device tensor.
-func MakeDeviceStandardDatasetView[T any](Resources cuvs.Resource, dataset *cuvs.Tensor[T]) (*StandardDatasetView, error) {
+// MakeStandardDatasetView creates a non-owning standard dataset view from a tensor.
+// Memory residency is inferred from the tensor.
+func MakeStandardDatasetView[T any](Resources cuvs.Resource, dataset *cuvs.Tensor[T]) (*StandardDatasetView, error) {
 	if dataset == nil || dataset.C_tensor == nil {
 		return nil, errors.New("dataset is nil")
 	}
@@ -134,14 +137,14 @@ func (view *StandardDatasetView) Close() error {
 	return nil
 }
 
-// UpdateDataset updates any CAGRA index layout with a caller-provided device
-// padded dataset view and leaves the same handle search-ready.
+// UpdateDataset updates any CAGRA index layout with a caller-provided padded
+// dataset view and leaves the same handle search-ready.
 func UpdateDataset(Resources cuvs.Resource, paddedView *PaddedDatasetView, index *CagraIndex) error {
 	if !index.trained {
 		return errors.New("index needs to be built before attaching dataset")
 	}
 	if paddedView == nil || paddedView.view == nil {
-		return errors.New("device padded dataset view is nil")
+		return errors.New("padded dataset view is nil")
 	}
 	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsCagraUpdateDataset(
 		C.cuvsResources_t(Resources.Resource),
@@ -192,20 +195,14 @@ func BuildIndex[T any](Resources cuvs.Resource, params *IndexParams, dataset *cu
 		}
 	}()
 
-	switch {
-	case memType == C.CUVS_DATASET_MEM_TYPE_DEVICE && layout == C.CUVS_DATASET_LAYOUT_PADDED:
+	// Unified factories infer host vs device from the tensor; only layout
+	// selects padded vs standard.
+	switch layout {
+	case C.CUVS_DATASET_LAYOUT_PADDED:
 		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePaddedView(
 			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
 		)))
-	case memType == C.CUVS_DATASET_MEM_TYPE_DEVICE && layout == C.CUVS_DATASET_LAYOUT_STANDARD:
-		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeStandardView(
-			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
-		)))
-	case memType == C.CUVS_DATASET_MEM_TYPE_HOST && layout == C.CUVS_DATASET_LAYOUT_PADDED:
-		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePaddedView(
-			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
-		)))
-	case memType == C.CUVS_DATASET_MEM_TYPE_HOST && layout == C.CUVS_DATASET_LAYOUT_STANDARD:
+	case C.CUVS_DATASET_LAYOUT_STANDARD:
 		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeStandardView(
 			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
 		)))
@@ -237,7 +234,7 @@ func BuildIndex[T any](Resources cuvs.Resource, params *IndexParams, dataset *cu
 // * `Resources` - Resources to use
 // * `params` - Parameters for extending the index
 // * `additional_dataset` - Explicit padded dataset view to extend the index with
-// * `extended_dataset` - Caller-owned writable device padded dataset view receiving extended rows
+// * `extended_dataset` - Caller-owned writable padded dataset view receiving extended rows
 // * `index` - CagraIndex to extend
 func ExtendIndex(Resources cuvs.Resource, params *ExtendParams, additional_dataset *PaddedDatasetView, extended_dataset *PaddedDatasetView, index *CagraIndex) error {
 	if !index.trained {

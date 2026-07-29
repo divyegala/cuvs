@@ -48,8 +48,8 @@ def run_hnsw_build_search_test(
     assert index.trained
 
     dataset_device = device_ndarray(dataset)
-    padded_dataset = cagra.make_device_padded_dataset(dataset_device)
-    padded_view = cagra.make_view_from_owning_padded(padded_dataset)
+    padded_dataset = cagra.make_padded_dataset(dataset_device)
+    padded_view = cagra.make_view_wrapper(padded_dataset)
     cagra.update_dataset(index, padded_view)
 
     hnsw_params = hnsw.IndexParams(hierarchy=hierarchy)
@@ -139,8 +139,8 @@ def run_hnsw_extend_test(
     assert index.trained
 
     dataset_device = device_ndarray(dataset)
-    padded_dataset = cagra.make_device_padded_dataset(dataset_device)
-    padded_view = cagra.make_view_from_owning_padded(padded_dataset)
+    padded_dataset = cagra.make_padded_dataset(dataset_device)
+    padded_view = cagra.make_view_wrapper(padded_dataset)
     cagra.update_dataset(index, padded_view)
 
     hnsw_params = hnsw.IndexParams(hierarchy=hierarchy)

@@ -50,12 +50,8 @@ def run_save_load(ann_module, dtype):
                 ann_module.get_dataset_view_kind(dataset_device)
                 == "device_standard"
             ):
-                padded_dataset = ann_module.make_device_padded_dataset(
-                    dataset_device
-                )
-                padded_view = ann_module.make_view_from_owning_padded(
-                    padded_dataset
-                )
+                padded_dataset = ann_module.make_padded_dataset(dataset_device)
+                padded_view = ann_module.make_view_wrapper(padded_dataset)
                 ann_module.update_dataset(index, padded_view)
                 keepalive = [padded_dataset, padded_view]
         assert keepalive is not None
@@ -79,12 +75,8 @@ def run_save_load(ann_module, dtype):
         )
         reloaded_keepalive = [out_dataset]
         if layout == "standard":
-            padded_dataset = ann_module.make_device_padded_dataset(
-                dataset_device
-            )
-            padded_view = ann_module.make_view_from_owning_padded(
-                padded_dataset
-            )
+            padded_dataset = ann_module.make_padded_dataset(dataset_device)
+            padded_view = ann_module.make_view_wrapper(padded_dataset)
             ann_module.update_dataset(loaded_index, padded_view)
             reloaded_keepalive.extend([padded_dataset, padded_view])
     else:

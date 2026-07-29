@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use super::{CagraError, IndexParams, SearchParams};
-use crate::dataset::{DatasetKind, DatasetView, DevicePaddedDataset, StandardDataset};
+use crate::dataset::{DatasetKind, DatasetView, PaddedDataset, StandardDataset};
 use crate::dlpack::{AsDlTensor, AsDlTensorMut, DLTensorView, DLTensorViewMut};
 use crate::error::check_cuvs;
 use crate::ffi_utils::{init_handle, path_to_cstring, report_drop_failure};
@@ -202,7 +202,7 @@ impl<'d> Index<'d> {
     pub fn deserialize_padded<P: AsRef<Path>>(
         res: &Resources,
         filename: P,
-    ) -> Result<DeserializedIndex<DevicePaddedDataset>> {
+    ) -> Result<DeserializedIndex<PaddedDataset>> {
         let c_filename = path_to_cstring(filename.as_ref())?;
         let handle = IndexHandle::new()?;
         let mut out: ffi::cuvsDataset_t = std::ptr::null_mut();
@@ -214,7 +214,7 @@ impl<'d> Index<'d> {
                 &mut out,
             )
         })?;
-        let dataset = (!out.is_null()).then(|| DevicePaddedDataset::from_raw(out));
+        let dataset = (!out.is_null()).then(|| PaddedDataset::from_raw(out));
         Ok(DeserializedIndex { handle, dataset })
     }
 
@@ -285,7 +285,7 @@ impl<D> DeserializedIndex<D> {
     }
 }
 
-impl DeserializedIndex<DevicePaddedDataset> {
+impl DeserializedIndex<PaddedDataset> {
     /// Search a padded deserialized index.
     pub fn search<Q, N, D>(
         &self,
@@ -514,7 +514,7 @@ mod tests {
         let dataset_device = DeviceTensor::from_host(&res, &dataset).unwrap();
         let params = IndexParams::builder().build().unwrap();
         let index = Index::build(&res, &params, &dataset_device).unwrap();
-        let owner = DevicePaddedDataset::new(&res, &dataset_device).unwrap();
+        let owner = PaddedDataset::new(&res, &dataset_device).unwrap();
         let padded_view = owner.as_view().unwrap();
 
         let index = index.update_dataset(&res, &padded_view).unwrap();
@@ -669,7 +669,7 @@ mod tests {
         assert!(loaded.has_dataset());
 
         let dataset_device = DeviceTensor::from_host(&res, &dataset).unwrap();
-        let owner = DevicePaddedDataset::new(&res, &dataset_device).unwrap();
+        let owner = PaddedDataset::new(&res, &dataset_device).unwrap();
         let padded_view = owner.as_view().unwrap();
         let index = loaded.update_dataset(&res, &padded_view).unwrap();
         drop(dataset_device);

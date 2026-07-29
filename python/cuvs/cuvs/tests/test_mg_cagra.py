@@ -36,20 +36,20 @@ def has_multiple_gpus():
     return get_gpu_count() > 1
 
 
-def make_device_padded_view(dataset):
+def make_padded_view(dataset):
     """Create a padded view and keep its backing storage alive."""
     device_dataset = device_ndarray(dataset)
     if cagra.get_dataset_view_kind(device_dataset) == "device_padded":
         return (
             device_dataset,
             None,
-            cagra.make_device_padded_dataset_view(device_dataset),
+            cagra.make_padded_dataset_view(device_dataset),
         )
-    padded_dataset = cagra.make_device_padded_dataset(device_dataset)
+    padded_dataset = cagra.make_padded_dataset(device_dataset)
     return (
         device_dataset,
         padded_dataset,
-        cagra.make_view_from_owning_padded(padded_dataset),
+        cagra.make_view_wrapper(padded_dataset),
     )
 
 
@@ -122,9 +122,7 @@ def run_mg_cagra_build_search_test(
     # Build index
     index = mg_cagra.build(build_params, dataset, resources=resources)
     assert index.trained
-    device_dataset, padded_dataset, padded_view = make_device_padded_view(
-        dataset
-    )
+    device_dataset, padded_dataset, padded_view = make_padded_view(dataset)
     mg_cagra.update_dataset(index, padded_view, resources=resources)
 
     # Search parameters
@@ -326,9 +324,7 @@ def test_mg_cagra_serialize():
         intermediate_graph_degree=intermediate_graph_degree,
     )
     original_index = mg_cagra.build(build_params, dataset, resources=resources)
-    device_dataset, padded_dataset, padded_view = make_device_padded_view(
-        dataset
-    )
+    device_dataset, padded_dataset, padded_view = make_padded_view(dataset)
     mg_cagra.update_dataset(original_index, padded_view, resources=resources)
 
     # Search with original index
@@ -411,9 +407,7 @@ def test_mg_cagra_distribute():
             temp_filename, resources=resources
         )
         assert distributed_index.trained
-        device_dataset, padded_dataset, padded_view = make_device_padded_view(
-            dataset
-        )
+        device_dataset, padded_dataset, padded_view = make_padded_view(dataset)
         mg_cagra.update_dataset(
             distributed_index, padded_view, resources=resources
         )
@@ -465,9 +459,7 @@ def test_memory_location_validation():
 
     # Test that host arrays work for build
     index = mg_cagra.build(build_params, host_data, resources=resources)
-    device_dataset, padded_dataset, padded_view = make_device_padded_view(
-        host_data
-    )
+    device_dataset, padded_dataset, padded_view = make_padded_view(host_data)
     mg_cagra.update_dataset(index, padded_view, resources=resources)
 
     # Test that device arrays are rejected for search
@@ -568,9 +560,7 @@ def test_mg_cagra_with_prealloc_output():
         intermediate_graph_degree=intermediate_graph_degree,
     )
     index = mg_cagra.build(build_params, dataset, resources=resources)
-    device_dataset, padded_dataset, padded_view = make_device_padded_view(
-        dataset
-    )
+    device_dataset, padded_dataset, padded_view = make_padded_view(dataset)
     mg_cagra.update_dataset(index, padded_view, resources=resources)
 
     # Pre-allocate output arrays in host memory
@@ -636,9 +626,7 @@ def test_mg_cagra_simple():
 
     # Build index
     index = mg_cagra.build(build_params, dataset, resources=resources)
-    device_dataset, padded_dataset, padded_view = make_device_padded_view(
-        dataset
-    )
+    device_dataset, padded_dataset, padded_view = make_padded_view(dataset)
     mg_cagra.update_dataset(index, padded_view, resources=resources)
 
     # Search with basic parameters
@@ -691,9 +679,7 @@ def test_mg_cagra_integration():
         intermediate_graph_degree=intermediate_graph_degree,
     )
     index = mg_cagra.build(build_params, dataset, resources=resources)
-    device_dataset, padded_dataset, padded_view = make_device_padded_view(
-        dataset
-    )
+    device_dataset, padded_dataset, padded_view = make_padded_view(dataset)
     mg_cagra.update_dataset(index, padded_view, resources=resources)
 
     # Initial search

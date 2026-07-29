@@ -89,12 +89,8 @@ def run_filtered_search_test(
     if is_cagra:
         view_kind = search_module.get_dataset_view_kind(dataset_device)
         if view_kind == "device_standard":
-            padded_dataset = search_module.make_device_padded_dataset(
-                dataset_device
-            )
-            padded_view = search_module.make_view_from_owning_padded(
-                padded_dataset
-            )
+            padded_dataset = search_module.make_padded_dataset(dataset_device)
+            padded_view = search_module.make_view_wrapper(padded_dataset)
             search_module.update_dataset(index, padded_view)
             keepalive = [padded_dataset, padded_view]
     assert keepalive is not None

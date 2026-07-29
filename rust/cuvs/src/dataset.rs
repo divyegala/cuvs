@@ -81,17 +81,13 @@ impl<'a> DatasetView<'a> {
             ))?;
             let kind = DatasetKind::from_ffi(mem_type.assume_init(), layout.assume_init());
 
+            // Unified factories infer host vs device from the tensor; only
+            // layout selects padded vs standard.
             let handle = init_handle(|out| match kind {
-                DatasetKind::DevicePadded => {
+                DatasetKind::DevicePadded | DatasetKind::HostPadded => {
                     ffi::cuvsDatasetMakePaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
                 }
-                DatasetKind::DeviceStandard => {
-                    ffi::cuvsDatasetMakeStandardView(res.handle(), dataset_c.as_mut_ptr(), out)
-                }
-                DatasetKind::HostPadded => {
-                    ffi::cuvsDatasetMakePaddedView(res.handle(), dataset_c.as_mut_ptr(), out)
-                }
-                DatasetKind::HostStandard => {
+                DatasetKind::DeviceStandard | DatasetKind::HostStandard => {
                     ffi::cuvsDatasetMakeStandardView(res.handle(), dataset_c.as_mut_ptr(), out)
                 }
             })?;
@@ -117,18 +113,19 @@ impl Drop for DatasetView<'_> {
     }
 }
 
-/// Device storage owned by the caller, padded to CAGRA's required row width.
+/// Storage owned by the caller, padded to CAGRA's required row width.
 ///
-/// Construction performs an explicit allocation and copy. The source must be
-/// device-resident; use [`DatasetView::new`] when its existing layout is
-/// already suitable.
+/// Construction performs an explicit allocation and copy. Memory residency is
+/// inferred from the source tensor; use [`DatasetView::new`] when its existing
+/// layout is already suitable.
 #[derive(Debug)]
-pub struct DevicePaddedDataset {
+pub struct PaddedDataset {
     handle: ffi::cuvsDataset_t,
+    kind: DatasetKind,
 }
 
-impl DevicePaddedDataset {
-    /// Copy a device tensor into freshly allocated, CAGRA-padded storage.
+impl PaddedDataset {
+    /// Copy a tensor into freshly allocated, CAGRA-padded storage.
     pub fn new<T>(res: &Resources, dataset: &T) -> Result<Self>
     where
         T: AsDlTensor + ?Sized,
@@ -136,35 +133,35 @@ impl DevicePaddedDataset {
         let dataset = dataset.as_dl_tensor()?;
         let mut dataset_c = dataset.to_c();
         let device_type = dataset_c.inner.dl_tensor.device.device_type;
-        if !device_type.is_device_compatible() {
-            return Err(CagraError::Validation(format!(
-                "a device padded dataset requires device-resident storage, got {device_type:?}"
-            )));
-        }
+        let kind = if device_type.is_device_compatible() {
+            DatasetKind::DevicePadded
+        } else {
+            DatasetKind::HostPadded
+        };
         unsafe {
             let handle = init_handle(|out| {
                 ffi::cuvsDatasetMakePadded(res.handle(), dataset_c.as_mut_ptr(), out)
             })?;
-            Ok(Self { handle })
+            Ok(Self { handle, kind })
         }
     }
 
-    /// Borrow this allocation as a device-padded view.
+    /// Borrow this allocation as a padded view.
     pub fn as_view(&self) -> Result<DatasetView<'_>> {
         let handle =
             unsafe { init_handle(|out| ffi::cuvsDatasetMakeViewWrapper(self.handle, out))? };
-        Ok(DatasetView { handle, kind: DatasetKind::DevicePadded, _dataset: PhantomData })
+        Ok(DatasetView { handle, kind: self.kind, _dataset: PhantomData })
     }
 
     pub(crate) fn from_raw(handle: ffi::cuvsDataset_t) -> Self {
-        Self { handle }
+        Self { handle, kind: DatasetKind::DevicePadded }
     }
 }
 
-impl Drop for DevicePaddedDataset {
+impl Drop for PaddedDataset {
     fn drop(&mut self) {
         if let Err(e) = check_cuvs(unsafe { ffi::cuvsDatasetDestroy(self.handle) }) {
-            report_drop_failure("device padded dataset", &e);
+            report_drop_failure("padded dataset", &e);
         }
     }
 }
@@ -194,13 +191,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn device_padded_dataset_rejects_host_storage() {
+    fn padded_dataset_accepts_host_storage() {
         let res = Resources::new().unwrap();
         let dataset = ndarray::Array::<f32, _>::zeros((256, 15));
 
-        let err = DevicePaddedDataset::new(&res, &*dataset)
-            .expect_err("host storage cannot back a device-padded owner");
-
-        assert!(matches!(err, CagraError::Validation(_)), "unexpected error: {err:?}");
+        let owner = PaddedDataset::new(&res, &*dataset).expect("host padded dataset");
+        let view = owner.as_view().expect("host padded dataset view");
+        assert_eq!(view.kind(), DatasetKind::HostPadded);
     }
 }
