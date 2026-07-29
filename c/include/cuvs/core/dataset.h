@@ -61,8 +61,6 @@ typedef struct {
 } cuvsDatasetView;
 typedef cuvsDatasetView* cuvsDatasetView_t;
 
-typedef struct cuvsCagraIndex* cuvsCagraIndex_t;
-
 /**
  * @brief Create an empty owning dataset handle.
  *
@@ -71,46 +69,51 @@ typedef struct cuvsCagraIndex* cuvsCagraIndex_t;
  */
 CUVS_EXPORT cuvsError_t cuvsDatasetCreate(cuvsDataset_t* dataset);
 
-CUVS_EXPORT cuvsError_t cuvsDatasetDevicePaddedMake(cuvsResources_t res,
-                                                    DLManagedTensor* dataset,
-                                                    cuvsDataset_t* padded_dataset);
-
-CUVS_EXPORT cuvsError_t cuvsDatasetHostPaddedMake(cuvsResources_t res,
-                                                  DLManagedTensor* dataset,
-                                                  cuvsDataset_t* padded_dataset);
-
-CUVS_EXPORT cuvsError_t cuvsDatasetDevicePaddedViewMake(cuvsResources_t res,
-                                                        DLManagedTensor* dataset,
-                                                        cuvsDatasetView_t* padded_dataset);
+/**
+ * @brief Create an owning padded dataset from a host- or device-resident tensor.
+ *
+ * Memory residency is inferred from the tensor.
+ */
+CUVS_EXPORT cuvsError_t cuvsDatasetMakePadded(cuvsResources_t res,
+                                              DLManagedTensor* dataset,
+                                              cuvsDataset_t* padded_dataset);
 
 /**
- * @brief Create a non-owning device padded view handle from an owning device padded dataset.
+ * @brief Create a non-owning padded dataset view from a host- or device-resident tensor.
  *
- * This is useful when APIs require a padded view handle (e.g. attach-for-search), while callers
- * keep ownership in a padded dataset handle created by `cuvsDatasetDevicePaddedMake`.
- *
- * @param[in] padded_dataset owning device padded dataset handle
- * @param[out] padded_view output padded view handle
+ * Memory residency is inferred from the tensor.
  */
-CUVS_EXPORT cuvsError_t cuvsDatasetViewFromOwningPaddedMake(
-  cuvsDataset_t padded_dataset, cuvsDatasetView_t* padded_view);
+CUVS_EXPORT cuvsError_t cuvsDatasetMakePaddedView(cuvsResources_t res,
+                                                  DLManagedTensor* dataset,
+                                                  cuvsDatasetView_t* padded_dataset);
 
-CUVS_EXPORT cuvsError_t cuvsDatasetHostPaddedViewMake(cuvsResources_t res,
-                                                      DLManagedTensor* dataset,
-                                                      cuvsDatasetView_t* padded_dataset);
+/**
+ * @brief Create a non-owning standard dataset view from a host- or device-resident tensor.
+ *
+ * Memory residency is inferred from the tensor.
+ */
+CUVS_EXPORT cuvsError_t cuvsDatasetMakeStandardView(cuvsResources_t res,
+                                                    DLManagedTensor* dataset,
+                                                    cuvsDatasetView_t* standard_dataset);
 
-CUVS_EXPORT cuvsError_t cuvsDatasetDeviceStandardViewMake(cuvsResources_t res,
-                                                          DLManagedTensor* dataset,
-                                                          cuvsDatasetView_t* standard_dataset);
+/**
+ * @brief Create a non-owning view wrapper from an owning dataset.
+ *
+ * The returned view references the owning dataset's storage. The dataset must outlive the view.
+ *
+ * @param[in] dataset owning dataset handle
+ * @param[out] view output view handle
+ */
+CUVS_EXPORT cuvsError_t cuvsDatasetMakeViewWrapper(cuvsDataset_t dataset,
+                                                   cuvsDatasetView_t* view);
 
-CUVS_EXPORT cuvsError_t cuvsDatasetHostStandardViewMake(cuvsResources_t res,
-                                                        DLManagedTensor* dataset,
-                                                        cuvsDatasetView_t* standard_dataset);
-
-/** @brief Destroy an owning dataset handle created by a `cuvsDataset*Make` function. */
+/** @brief Destroy an owning dataset handle created by a `cuvsDatasetMake*` function. */
 CUVS_EXPORT cuvsError_t cuvsDatasetDestroy(cuvsDataset_t dataset);
 
-/** @brief Destroy a non-owning dataset view handle created by a `cuvsDataset*ViewMake` function. */
+/**
+ * @brief Destroy a non-owning dataset view handle created by a dataset view factory or
+ * `cuvsDatasetMakeViewWrapper`.
+ */
 CUVS_EXPORT cuvsError_t cuvsDatasetViewDestroy(cuvsDatasetView_t dataset_view);
 
 #ifdef __cplusplus

@@ -356,6 +356,12 @@ public class CagraIndexParams {
         .cagraIndexParamsFromHnswParams(rows, dim, M, efConstruction, heuristic, metric);
   }
 
+  public static CagraIndexParams fromDataset(
+      long rows, long dim, long graphDegree, CuvsDistanceType metric, long buildQuality) {
+    return CuVSProvider.provider()
+        .cagraIndexParamsFromDataset(rows, dim, graphDegree, metric, buildQuality);
+  }
+
   /**
    * Gets the degree of input graph for pruning.
    *

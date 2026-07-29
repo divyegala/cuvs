@@ -148,27 +148,21 @@ cdef extern from "cuvs/neighbors/cagra.h" nogil:
         cuvsDatasetLayout_t layout
     ctypedef cuvsDataset* cuvsDataset_t
 
-    cuvsError_t cuvsDatasetDevicePaddedMake(cuvsResources_t res,
-                                            DLManagedTensor* dataset,
-                                            cuvsDataset_t* padded_dataset)
+    cuvsError_t cuvsDatasetMakePadded(cuvsResources_t res,
+                                      DLManagedTensor* dataset,
+                                      cuvsDataset_t* padded_dataset)
     cuvsError_t cuvsDatasetDestroy(cuvsDataset_t dataset)
-    cuvsError_t cuvsDatasetViewFromOwningPaddedMake(
-        cuvsDataset_t padded_dataset,
-        cuvsDatasetView_t* padded_view)
+    cuvsError_t cuvsDatasetMakeViewWrapper(
+        cuvsDataset_t dataset,
+        cuvsDatasetView_t* view)
 
-    cuvsError_t cuvsDatasetDevicePaddedViewMake(cuvsResources_t res,
-                                                DLManagedTensor* dataset,
-                                                cuvsDatasetView_t* padded_dataset)
-    cuvsError_t cuvsDatasetHostPaddedViewMake(cuvsResources_t res,
-                                              DLManagedTensor* dataset,
-                                              cuvsDatasetView_t* padded_dataset)
+    cuvsError_t cuvsDatasetMakePaddedView(cuvsResources_t res,
+                                          DLManagedTensor* dataset,
+                                          cuvsDatasetView_t* padded_dataset)
 
-    cuvsError_t cuvsDatasetDeviceStandardViewMake(cuvsResources_t res,
-                                                  DLManagedTensor* dataset,
-                                                  cuvsDatasetView_t* standard_dataset)
-    cuvsError_t cuvsDatasetHostStandardViewMake(cuvsResources_t res,
-                                                DLManagedTensor* dataset,
-                                                cuvsDatasetView_t* standard_dataset)
+    cuvsError_t cuvsDatasetMakeStandardView(cuvsResources_t res,
+                                            DLManagedTensor* dataset,
+                                            cuvsDatasetView_t* standard_dataset)
     cuvsError_t cuvsDatasetViewDestroy(cuvsDatasetView_t dataset_view)
 
     cuvsError_t cuvsCagraBuild(cuvsResources_t res,

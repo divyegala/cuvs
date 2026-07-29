@@ -39,7 +39,7 @@ func MakeDevicePaddedDataset[T any](Resources cuvs.Resource, dataset *cuvs.Tenso
 	}
 	datasetTensor := (*C.DLManagedTensor)(unsafe.Pointer(dataset.C_tensor))
 	var paddedDataset C.cuvsDataset_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetDevicePaddedMake(
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePadded(
 		C.cuvsResources_t(Resources.Resource), datasetTensor, &paddedDataset,
 	)))
 	if err != nil {
@@ -54,7 +54,7 @@ func MakeViewFromOwningPadded(paddedDataset *PaddedDataset) (*PaddedDatasetView,
 		return nil, errors.New("paddedDataset is nil")
 	}
 	var paddedView C.cuvsDatasetView_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetViewFromOwningPaddedMake(
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeViewWrapper(
 		paddedDataset.dataset, &paddedView,
 	)))
 	if err != nil {
@@ -70,7 +70,7 @@ func MakeDevicePaddedDatasetView[T any](Resources cuvs.Resource, dataset *cuvs.T
 	}
 	datasetTensor := (*C.DLManagedTensor)(unsafe.Pointer(dataset.C_tensor))
 	var paddedView C.cuvsDatasetView_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetDevicePaddedViewMake(
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePaddedView(
 		C.cuvsResources_t(Resources.Resource), datasetTensor, &paddedView,
 	)))
 	if err != nil {
@@ -112,7 +112,7 @@ func MakeDeviceStandardDatasetView[T any](Resources cuvs.Resource, dataset *cuvs
 	}
 	datasetTensor := (*C.DLManagedTensor)(unsafe.Pointer(dataset.C_tensor))
 	var standardView C.cuvsDatasetView_t
-	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetDeviceStandardViewMake(
+	err := cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeStandardView(
 		C.cuvsResources_t(Resources.Resource), datasetTensor, &standardView,
 	)))
 	if err != nil {
@@ -194,19 +194,19 @@ func BuildIndex[T any](Resources cuvs.Resource, params *IndexParams, dataset *cu
 
 	switch {
 	case memType == C.CUVS_DATASET_MEM_TYPE_DEVICE && layout == C.CUVS_DATASET_LAYOUT_PADDED:
-		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetDevicePaddedViewMake(
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePaddedView(
 			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
 		)))
 	case memType == C.CUVS_DATASET_MEM_TYPE_DEVICE && layout == C.CUVS_DATASET_LAYOUT_STANDARD:
-		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetDeviceStandardViewMake(
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeStandardView(
 			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
 		)))
 	case memType == C.CUVS_DATASET_MEM_TYPE_HOST && layout == C.CUVS_DATASET_LAYOUT_PADDED:
-		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetHostPaddedViewMake(
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakePaddedView(
 			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
 		)))
 	case memType == C.CUVS_DATASET_MEM_TYPE_HOST && layout == C.CUVS_DATASET_LAYOUT_STANDARD:
-		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetHostStandardViewMake(
+		err = cuvs.CheckCuvs(cuvs.CuvsError(C.cuvsDatasetMakeStandardView(
 			C.cuvsResources_t(Resources.Resource), datasetTensor, &datasetView,
 		)))
 	default:

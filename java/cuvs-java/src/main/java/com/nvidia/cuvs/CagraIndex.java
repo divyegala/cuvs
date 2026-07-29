@@ -24,7 +24,7 @@ import java.util.Objects;
  */
 public interface CagraIndex extends AutoCloseable {
   /**
-   * Caller-owned input dataset view handle for host-index attach.
+   * Caller-owned non-owning dataset view handle used with {@link #updateDataset(DevicePaddedDatasetView)}.
    */
   abstract class DeviceDatasetView implements AutoCloseable {
     private AutoCloseable delegate;
@@ -62,34 +62,51 @@ public interface CagraIndex extends AutoCloseable {
     }
   }
 
-  /** Caller-owned device padded dataset view for host-index attach. */
+  /** Caller-owned device padded dataset view for {@link #updateDataset(DevicePaddedDatasetView)}. */
   final class DevicePaddedDatasetView extends DeviceDatasetView {
     public DevicePaddedDatasetView() {}
   }
 
-  /** Caller-owned device standard dataset view for host-index attach. */
+  /** Caller-owned device standard dataset view. */
   final class DeviceStandardDatasetView extends DeviceDatasetView {
     public DeviceStandardDatasetView() {}
   }
 
   /**
-   * Caller-owned output dataset handle populated by {@link #deserialize(InputStream, DeserializeDataset)}.
+   * Caller-owned dataset handle. Populated by {@link #deserialize(InputStream, DeserializeDataset)}
+   * or created by {@link #makeDevicePaddedDataset(CuVSDeviceMatrix)}.
    */
   abstract class DeserializeDataset implements AutoCloseable {
     private AutoCloseable delegate;
+    private long handleAddress;
 
     /**
      * Internal wiring hook used by the Java wrapper implementation.
      */
     public final void setDelegate(AutoCloseable delegate) {
-      this.delegate = delegate;
+      setDelegate(delegate, 0);
     }
 
     /**
-     * Returns true when deserialization populated this handle with dataset payload ownership.
+     * Internal wiring hook used by the Java wrapper implementation.
+     */
+    public final void setDelegate(AutoCloseable delegate, long handleAddress) {
+      this.delegate = delegate;
+      this.handleAddress = handleAddress;
+    }
+
+    /**
+     * Returns true when this handle owns native dataset storage.
      */
     public final boolean isPresent() {
-      return delegate != null;
+      return delegate != null && handleAddress != 0;
+    }
+
+    /**
+     * Internal accessor for native handle address.
+     */
+    public final long nativeHandleAddress() {
+      return handleAddress;
     }
 
     @Override
@@ -98,10 +115,16 @@ public interface CagraIndex extends AutoCloseable {
         delegate.close();
         delegate = null;
       }
+      handleAddress = 0;
     }
   }
 
-  /** Caller-owned dataset factory result preserving serialized memory type and layout. */
+  /** Owning device-padded dataset created from a device matrix. */
+  final class PaddedDataset extends DeserializeDataset {
+    public PaddedDataset() {}
+  }
+
+  /** Caller-owned deserialize result preserving serialized memory type and layout. */
   final class Dataset extends DeserializeDataset {
     public Dataset() {}
   }
@@ -123,7 +146,22 @@ public interface CagraIndex extends AutoCloseable {
   SearchResults search(CagraQuery query) throws Throwable;
 
   /**
-   * Create a caller-owned device padded dataset view handle from a device matrix.
+   * Create an owning device-padded dataset by allocating padded storage and copying
+   * {@code dataset}. Prefer this when the source matrix is not already padded to CAGRA's
+   * required row stride (e.g. unaligned dimensions).
+   */
+  PaddedDataset makeDevicePaddedDataset(CuVSDeviceMatrix dataset) throws Throwable;
+
+  /**
+   * Create a non-owning device padded dataset view from an owning padded dataset.
+   * The owning {@code paddedDataset} must outlive any index updated with the returned view.
+   */
+  DevicePaddedDatasetView makeViewFromOwningPadded(PaddedDataset paddedDataset) throws Throwable;
+
+  /**
+   * Create a caller-owned device padded dataset view handle from a device matrix that is already
+   * padded to CAGRA's required row stride. For unpadded matrices use
+   * {@link #makeDevicePaddedDataset(CuVSDeviceMatrix)} + {@link #makeViewFromOwningPadded(PaddedDataset)}.
    */
   DevicePaddedDatasetView makeDevicePaddedDatasetView(CuVSDeviceMatrix dataset) throws Throwable;
 
@@ -135,7 +173,8 @@ public interface CagraIndex extends AutoCloseable {
 
   /**
    * Update this index with a caller-provided padded device dataset view and leave it
-   * search-ready in padded-device layout.
+   * search-ready in padded-device layout. The caller retains ownership of the underlying
+   * padded storage and must keep it alive while this index uses it.
    */
   void updateDataset(DevicePaddedDatasetView datasetView) throws Throwable;
 

@@ -295,6 +295,27 @@ CUVS_EXPORT cuvsError_t cuvsCagraIndexParamsFromHnswParams(cuvsCagraIndexParams_
                                                 cuvsDistanceType metric);
 
 /**
+ * @brief Create CAGRA index parameters heuristically tuned for a dataset
+ *
+ * This factory function selects the graph build algorithm and its parameters based on the shape of
+ * the dataset.
+ *
+ * @param[out] params The CAGRA index params to populate
+ * @param[in] n_rows Number of rows in the dataset
+ * @param[in] dim Number of dimensions in the dataset
+ * @param[in] graph_degree Degree of the output graph
+ * @param[in] metric Distance metric to use
+ * @param[in] build_quality Higher values increase build quality (and cost) up to a point
+ * @return cuvsError_t
+ */
+CUVS_EXPORT cuvsError_t cuvsCagraIndexParamsFromDataset(cuvsCagraIndexParams_t params,
+                                                int64_t n_rows,
+                                                int64_t dim,
+                                                size_t graph_degree,
+                                                cuvsDistanceType metric,
+                                                size_t build_quality);
+
+/**
  * @}
  */
 
@@ -568,7 +589,7 @@ CUVS_EXPORT cuvsError_t cuvsCagraIndexGetGraph(cuvsCagraIndex_t index, DLManaged
  * \p device_padded_dataset and must keep it alive while \p index uses it.
  *
  * @param[in] res             cuvsResources_t opaque C handle
- * @param[in] padded_dataset  padded dataset view handle created by \ref cuvsDatasetDevicePaddedViewMake
+ * @param[in] padded_dataset  padded dataset view handle created by \ref cuvsDatasetMakePaddedView
  * @param[inout] index        CAGRA index handle
  * @return cuvsError_t
  */
@@ -610,12 +631,12 @@ CUVS_EXPORT cuvsError_t cuvsCagraGetDatasetMemTypeAndLayout(DLManagedTensor* dat
  *        4. `kDLDataType.code == kDLUInt` and `kDLDataType.bits = 8`
  *
  * The memory space and layout \p dataset was constructed with select the C++ build overload.
- * Build the handle with the matching `cuvsDatasetMake*View` function;
+ * Build the handle with the matching dataset view factory;
  * `cuvsCagraGetDatasetMemTypeAndLayout` resolves which one an input tensor calls for.
  *
  * Note that a dataset residing in host memory produces a host-backed index, which
- * must be made search-ready with `cuvsCagraAttachDataset` before calling
- * `cuvsCagraSearch`.
+ * must be made search-ready with `cuvsCagraUpdateDataset` (using a device-padded
+ * dataset view) before calling `cuvsCagraSearch`.
  *
  * @code {.c}
  * #include <cuvs/core/c_api.h>
@@ -630,7 +651,7 @@ CUVS_EXPORT cuvsError_t cuvsCagraGetDatasetMemTypeAndLayout(DLManagedTensor* dat
  *
  * // Wrap it in a dataset view handle
  * cuvsDatasetView_t dataset_view;
- * cuvsError_t view_create_status = cuvsDatasetDevicePaddedViewMake(res, &dataset, &dataset_view);
+ * cuvsError_t view_create_status = cuvsDatasetMakePaddedView(res, &dataset, &dataset_view);
  *
  * // Create default index params
  * cuvsCagraIndexParams_t params;

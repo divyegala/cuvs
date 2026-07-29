@@ -342,7 +342,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetDevicePaddedMake(
+    pub fn cuvsDatasetMakePadded(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         padded_dataset: *mut cuvsDataset_t,
@@ -350,15 +350,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetHostPaddedMake(
-        res: cuvsResources_t,
-        dataset: *mut DLManagedTensor,
-        padded_dataset: *mut cuvsDataset_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsDatasetDevicePaddedViewMake(
+    pub fn cuvsDatasetMakePaddedView(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         padded_dataset: *mut cuvsDatasetView_t,
@@ -366,30 +358,14 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetViewFromOwningPaddedMake(
-        padded_dataset: cuvsDataset_t,
-        padded_view: *mut cuvsDatasetView_t,
+    pub fn cuvsDatasetMakeViewWrapper(
+        dataset: cuvsDataset_t,
+        view: *mut cuvsDatasetView_t,
     ) -> cuvsError_t;
 }
 unsafe extern "C" {
     #[must_use]
-    pub fn cuvsDatasetHostPaddedViewMake(
-        res: cuvsResources_t,
-        dataset: *mut DLManagedTensor,
-        padded_dataset: *mut cuvsDatasetView_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsDatasetDeviceStandardViewMake(
-        res: cuvsResources_t,
-        dataset: *mut DLManagedTensor,
-        standard_dataset: *mut cuvsDatasetView_t,
-    ) -> cuvsError_t;
-}
-unsafe extern "C" {
-    #[must_use]
-    pub fn cuvsDatasetHostStandardViewMake(
+    pub fn cuvsDatasetMakeStandardView(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
         standard_dataset: *mut cuvsDatasetView_t,
@@ -1209,6 +1185,19 @@ unsafe extern "C" {
         metric: cuvsDistanceType,
     ) -> cuvsError_t;
 }
+unsafe extern "C" {
+    #[must_use]
+    #[doc = " @brief Create CAGRA index parameters heuristically tuned for a dataset\n\n This factory function selects the graph build algorithm and its parameters based on the shape of\n the dataset.\n\n @param[out] params The CAGRA index params to populate\n @param[in] n_rows Number of rows in the dataset\n @param[in] dim Number of dimensions in the dataset\n @param[in] graph_degree Degree of the output graph\n @param[in] metric Distance metric to use\n @param[in] build_quality Higher values increase build quality (and cost) up to a point\n @return cuvsError_t"]
+    pub fn cuvsCagraIndexParamsFromDataset(
+        params: cuvsCagraIndexParams_t,
+        n_rows: i64,
+        dim: i64,
+        graph_degree: usize,
+        metric: cuvsDistanceType,
+        build_quality: usize,
+    ) -> cuvsError_t;
+}
+#[doc = " @defgroup cagra_c_extend_params C API for CUDA ANN Graph-based nearest neighbor search\n @{\n/\n/**\n @brief Supplemental parameters to extend CAGRA Index\n"]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct cuvsCagraExtendParams {
