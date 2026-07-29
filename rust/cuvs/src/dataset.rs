@@ -138,9 +138,19 @@ impl PaddedDataset {
         } else {
             DatasetKind::HostPadded
         };
+        let target_mem_type = match kind {
+            DatasetKind::DevicePadded => ffi::cuvsDatasetMemType_t::CUVS_DATASET_MEM_TYPE_DEVICE,
+            DatasetKind::HostPadded => ffi::cuvsDatasetMemType_t::CUVS_DATASET_MEM_TYPE_HOST,
+            DatasetKind::DeviceStandard | DatasetKind::HostStandard => unreachable!(),
+        };
         unsafe {
             let handle = init_handle(|out| {
-                ffi::cuvsDatasetMakePadded(res.handle(), dataset_c.as_mut_ptr(), out)
+                ffi::cuvsDatasetMakePadded(
+                    res.handle(),
+                    dataset_c.as_mut_ptr(),
+                    target_mem_type,
+                    out,
+                )
             })?;
             Ok(Self { handle, kind })
         }

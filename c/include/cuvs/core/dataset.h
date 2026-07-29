@@ -70,12 +70,19 @@ typedef cuvsDatasetView* cuvsDatasetView_t;
 CUVS_EXPORT cuvsError_t cuvsDatasetCreate(cuvsDataset_t* dataset);
 
 /**
- * @brief Create an owning padded dataset from a host- or device-resident tensor.
+ * @brief Create an owning padded dataset in the requested memory space.
  *
- * Memory residency is inferred from the tensor.
+ * The source tensor may reside in host- or device-accessible memory. Its contents are copied into
+ * newly allocated padded storage in `target_mem_type`.
+ *
+ * @param[in] res cuVS resources
+ * @param[in] dataset source tensor
+ * @param[in] target_mem_type memory space in which to allocate the padded dataset
+ * @param[out] padded_dataset newly allocated owning padded dataset
  */
 CUVS_EXPORT cuvsError_t cuvsDatasetMakePadded(cuvsResources_t res,
                                               DLManagedTensor* dataset,
+                                              cuvsDatasetMemType_t target_mem_type,
                                               cuvsDataset_t* padded_dataset);
 
 /**

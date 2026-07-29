@@ -71,8 +71,7 @@ public interface CagraIndex extends AutoCloseable {
   }
 
   /**
-   * Caller-owned dataset handle. Populated by {@link #deserialize(InputStream, DeserializeDataset)}
-   * or created by {@link #makePaddedDataset(CuVSMatrix)}.
+   * Caller-owned dataset handle created by {@link #makePaddedDataset(CuVSMatrix)}.
    */
   abstract class DeserializeDataset implements AutoCloseable {
     private AutoCloseable delegate;
@@ -125,11 +124,6 @@ public interface CagraIndex extends AutoCloseable {
     public PaddedDataset() {}
   }
 
-  /** Owning standard dataset handle populated by deserialization. */
-  final class StandardDataset extends DeserializeDataset {
-    public StandardDataset() {}
-  }
-
   /**
    * Invokes the native destroy_cagra_index to de-allocate the CAGRA index
    */
@@ -175,16 +169,6 @@ public interface CagraIndex extends AutoCloseable {
    * padded storage and must keep it alive while this index uses it.
    */
   void updateDataset(PaddedDatasetView datasetView) throws Throwable;
-
-  /**
-   * Deserializes into this pre-allocated index and optionally populates an output dataset handle.
-   * <p>
-   * Pass an empty {@link PaddedDataset} or {@link StandardDataset} matching the serialized layout
-   * to receive ownership of the deserialized dataset payload. Passing {@code null} loads only the
-   * graph, even when the serialized file contains a dataset. The caller must keep the returned
-   * dataset alive while the index uses it.
-   */
-  void deserialize(InputStream inputStream, DeserializeDataset outDataset) throws Throwable;
 
   /** Returns the CAGRA graph
    *
@@ -341,6 +325,15 @@ public interface CagraIndex extends AutoCloseable {
    * Builder helps configure and create an instance of {@link CagraIndex}.
    */
   interface Builder {
+
+    /**
+     * Sets an instance of InputStream typically used when index deserialization is
+     * needed.
+     *
+     * @param inputStream an instance of {@link InputStream}
+     * @return an instance of this Builder
+     */
+    Builder from(InputStream inputStream);
 
     /**
      * Sets a CAGRA graph instance to re-create an index from a

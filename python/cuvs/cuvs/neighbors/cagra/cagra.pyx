@@ -621,10 +621,15 @@ def make_padded_dataset(dataset, resources=None):
         cydlpack.dlpack_c(dataset_ai)
     cdef cuvsResources_t res = <cuvsResources_t>resources.get_c_obj()
     cdef PaddedDataset padded = PaddedDataset()
+    cdef cuvsDatasetMemType_t mem_type
+    cdef cuvsDatasetLayout_t layout
     with cuda_interruptible():
+        check_cuvs(cuvsCagraGetDatasetMemTypeAndLayout(
+            dataset_dlpack, &mem_type, &layout))
         check_cuvs(cuvsDatasetMakePadded(
             res,
             dataset_dlpack,
+            mem_type,
             &padded.dataset
         ))
     return padded

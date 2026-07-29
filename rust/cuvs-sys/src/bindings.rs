@@ -345,6 +345,7 @@ unsafe extern "C" {
     pub fn cuvsDatasetMakePadded(
         res: cuvsResources_t,
         dataset: *mut DLManagedTensor,
+        target_mem_type: cuvsDatasetMemType_t,
         padded_dataset: *mut cuvsDataset_t,
     ) -> cuvsError_t;
 }
