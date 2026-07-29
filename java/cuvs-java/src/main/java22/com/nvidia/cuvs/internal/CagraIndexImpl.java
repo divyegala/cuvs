@@ -385,8 +385,8 @@ public class CagraIndexImpl implements CagraIndex {
       var cuvsRes = resourcesAccessor.handle();
       var datasetTensor = datasetInternal.toTensor(localArena);
       MemorySegment paddedDatasetPtr = localArena.allocate(cuvsDataset_t);
-      var returnValue = cuvsDatasetMakeDevicePadded(cuvsRes, datasetTensor, paddedDatasetPtr);
-      checkCuVSError(returnValue, "cuvsDatasetMakeDevicePadded");
+      var returnValue = cuvsDatasetMakePadded(cuvsRes, datasetTensor, paddedDatasetPtr);
+      checkCuVSError(returnValue, "cuvsDatasetMakePadded");
       MemorySegment paddedDataset = paddedDatasetPtr.get(cuvsDataset_t, 0);
 
       var out = new CagraIndex.PaddedDataset();
@@ -407,9 +407,9 @@ public class CagraIndexImpl implements CagraIndex {
     try (var localArena = Arena.ofConfined()) {
       MemorySegment paddedViewPtr = localArena.allocate(cuvsDatasetView_t);
       var returnValue =
-          cuvsDatasetMakeViewFromOwningPadded(
+          cuvsDatasetMakeViewWrapper(
               MemorySegment.ofAddress(paddedDataset.nativeHandleAddress()), paddedViewPtr);
-      checkCuVSError(returnValue, "cuvsDatasetMakeViewFromOwningPadded");
+      checkCuVSError(returnValue, "cuvsDatasetMakeViewWrapper");
       MemorySegment paddedView = paddedViewPtr.get(cuvsDatasetView_t, 0);
 
       var out = new CagraIndex.DevicePaddedDatasetView();
