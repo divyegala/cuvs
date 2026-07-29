@@ -635,8 +635,8 @@ CUVS_EXPORT cuvsError_t cuvsCagraGetDatasetMemTypeAndLayout(DLManagedTensor* dat
  * `cuvsCagraGetDatasetMemTypeAndLayout` resolves which one an input tensor calls for.
  *
  * Note that a dataset residing in host memory produces a host-backed index, which
- * must be made search-ready with `cuvsCagraAttachDataset` before calling
- * `cuvsCagraSearch`.
+ * must be made search-ready with `cuvsCagraUpdateDataset` (using a device-padded
+ * dataset view) before calling `cuvsCagraSearch`.
  *
  * @code {.c}
  * #include <cuvs/core/c_api.h>

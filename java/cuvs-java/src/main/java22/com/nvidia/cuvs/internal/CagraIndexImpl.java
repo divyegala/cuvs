@@ -372,6 +372,53 @@ public class CagraIndexImpl implements CagraIndex {
   }
 
   @Override
+  public CagraIndex.PaddedDataset makeDevicePaddedDataset(CuVSDeviceMatrix dataset)
+      throws Throwable {
+    checkNotDestroyed();
+    Objects.requireNonNull(dataset);
+    if (!(dataset instanceof CuVSMatrixInternal datasetInternal)) {
+      throw new IllegalArgumentException("dataset must be a CuVSMatrixInternal device matrix");
+    }
+
+    try (var localArena = Arena.ofConfined();
+        var resourcesAccessor = resources.access()) {
+      var cuvsRes = resourcesAccessor.handle();
+      var datasetTensor = datasetInternal.toTensor(localArena);
+      MemorySegment paddedDatasetPtr = localArena.allocate(cuvsDataset_t);
+      var returnValue = cuvsDatasetMakeDevicePadded(cuvsRes, datasetTensor, paddedDatasetPtr);
+      checkCuVSError(returnValue, "cuvsDatasetMakeDevicePadded");
+      MemorySegment paddedDataset = paddedDatasetPtr.get(cuvsDataset_t, 0);
+
+      var out = new CagraIndex.PaddedDataset();
+      out.setDelegate(new PaddedDatasetCloseDelegate(paddedDataset), paddedDataset.address());
+      return out;
+    }
+  }
+
+  @Override
+  public CagraIndex.DevicePaddedDatasetView makeViewFromOwningPadded(
+      CagraIndex.PaddedDataset paddedDataset) throws Throwable {
+    checkNotDestroyed();
+    Objects.requireNonNull(paddedDataset);
+    if (!paddedDataset.isPresent()) {
+      throw new IllegalArgumentException("paddedDataset is uninitialized");
+    }
+
+    try (var localArena = Arena.ofConfined()) {
+      MemorySegment paddedViewPtr = localArena.allocate(cuvsDatasetView_t);
+      var returnValue =
+          cuvsDatasetMakeViewFromOwningPadded(
+              MemorySegment.ofAddress(paddedDataset.nativeHandleAddress()), paddedViewPtr);
+      checkCuVSError(returnValue, "cuvsDatasetMakeViewFromOwningPadded");
+      MemorySegment paddedView = paddedViewPtr.get(cuvsDatasetView_t, 0);
+
+      var out = new CagraIndex.DevicePaddedDatasetView();
+      out.setDelegate(new DevicePaddedDatasetViewCloseDelegate(paddedView), paddedView.address());
+      return out;
+    }
+  }
+
+  @Override
   public CagraIndex.DevicePaddedDatasetView makeDevicePaddedDatasetView(CuVSDeviceMatrix dataset)
       throws Throwable {
     checkNotDestroyed();
@@ -465,20 +512,26 @@ public class CagraIndexImpl implements CagraIndex {
           var returnValue = cuvsCagraDeserializePadded(cuvsRes, path, index, paddedDatasetOutPtr);
           checkCuVSError(returnValue, "cuvsCagraDeserializePadded");
           MemorySegment paddedDatasetHandle = paddedDatasetOutPtr.get(cuvsDataset_t, 0);
-          outDataset.setDelegate(
-              paddedDatasetHandle.address() == 0
-                  ? null
-                  : new PaddedDatasetCloseDelegate(paddedDatasetHandle));
+          if (paddedDatasetHandle.address() == 0) {
+            outDataset.setDelegate(null, 0);
+          } else {
+            outDataset.setDelegate(
+                new PaddedDatasetCloseDelegate(paddedDatasetHandle),
+                paddedDatasetHandle.address());
+          }
         } else if (outDataset instanceof CagraIndex.StandardDataset) {
           MemorySegment standardDatasetOutPtr = arena.allocate(cuvsDataset_t);
           var returnValue =
               cuvsCagraDeserializeStandard(cuvsRes, path, index, standardDatasetOutPtr);
           checkCuVSError(returnValue, "cuvsCagraDeserializeStandard");
           MemorySegment standardDatasetHandle = standardDatasetOutPtr.get(cuvsDataset_t, 0);
-          outDataset.setDelegate(
-              standardDatasetHandle.address() == 0
-                  ? null
-                  : new StandardDatasetCloseDelegate(standardDatasetHandle));
+          if (standardDatasetHandle.address() == 0) {
+            outDataset.setDelegate(null, 0);
+          } else {
+            outDataset.setDelegate(
+                new StandardDatasetCloseDelegate(standardDatasetHandle),
+                standardDatasetHandle.address());
+          }
         } else {
           throw new IllegalArgumentException(
               "outDataset must be null, CagraIndex.PaddedDataset, or CagraIndex.StandardDataset");
