@@ -154,6 +154,33 @@ public class CagraBuildAndSearchIT extends CuVSTestCase {
     }
   }
 
+  @Test
+  public void testDeserializeReturnsCallerOwnedStandardDataset() throws Throwable {
+    float[][] dataset = createSampleData();
+    float[][] queries = createSampleQueries();
+    List<Map<Integer, Float>> expectedResults = getExpectedResults();
+
+    try (CuVSResources resources = CheckedCuVSResources.create();
+        var index = indexOnce(CuVSMatrix.ofArray(dataset), resources)) {
+      var indexPath = serializeOnce(index);
+      try (var outDataset = new CagraIndex.StandardDataset();
+          var inputStream = Files.newInputStream(indexPath);
+          var loadedIndex =
+              CagraIndex.newBuilder(resources).from(inputStream, outDataset).build()) {
+        assertTrue(outDataset.isPresent());
+        queryAndCompare(
+            index,
+            loadedIndex,
+            SearchResults.IDENTITY_MAPPING,
+            queries,
+            expectedResults,
+            resources);
+      } finally {
+        Files.deleteIfExists(indexPath);
+      }
+    }
+  }
+
   /**
    * A basic test that checks the whole flow - from indexing to search.
    */

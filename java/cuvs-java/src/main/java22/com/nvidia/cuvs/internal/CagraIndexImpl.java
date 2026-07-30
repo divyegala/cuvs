@@ -77,8 +77,16 @@ public class CagraIndexImpl implements CagraIndex {
    * @param resources   an instance of {@link CuVSResources}
    */
   private CagraIndexImpl(InputStream inputStream, CuVSResources resources) throws Throwable {
+    this(inputStream, resources, null);
+  }
+
+  private CagraIndexImpl(
+      InputStream inputStream,
+      CuVSResources resources,
+      CagraIndex.DeserializeDataset outDataset)
+      throws Throwable {
     this.resources = resources;
-    this.cagraIndexReference = deserialize(inputStream);
+    this.cagraIndexReference = deserialize(inputStream, outDataset);
   }
 
   /**
@@ -619,7 +627,18 @@ public class CagraIndexImpl implements CagraIndex {
    * @param inputStream an instance of {@link InputStream}
    * @return an instance of {@link IndexReference}
    */
-  private IndexReference deserialize(InputStream inputStream) throws Throwable {
+  private IndexReference deserialize(
+      InputStream inputStream, CagraIndex.DeserializeDataset outDataset) throws Throwable {
+    if (outDataset != null && outDataset.isPresent()) {
+      throw new IllegalArgumentException("outDataset must be empty before deserialization");
+    }
+    if (outDataset != null
+        && !(outDataset instanceof CagraIndex.PaddedDataset)
+        && !(outDataset instanceof CagraIndex.StandardDataset)) {
+      throw new IllegalArgumentException(
+          "outDataset must be CagraIndex.PaddedDataset or CagraIndex.StandardDataset");
+    }
+
     Path tmpIndexFile =
         Files.createTempFile(resources.tempDirectory(), UUID.randomUUID().toString(), ".cag")
             .toAbsolutePath();
@@ -644,7 +663,26 @@ public class CagraIndexImpl implements CagraIndex {
         dataset = datasetOutPtr.get(cuvsDataset_t, 0);
       }
 
-      return new IndexReference(index, null, new OwningDatasetCloseDelegate(dataset));
+      if (outDataset != null) {
+        int expectedLayout =
+            outDataset instanceof CagraIndex.PaddedDataset
+                ? CUVS_DATASET_LAYOUT_PADDED()
+                : CUVS_DATASET_LAYOUT_STANDARD();
+        if (cuvsDataset.layout(dataset) != expectedLayout) {
+          throw new IllegalArgumentException(
+              "outDataset type does not match the serialized dataset layout");
+        }
+      }
+
+      var datasetOwner = new OwningDatasetCloseDelegate(dataset);
+      if (outDataset == null) {
+        dataset = MemorySegment.NULL;
+        return new IndexReference(index, null, datasetOwner);
+      }
+
+      outDataset.setDelegate(datasetOwner, dataset.address());
+      dataset = MemorySegment.NULL;
+      return new IndexReference(index, null, null);
     } catch (Throwable t) {
       if (dataset.address() != 0) {
         try {
@@ -945,6 +983,7 @@ public class CagraIndexImpl implements CagraIndex {
 
     private CuVSMatrix dataset;
     private InputStream inputStream;
+    private CagraIndex.DeserializeDataset outDataset;
     private CagraIndexParams cagraIndexParams;
     private final CuVSResources cuvsResources;
     private CuVSMatrix graph;
@@ -956,6 +995,15 @@ public class CagraIndexImpl implements CagraIndex {
     @Override
     public Builder from(InputStream inputStream) {
       this.inputStream = inputStream;
+      this.outDataset = null;
+      return this;
+    }
+
+    @Override
+    public Builder from(
+        InputStream inputStream, CagraIndex.DeserializeDataset outDataset) {
+      this.inputStream = inputStream;
+      this.outDataset = Objects.requireNonNull(outDataset);
       return this;
     }
 
@@ -986,7 +1034,9 @@ public class CagraIndexImpl implements CagraIndex {
     @Override
     public CagraIndexImpl build() throws Throwable {
       if (inputStream != null) {
-        return new CagraIndexImpl(inputStream, cuvsResources);
+        return outDataset == null
+            ? new CagraIndexImpl(inputStream, cuvsResources)
+            : new CagraIndexImpl(inputStream, cuvsResources, outDataset);
       } else if (graph != null) {
         if (cagraIndexParams == null || dataset == null) {
           throw new IllegalArgumentException(

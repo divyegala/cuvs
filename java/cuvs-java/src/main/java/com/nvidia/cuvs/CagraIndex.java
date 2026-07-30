@@ -71,7 +71,8 @@ public interface CagraIndex extends AutoCloseable {
   }
 
   /**
-   * Caller-owned dataset handle created by {@link #makePaddedDataset(CuVSMatrix)}.
+   * Caller-owned dataset handle populated by explicit deserialization or created by
+   * {@link #makePaddedDataset(CuVSMatrix)}.
    */
   abstract class DeserializeDataset implements AutoCloseable {
     private AutoCloseable delegate;
@@ -122,6 +123,11 @@ public interface CagraIndex extends AutoCloseable {
    */
   final class PaddedDataset extends DeserializeDataset {
     public PaddedDataset() {}
+  }
+
+  /** Owning standard dataset handle populated by deserialization. */
+  final class StandardDataset extends DeserializeDataset {
+    public StandardDataset() {}
   }
 
   /**
@@ -334,6 +340,17 @@ public interface CagraIndex extends AutoCloseable {
      * @return an instance of this Builder
      */
     Builder from(InputStream inputStream);
+
+    /**
+     * Sets an input stream and an empty caller-owned output handle for explicit dataset
+     * deserialization. The concrete output type must match the dataset layout stored in the
+     * serialized index. Keep {@code outDataset} alive while the built index is in use.
+     *
+     * @param inputStream an instance of {@link InputStream}
+     * @param outDataset an empty {@link PaddedDataset} or {@link StandardDataset}
+     * @return an instance of this Builder
+     */
+    Builder from(InputStream inputStream, DeserializeDataset outDataset);
 
     /**
      * Sets a CAGRA graph instance to re-create an index from a
