@@ -100,8 +100,8 @@
         "abi_abbrev": "strict",
         "abi_tag": "cutile_abi_strict",
         "tile_m": 128,
-        "tile_n": 64,
-        "tile_k": 64
+        "tile_n": 128,
+        "tile_k": 32
       },
       {
         "matrix_layout": "relaxed",
@@ -109,7 +109,7 @@
         "abi_tag": "cutile_abi_relaxed",
         "tile_m": 128,
         "tile_n": 128,
-        "tile_k": 16
+        "tile_k": 32
       }
     ],
     "_data": [
