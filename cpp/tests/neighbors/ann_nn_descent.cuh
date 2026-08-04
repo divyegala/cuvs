@@ -36,6 +36,7 @@ struct AnnNNDescentInputs {
   cuvs::distance::DistanceType metric;
   bool host_dataset;
   double min_recall;
+  DIST_COMP_DTYPE dist_comp_dtype = DIST_COMP_DTYPE::AUTO;
 };
 
 struct AnnNNDescentBatchInputs {
@@ -50,7 +51,8 @@ struct AnnNNDescentBatchInputs {
 inline ::std::ostream& operator<<(::std::ostream& os, const AnnNNDescentInputs& p)
 {
   os << "dataset shape=" << p.n_rows << "x" << p.dim << ", graph_degree=" << p.graph_degree
-     << ", metric=" << static_cast<int>(p.metric) << (p.host_dataset ? ", host" : ", device");
+     << ", metric=" << static_cast<int>(p.metric) << (p.host_dataset ? ", host" : ", device")
+     << ", dist_comp=" << static_cast<int>(p.dist_comp_dtype);
   return os;
 }
 
@@ -110,6 +112,7 @@ class AnnNNDescentTest : public ::testing::TestWithParam<AnnNNDescentInputs> {
         index_params.intermediate_graph_degree = 2 * ps.graph_degree;
         index_params.max_iterations            = 100;
         index_params.return_distances          = true;
+        index_params.dist_comp_dtype           = ps.dist_comp_dtype;
 
         auto database_view = raft::make_device_matrix_view<const DataT, int64_t>(
           (const DataT*)database.data(), ps.n_rows, ps.dim);
@@ -483,5 +486,13 @@ const std::vector<AnnNNDescentInputs> inputsDistEpilogue =
     {cuvs::distance::DistanceType::L2Expanded, cuvs::distance::DistanceType::L2SqrtExpanded},
     {true},  // data on host
     {0.90});
+
+const std::vector<AnnNNDescentInputs> tf32MmaBoundaryInputs{
+  {512, 7, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
+  {512, 8, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
+  {512, 9, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
+  {512, 63, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
+  {512, 64, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
+  {512, 65, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32}};
 
 }  // namespace cuvs::neighbors::nn_descent

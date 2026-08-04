@@ -16,7 +16,8 @@ cdef extern from "cuvs/neighbors/nn_descent.h" nogil:
     enum cuvsNNDescentDistCompDtype:
         NND_DIST_COMP_AUTO = 0,
         NND_DIST_COMP_FP32 = 1,
-        NND_DIST_COMP_FP16 = 2
+        NND_DIST_COMP_FP16 = 2,
+        NND_DIST_COMP_TF32 = 3
 
     ctypedef struct cuvsNNDescentIndexParams:
         cuvsDistanceType metric

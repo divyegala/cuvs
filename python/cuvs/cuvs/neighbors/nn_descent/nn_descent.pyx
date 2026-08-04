@@ -65,10 +65,11 @@ cdef class IndexParams:
         Whether to return distances array
     dist_comp_dtype : str, default = "auto"
         Dtype to use for distance computation.
-        Supported dtypes are `auto`, `fp32`, and `fp16`
+        Supported dtypes are `auto`, `fp32`, `fp16`, and `tf32`
         `auto` automatically determines the best dtype for distance computation based on the dataset dimensions.
         `fp32` uses fp32 distance computation for better precision at the cost of performance and memory usage. This option is only valid when data type is fp32.
         `fp16` uses fp16 distance computation for better performance and memory usage at the cost of precision.
+        `tf32` explicitly uses TensorFloat-32 tensor-core distance computation. It is never selected by `auto`.
     """
 
     cdef cuvsNNDescentIndexParams* params
@@ -103,14 +104,19 @@ cdef class IndexParams:
         if return_distances is not None:
             self.params.return_distances = return_distances
 
-        if dist_comp_dtype is "auto":
+        if dist_comp_dtype == "auto":
             self.params.dist_comp_dtype = cuvsNNDescentDistCompDtype.NND_DIST_COMP_AUTO
-        elif dist_comp_dtype is "fp32":
+        elif dist_comp_dtype == "fp32":
             self.params.dist_comp_dtype = cuvsNNDescentDistCompDtype.NND_DIST_COMP_FP32
-        elif dist_comp_dtype is "fp16":
+        elif dist_comp_dtype == "fp16":
             self.params.dist_comp_dtype = cuvsNNDescentDistCompDtype.NND_DIST_COMP_FP16
+        elif dist_comp_dtype == "tf32":
+            self.params.dist_comp_dtype = cuvsNNDescentDistCompDtype.NND_DIST_COMP_TF32
         else:
-            raise ValueError(f"Invalid dist_comp_dtype: {dist_comp_dtype}. Supported options are 'auto', 'fp32', and 'fp16'.")
+            raise ValueError(
+                f"Invalid dist_comp_dtype: {dist_comp_dtype}. Supported options "
+                "are 'auto', 'fp32', 'fp16', and 'tf32'."
+            )
 
     @property
     def metric(self):

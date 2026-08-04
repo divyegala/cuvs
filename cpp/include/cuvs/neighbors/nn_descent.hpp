@@ -36,8 +36,10 @@ namespace nn_descent {
  * - `FP32`: Use fp32 distance computation for better precision at the cost of performance and
  * memory usage.
  * - `FP16`: Use fp16 distance computation.
+ * - `TF32`: Use TensorFloat-32 tensor-core distance computation. This mode is opt-in and is never
+ * selected by `AUTO`.
  */
-enum class DIST_COMP_DTYPE { AUTO = 0, FP32 = 1, FP16 = 2 };
+enum class DIST_COMP_DTYPE { AUTO = 0, FP32 = 1, FP16 = 2, TF32 = 3 };
 
 /**
  * @brief Parameters used to build an nn-descent index
@@ -56,7 +58,8 @@ enum class DIST_COMP_DTYPE { AUTO = 0, FP32 = 1, FP16 = 2 };
  * automatically determines the best dtype for distance computation based on the dataset dimensions.
  * Use `FP32` for better precision at the cost of performance and memory usage. This option is only
  * valid when data type is fp32. Use `FP16` for better performance and memory usage at the cost of
- * precision.
+ * precision, or explicitly select `TF32` to use TensorFloat-32 tensor-core arithmetic. `AUTO`
+ * never selects `TF32`.
  */
 struct index_params : cuvs::neighbors::index_params {
   size_t graph_degree              = 64;

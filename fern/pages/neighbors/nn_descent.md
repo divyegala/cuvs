@@ -253,7 +253,7 @@ NN-Descent does not expose filtered search because it does not expose search. Ap
 | `max_iterations` | `20` | Maximum number of graph-refinement iterations. More iterations can improve graph quality, but increase build time. |
 | `termination_threshold` | `0.0001` | Early-stop threshold based on how many graph updates are still happening. Smaller values can run longer. |
 | `return_distances` | `true` | Stores distances for the returned graph. Disable this to reduce memory when only neighbor IDs are needed. |
-| `dist_comp_dtype` | `AUTO` / `"auto"` | Distance-computation dtype. `AUTO` chooses from the dataset shape, `FP32` favors precision, and `FP16` favors speed and memory use. |
+| `dist_comp_dtype` | `AUTO` / `"auto"` | Distance-computation dtype. `AUTO` chooses from the dataset shape, `FP32` favors precision, and `FP16` favors speed and memory use, and opt-in `TF32` uses TensorFloat-32 tensor cores. `AUTO` never selects TF32. |
 
 ## Tuning
 
@@ -265,7 +265,7 @@ Increase `max_iterations` when graph quality is still improving at the end of th
 
 Tune `termination_threshold` after choosing the degrees. A larger threshold stops earlier; a smaller threshold keeps refining until updates become rarer.
 
-Use `dist_comp_dtype="fp16"` or `DIST_COMP_DTYPE::FP16` when speed and memory matter more than distance precision. Use fp32 when small numeric differences matter.
+Use `dist_comp_dtype="fp16"` or `DIST_COMP_DTYPE::FP16` when speed and memory matter more than distance precision. Use `"tf32"` or `DIST_COMP_DTYPE::TF32` to explicitly use TensorFloat-32 tensor cores for float input; `AUTO` never selects TF32. Use fp32 when exact float32 multiplication matters.
 
 ## Memory footprint
 

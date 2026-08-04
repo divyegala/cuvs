@@ -16,6 +16,9 @@ typedef AnnNNDescentDistEpiTest<float, float, std::uint32_t> AnnNNDescentTestDis
 TEST_P(AnnNNDescentTestDistEpiF_U32, AnnNNDescentDistEpi) { this->testNNDescent(); }
 
 INSTANTIATE_TEST_CASE_P(AnnNNDescentTest, AnnNNDescentTestF_U32, ::testing::ValuesIn(inputs));
+INSTANTIATE_TEST_CASE_P(AnnNNDescentTF32MmaBoundaries,
+                        AnnNNDescentTestF_U32,
+                        ::testing::ValuesIn(tf32MmaBoundaryInputs));
 INSTANTIATE_TEST_CASE_P(AnnNNDescentDistEpi,
                         AnnNNDescentTestDistEpiF_U32,
                         ::testing::ValuesIn(inputsDistEpilogue));

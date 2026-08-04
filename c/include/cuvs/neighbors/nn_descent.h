@@ -19,14 +19,19 @@ extern "C" {
 
 /**
  * @brief Dtype to use for distance computation
- * - `NND_DIST_COMP_AUTO`: Automatically determine the best dtype for distance computation based on the dataset dimensions.
- * - `NND_DIST_COMP_FP32`: Use fp32 distance computation for better precision at the cost of performance and memory usage.
+ * - `NND_DIST_COMP_AUTO`: Automatically determine the best dtype for distance
+ * computation based on the dataset dimensions.
+ * - `NND_DIST_COMP_FP32`: Use fp32 distance computation for better precision at
+ * the cost of performance and memory usage.
  * - `NND_DIST_COMP_FP16`: Use fp16 distance computation.
+ * - `NND_DIST_COMP_TF32`: Use TensorFloat-32 tensor-core distance computation.
+ * This mode is opt-in and is never selected by `NND_DIST_COMP_AUTO`.
  */
 typedef enum {
   NND_DIST_COMP_AUTO = 0,
   NND_DIST_COMP_FP32 = 1,
-  NND_DIST_COMP_FP16 = 2
+  NND_DIST_COMP_FP16 = 2,
+  NND_DIST_COMP_TF32 = 3
 } cuvsNNDescentDistCompDtype;
 
 /**
@@ -36,20 +41,23 @@ typedef enum {
 /**
  * @brief Parameters used to build an nn-descent index
  *
- * `metric`: The distance metric to use
- * `metric_arg`: The argument used by distance metrics like Minkowskidistance
- * `graph_degree`: For an input dataset of dimensions (N, D),
- * determines the final dimensions of the all-neighbors knn graph
- * which turns out to be of dimensions (N, graph_degree)
- * `intermediate_graph_degree`: Internally, nn-descent builds an
- * all-neighbors knn graph of dimensions (N, intermediate_graph_degree)
- * before selecting the final `graph_degree` neighbors. It's recommended
- * that `intermediate_graph_degree` >= 1.5 * graph_degree
- * `max_iterations`: The number of iterations that nn-descent will refine
- * the graph for. More iterations produce a better quality graph at cost of performance
- * `termination_threshold`: The delta at which nn-descent will terminate its iterations
- * `return_distances`: Boolean to decide whether to return distances array
- * `dist_comp_dtype`: dtype to use for distance computation. Defaults to `NND_DIST_COMP_AUTO` which automatically determines the best dtype for distance computation based on the dataset dimensions. Use `NND_DIST_COMP_FP32` for better precision at the cost of performance and memory usage. This option is only valid when data type is fp32. Use `NND_DIST_COMP_FP16` for better performance and memory usage at the cost of precision.
+ * - `metric`: The distance metric to use
+ * - `metric_arg`: The argument used by distance metrics like Minkowski distance
+ * - `graph_degree`: For an input dataset of dimensions (N, D), determines the final
+ * dimensions of the all-neighbors kNN graph, (N, graph_degree).
+ * - `intermediate_graph_degree`: Internally, NN-descent builds an all-neighbors kNN
+ * graph of dimensions (N, intermediate_graph_degree) before selecting the final
+ * `graph_degree` neighbors. It is recommended that `intermediate_graph_degree` >=
+ * 1.5 * graph_degree.
+ * - `max_iterations`: The number of refinement iterations. More iterations improve
+ * graph quality at the cost of performance.
+ * - `termination_threshold`: The delta at which NN-descent terminates its iterations.
+ * - `return_distances`: Whether to return the distance array.
+ * - `dist_comp_dtype`: Dtype used for distance computation. `NND_DIST_COMP_AUTO`
+ * chooses based on the dataset dimensions. Use `NND_DIST_COMP_FP32` for precision,
+ * `NND_DIST_COMP_FP16` for performance and memory use, or explicitly select
+ * `NND_DIST_COMP_TF32` for TensorFloat-32 tensor-core arithmetic.
+ * `NND_DIST_COMP_AUTO` never selects TF32.
  */
 struct cuvsNNDescentIndexParams {
   cuvsDistanceType metric;

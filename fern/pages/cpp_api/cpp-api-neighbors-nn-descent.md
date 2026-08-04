@@ -17,7 +17,8 @@ Dtype to use for distance computation
 enum class DIST_COMP_DTYPE {
   AUTO = 0,
   FP32 = 1,
-  FP16 = 2
+  FP16 = 2,
+  TF32 = 3
 };
 ```
 
@@ -28,6 +29,7 @@ enum class DIST_COMP_DTYPE {
 | `AUTO` | `0` | Automatically determine the best dtype for distance computation based on the dataset dimensions. |
 | `FP32` | `1` | Use fp32 distance computation for better precision at the cost of performance and memory usage. |
 | `FP16` | `2` | Use fp16 distance computation. |
+| `TF32` | `3` | Use opt-in TensorFloat-32 tensor-core distance computation; `AUTO` never selects it. |
 
 <a id="neighbors-nn-descent-index-params"></a>
 ### neighbors::nn_descent::index_params
@@ -54,7 +56,7 @@ struct index_params : cuvs::neighbors::index_params {
 | `max_iterations` | `size_t` | The number of iterations that nn-descent will refine the graph for. More iterations produce a better quality graph at cost of performance |
 | `termination_threshold` | `float` | The delta at which nn-descent will terminate its iterations |
 | `return_distances` | `bool` | Boolean to decide whether to return distances array |
-| `dist_comp_dtype` | [`DIST_COMP_DTYPE`](/api-reference/cpp-api-neighbors-nn-descent#neighbors-nn-descent-dist-comp-dtype) | dtype to use for distance computation.<br />Defaults to `AUTO` which automatically determines the best dtype for distance computation based on the dataset dimensions.<br />Use `FP32` for better precision at the cost of performance and memory usage. This option is only valid when data type is fp32.<br />Use `FP16` for better performance and memory usage at the cost of precision. |
+| `dist_comp_dtype` | [`DIST_COMP_DTYPE`](/api-reference/cpp-api-neighbors-nn-descent#neighbors-nn-descent-dist-comp-dtype) | dtype to use for distance computation.<br />Defaults to `AUTO` which automatically determines the best dtype for distance computation based on the dataset dimensions.<br />Use `FP32` for better precision at the cost of performance and memory usage. This option is only valid when data type is fp32.<br />Use `FP16` for better performance and memory usage at the cost of precision.<br />Use `TF32` to explicitly enable TensorFloat-32 tensor-core arithmetic; `AUTO` never selects TF32. |
 
 <a id="neighbors-nn-descent-index-params-index-params"></a>
 ### neighbors::nn_descent::index_params::index_params

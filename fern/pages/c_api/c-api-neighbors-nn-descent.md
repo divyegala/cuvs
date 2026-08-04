@@ -17,7 +17,8 @@ Dtype to use for distance computation
 typedef enum {
   NND_DIST_COMP_AUTO = 0,
   NND_DIST_COMP_FP32 = 1,
-  NND_DIST_COMP_FP16 = 2
+  NND_DIST_COMP_FP16 = 2,
+  NND_DIST_COMP_TF32 = 3
 } cuvsNNDescentDistCompDtype;
 ```
 
@@ -28,6 +29,7 @@ typedef enum {
 | `NND_DIST_COMP_AUTO` | `0` | Automatically determine the best dtype for distance computation based on the dataset dimensions. |
 | `NND_DIST_COMP_FP32` | `1` | Use fp32 distance computation for better precision at the cost of performance and memory usage. |
 | `NND_DIST_COMP_FP16` | `2` | Use fp16 distance computation. |
+| `NND_DIST_COMP_TF32` | `3` | Use opt-in TensorFloat-32 tensor-core distance computation; `AUTO` never selects it. |
 
 ## The nn-descent algorithm parameters.
 
@@ -60,7 +62,7 @@ struct cuvsNNDescentIndexParams {
 | `max_iterations` | `size_t` | The number of iterations that nn-descent will refine the graph for. More iterations produce a better quality graph at cost of performance |
 | `termination_threshold` | `float` | The delta at which nn-descent will terminate its iterations |
 | `return_distances` | `bool` | Boolean to decide whether to return distances array |
-| `dist_comp_dtype` | [`cuvsNNDescentDistCompDtype`](/api-reference/c-api-neighbors-nn-descent#cuvsnndescentdistcompdtype) | dtype to use for distance computation.<br />Defaults to `NND_DIST_COMP_AUTO` which automatically determines the best dtype for distance computation based on the dataset dimensions.<br />Use `NND_DIST_COMP_FP32` for better precision at the cost of performance and memory usage. This option is only valid when data type is fp32.<br />Use `NND_DIST_COMP_FP16` for better performance and memory usage at the cost of precision. |
+| `dist_comp_dtype` | [`cuvsNNDescentDistCompDtype`](/api-reference/c-api-neighbors-nn-descent#cuvsnndescentdistcompdtype) | dtype to use for distance computation.<br />Defaults to `NND_DIST_COMP_AUTO` which automatically determines the best dtype for distance computation based on the dataset dimensions.<br />Use `NND_DIST_COMP_FP32` for better precision at the cost of performance and memory usage. This option is only valid when data type is fp32.<br />Use `NND_DIST_COMP_FP16` for better performance and memory usage at the cost of precision.<br />Use `NND_DIST_COMP_TF32` to explicitly enable TensorFloat-32 tensor-core arithmetic; `AUTO` never selects TF32. |
 
 <a id="cuvsnndescentindexparamscreate"></a>
 ### cuvsNNDescentIndexParamsCreate

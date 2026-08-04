@@ -780,6 +780,7 @@ pub enum cuvsNNDescentDistCompDtype {
     NND_DIST_COMP_AUTO = 0,
     NND_DIST_COMP_FP32 = 1,
     NND_DIST_COMP_FP16 = 2,
+    NND_DIST_COMP_TF32 = 3,
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

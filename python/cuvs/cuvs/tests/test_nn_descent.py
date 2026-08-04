@@ -61,7 +61,7 @@ def test_nn_descent(
 
 
 @pytest.mark.parametrize("n_cols", [2, 17, 32])
-@pytest.mark.parametrize("dist_comp_dtype", ["auto", "fp32", "fp16"])
+@pytest.mark.parametrize("dist_comp_dtype", ["auto", "fp32", "fp16", "tf32"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float16])
 def test_nn_descent_dist_comp_dtype(n_cols, dist_comp_dtype, dtype):
     metric = "sqeuclidean"
