@@ -1,0 +1,240 @@
+diff --git a/cpp/src/neighbors/detail/nn_descent.cuh b/cpp/src/neighbors/detail/nn_descent.cuh
+index e61a4651..6a50eabb 100644
+--- a/cpp/src/neighbors/detail/nn_descent.cuh
++++ b/cpp/src/neighbors/detail/nn_descent.cuh
+@@ -40,6 +40,9 @@
+ #include <cute/atom/copy_traits_sm100.hpp>
+ #include <cute/tensor.hpp>
+ #include <cutlass/arch/barrier.h>
++#include <cutlass/arch/memory.h>
++#include <cutlass/array.h>
++#include <cutlass/platform/platform.h>
+ #include <mma.h>
+ 
+ #include <limits>
+@@ -1123,10 +1126,10 @@ __launch_bounds__(BLOCK_SIZE)
+ #endif
+ }
+ 
+-constexpr int FEATURE_MMA_BLOCK_SIZE  = 256;
++constexpr int FEATURE_MMA_BLOCK_SIZE  = 128;
+ constexpr int PORTABLE_MMA_BLOCK_SIZE = 512;
+-constexpr int FUSED_DISTANCE_COLS     = MAX_NUM_BI_SAMPLES * 2;
+-constexpr int FUSED_DISTANCE_LD       = skew_dim<float>(FUSED_DISTANCE_COLS);
++constexpr int FUSED_DISTANCE_COLS           = MAX_NUM_BI_SAMPLES * 2;
++constexpr int FUSED_DISTANCE_LD             = skew_dim<float>(FUSED_DISTANCE_COLS);
+ 
+ template <typename Data_t, bool UseTf32>
+ struct FusedMmaPolicy {
+@@ -1156,6 +1159,28 @@ CUTE_DEVICE auto make_sm90_tiled_mma()
+   }
+ }
+ 
++template <typename SmemTensor>
++CUTE_DEVICE void store_wgmma_u64(SmemTensor& smem, int row, int k, uint2 const& bits)
++{
++  auto* dst = &smem(row, k);
++  cutlass::arch::shared_store<8>(cute::cast_smem_ptr_to_uint(dst), &bits);
++}
++
++CUTE_DEVICE uint2 pack_tf32x2(float2 values)
++{
++  cute::tfloat32_t x{values.x};
++  cute::tfloat32_t y{values.y};
++  return uint2{x.raw(), y.raw()};
++}
++
++CUTE_DEVICE uint2 pack_fp16x4(float4 values)
++{
++  __half2 lo = __floats2half2_rn(values.x, values.y);
++  __half2 hi = __floats2half2_rn(values.z, values.w);
++  return uint2{cutlass::platform::bit_cast<unsigned>(lo),
++               cutlass::platform::bit_cast<unsigned>(hi)};
++}
++
+ template <typename Policy, typename Data_t, typename Index_t>
+ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
+                                           const Data_t* data,
+@@ -1195,24 +1220,69 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
+   auto tCrC       = thread_mma.make_fragment_C(tCsC);
+   cute::clear(tCrC);
+ 
++  int warp_id = threadIdx.x / raft::warp_size();
++  int lane_id = threadIdx.x % raft::warp_size();
++
+   for (int data_base = 0; data_base < data_dim; data_base += Policy::K_TILE) {
+     int valid_dims = min(Policy::K_TILE, data_dim - data_base);
+-    for (int linear = threadIdx.x; linear < FUSED_DISTANCE_COLS * Policy::K_TILE; linear += 128) {
+-      int candidate     = linear / Policy::K_TILE;
+-      int k             = linear % Policy::K_TILE;
++    for (int candidate = warp_id; candidate < FUSED_DISTANCE_COLS; candidate += 4) {
+       bool is_new       = candidate < MAX_NUM_BI_SAMPLES;
+       int candidate_idx = is_new ? candidate : candidate - MAX_NUM_BI_SAMPLES;
+       bool is_active    = is_new ? candidate_idx < list_new_size : candidate_idx < list_old_size;
++      const Data_t* src = nullptr;
+ 
+-      element_t value{};
+-      if (is_active && k < valid_dims) {
++      if (is_active) {
+         Index_t neighbor_id = is_new ? new_neighbors[candidate_idx] : old_neighbors[candidate_idx];
+-        value               = element_t(
+-          static_cast<float>(data[static_cast<size_t>(neighbor_id) * data_dim + data_base + k]));
++        src = data + static_cast<size_t>(neighbor_id) * data_dim + data_base;
++      }
++
++      if constexpr (std::is_same_v<Data_t, float> && Policy::IS_TF32) {
++        int k0        = lane_id * 2;
++        float2 values = {};
++        if (is_active) {
++          if (k0 + 2 <= valid_dims &&
++              (reinterpret_cast<size_t>(src + k0) % alignof(float2)) == 0) {
++            values = *reinterpret_cast<const float2*>(src + k0);
++          } else {
++            if (k0 < valid_dims) { values.x = src[k0]; }
++            if (k0 + 1 < valid_dims) { values.y = src[k0 + 1]; }
++          }
++        }
++        store_wgmma_u64(s_candidates, candidate, k0, pack_tf32x2(values));
++      } else if constexpr (std::is_same_v<Data_t, float> && !Policy::IS_TF32) {
++        int k0        = lane_id * 4;
++        float4 values = {};
++        if (is_active) {
++          if (k0 + 4 <= valid_dims &&
++              (reinterpret_cast<size_t>(src + k0) % alignof(float4)) == 0) {
++            values = *reinterpret_cast<const float4*>(src + k0);
++          } else {
++            if (k0 < valid_dims) { values.x = src[k0]; }
++            if (k0 + 1 < valid_dims) { values.y = src[k0 + 1]; }
++            if (k0 + 2 < valid_dims) { values.z = src[k0 + 2]; }
++            if (k0 + 3 < valid_dims) { values.w = src[k0 + 3]; }
++          }
++        }
++        store_wgmma_u64(s_candidates, candidate, k0, pack_fp16x4(values));
++      } else {
++        constexpr int ELEMENTS_PER_LANE = Policy::K_TILE / raft::warp_size();
++        static_assert(ELEMENTS_PER_LANE * sizeof(element_t) == sizeof(uint2));
++        int k0 = lane_id * ELEMENTS_PER_LANE;
++        cutlass::Array<element_t, ELEMENTS_PER_LANE> converted;
++#pragma unroll
++        for (int i = 0; i < ELEMENTS_PER_LANE; ++i) {
++          float value = 0.0f;
++          if (is_active && k0 + i < valid_dims) {
++            value = static_cast<float>(src[k0 + i]);
++          }
++          converted[i] = element_t(value);
++        }
++        auto packed = cutlass::platform::bit_cast<uint2>(converted);
++        store_wgmma_u64(s_candidates, candidate, k0, packed);
+       }
+-      s_candidates(candidate, k) = value;
+     }
+ 
++    cutlass::arch::fence_view_async_shared();
+     asm volatile("bar.sync 1, 128;" ::: "memory");
+     cute::warpgroup_fence_operand(tCrC);
+     cute::warpgroup_arrive();
+@@ -1379,6 +1449,7 @@ RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* g
+   constexpr int WORK_BYTES = INPUT_BYTES > OUTPUT_BYTES ? INPUT_BYTES : OUTPUT_BYTES;
+ 
+   __shared__ int s_list[FUSED_DISTANCE_COLS];
++  __shared__ int s_unique_counter[2];
+   __shared__ __align__(16) unsigned char s_work[WORK_BYTES];
+ #if defined(CUTE_ARCH_TCGEN05_TMEM_ENABLED)
+   __shared__ __align__(16) cute::uint64_t s_mma_barrier;
+@@ -1387,7 +1458,6 @@ RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* g
+ 
+   [[maybe_unused]] auto* candidates = reinterpret_cast<operand_t*>(s_work);
+   auto* s_distances                 = reinterpret_cast<float*>(s_work);
+-  auto* s_unique_counter            = reinterpret_cast<int*>(s_work);
+ 
+   int tx      = threadIdx.x;
+   int warp_id = tx / raft::warp_size();
+@@ -1449,7 +1519,7 @@ RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* g
+                                      old_neighbors,
+                                      list_old_size);
+ #elif defined(CUTE_ARCH_MMA_SM90A_ENABLED)
+-  if (tx < 128) {
++  if (tx < FEATURE_MMA_BLOCK_SIZE) {
+     compute_fused_wgmma_tile<Policy>(
+       s_work, data, data_dim, new_neighbors, list_new_size, old_neighbors, list_old_size);
+   }
+@@ -1864,8 +1934,8 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
+ {
+   raft::matrix::fill(res, dists_buffer_.view(), std::numeric_limits<float>::max());
+ 
+-  // AUTO retains its historical FP32/FP16 choice and never selects TF32. Portable FP16 and all
+-  // byte inputs use the original two-phase WMMA kernel; TF32 and feature-target FP16 stay fused.
++  // AUTO retains its historical FP32/FP16 choice and never selects TF32. All FP16 and byte
++  // inputs use the original two-phase WMMA kernel; explicit TF32 stays fused.
+   using DCT = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE;
+   bool use_fp16_dist =
+     std::is_same_v<input_t, float> && (build_config_.dist_comp_dtype == DCT::FP16 ||
+@@ -1885,7 +1955,7 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
+                   build_config_.metric == cuvs::distance::DistanceType::BitwiseHamming ||
+                   (use_tf32_dist && compute_capability < 80);
+   bool use_feature_mma = compute_capability >= 90 && compute_capability < 120;
+-  bool use_legacy_fp16 = !use_feature_mma && (std::is_same_v<input_t, half> || use_fp16_dist);
++  bool use_legacy_fp16 = std::is_same_v<input_t, half> || use_fp16_dist;
+ 
+   auto launch_kernel = [&](auto* typed_ptr) {
+     using KernelData_t = std::remove_cv_t<std::remove_pointer_t<decltype(typed_ptr)>>;
+diff --git a/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu b/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu
+index 7f9e5be1..f5b4737d 100644
+--- a/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu
++++ b/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu
+@@ -9,6 +9,44 @@
+ 
+ namespace cuvs::neighbors::nn_descent {
+ 
++namespace {
++
++const std::vector<AnnNNDescentInputs> directMmaDispatchInputs{
++  // Direct TF32 WGMMA uses K=64 tiles. Cover exact and partial tiles across several dimensions.
++  {512, 159, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
++  {512, 160, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
++  {512, 161, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
++  {512, 192, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
++  {512, 193, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
++  {512, 256, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
++  {512, 257, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
++
++  // FP16 uses the legacy two-stage kernel. Cover tiny, partial, exact, and large dimensions.
++  {512, 7, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::FP16},
++  {512, 65, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::FP16},
++  {512, 127, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::FP16},
++  {512, 128, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::FP16},
++  {512, 129, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::FP16},
++  {512, 448, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::FP16},
++  {512, 449, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::FP16},
++  {512,
++   1024,
++   32,
++   cuvs::distance::DistanceType::CosineExpanded,
++   false,
++   0.90,
++   DIST_COMP_DTYPE::FP16}};
++
++std::string directMmaDispatchName(const ::testing::TestParamInfo<AnnNNDescentInputs>& test_info)
++{
++  const auto& input      = test_info.param;
++  const char* dtype_name = input.dist_comp_dtype == DIST_COMP_DTYPE::TF32 ? "TF32" : "FP16";
++  const char* metric_name =
++    input.metric == cuvs::distance::DistanceType::InnerProduct ? "InnerProduct" : "Cosine";
++  return std::string{dtype_name} + "D" + std::to_string(input.dim) + metric_name;
++}
++
++}  // namespace
+ typedef AnnNNDescentTest<float, float, std::uint32_t> AnnNNDescentTestF_U32;
+ TEST_P(AnnNNDescentTestF_U32, AnnNNDescent) { this->testNNDescent(); }
+ 
+@@ -19,6 +57,10 @@ INSTANTIATE_TEST_CASE_P(AnnNNDescentTest, AnnNNDescentTestF_U32, ::testing::Valu
+ INSTANTIATE_TEST_CASE_P(AnnNNDescentTF32MmaBoundaries,
+                         AnnNNDescentTestF_U32,
+                         ::testing::ValuesIn(tf32MmaBoundaryInputs));
++INSTANTIATE_TEST_CASE_P(AnnNNDescentDirectMmaDispatch,
++                        AnnNNDescentTestF_U32,
++                        ::testing::ValuesIn(directMmaDispatchInputs),
++                        directMmaDispatchName);
+ INSTANTIATE_TEST_CASE_P(AnnNNDescentDistEpi,
+                         AnnNNDescentTestDistEpiF_U32,
+                         ::testing::ValuesIn(inputsDistEpilogue));

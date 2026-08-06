@@ -1,0 +1,16 @@
+run_id=20260806T174020Z-4u8g-gen-0113-sm90
+utc_finished=2026-08-06T18:06:06Z
+hostname=4u8g-gen-0113.aselab.nvidia.com
+candidate_sha=d94c4b73c2d5151c5025fe50d6acb35992ca702e
+baseline_ref=origin/main
+baseline_sha=be8ab314d044aee0f80fbe2c2277a893561288de
+compute_cap=9.0
+gpu_arch=90a-real
+env_name=nn-descent-mma-opt-cuda13
+conda_exe=/raid/dgala/miniforge3/bin/conda
+rows=1000000
+repeats=5
+iterations=20
+graph_degree=64
+dims=16,64,128,256,512,786,1024,1536
+candidate_dirty=2

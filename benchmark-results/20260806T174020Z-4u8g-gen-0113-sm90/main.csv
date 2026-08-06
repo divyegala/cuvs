@@ -1,0 +1,16 @@
+main,fp32,rows=1000000,dim=16,degree=64,iterations=20,median_ms=7049.651,mean_ms=7028.500,samples_ms=6921.431;6943.352;7049.651;7055.412;7172.653;
+main,fp16,rows=1000000,dim=16,degree=64,iterations=20,median_ms=7189.104,mean_ms=7168.218,samples_ms=7036.948;7134.911;7189.104;7203.747;7276.379;
+main,fp32,rows=1000000,dim=64,degree=64,iterations=20,median_ms=7114.876,mean_ms=7135.653,samples_ms=7007.813;7095.881;7114.876;7166.047;7293.649;
+main,fp16,rows=1000000,dim=64,degree=64,iterations=20,median_ms=7129.687,mean_ms=7179.390,samples_ms=7111.619;7111.662;7129.687;7260.513;7283.468;
+main,fp32,rows=1000000,dim=128,degree=64,iterations=20,median_ms=7211.056,mean_ms=7196.332,samples_ms=7110.006;7165.715;7211.056;7218.515;7276.368;
+main,fp16,rows=1000000,dim=128,degree=64,iterations=20,median_ms=7208.006,mean_ms=7225.658,samples_ms=7140.870;7171.054;7208.006;7243.148;7365.213;
+main,fp32,rows=1000000,dim=256,degree=64,iterations=20,median_ms=7505.387,mean_ms=7507.362,samples_ms=7422.489;7473.207;7505.387;7547.572;7588.156;
+main,fp16,rows=1000000,dim=256,degree=64,iterations=20,median_ms=7338.668,mean_ms=7363.726,samples_ms=7300.287;7307.742;7338.668;7435.235;7436.701;
+main,fp32,rows=1000000,dim=512,degree=64,iterations=20,median_ms=8274.928,mean_ms=8232.365,samples_ms=8146.110;8158.304;8274.928;8287.904;8294.577;
+main,fp16,rows=1000000,dim=512,degree=64,iterations=20,median_ms=7470.227,mean_ms=7494.139,samples_ms=7442.239;7452.876;7470.227;7531.173;7574.181;
+main,fp32,rows=1000000,dim=786,degree=64,iterations=20,median_ms=9099.737,mean_ms=9124.232,samples_ms=9060.887;9077.780;9099.737;9153.355;9229.401;
+main,fp16,rows=1000000,dim=786,degree=64,iterations=20,median_ms=7670.578,mean_ms=7675.461,samples_ms=7597.621;7656.406;7670.578;7709.685;7743.016;
+main,fp32,rows=1000000,dim=1024,degree=64,iterations=20,median_ms=9937.842,mean_ms=9926.790,samples_ms=9866.325;9902.099;9937.842;9957.138;9970.545;
+main,fp16,rows=1000000,dim=1024,degree=64,iterations=20,median_ms=7739.711,mean_ms=7721.889,samples_ms=7654.666;7656.627;7739.711;7740.157;7818.282;
+main,fp32,rows=1000000,dim=1536,degree=64,iterations=20,median_ms=12107.794,mean_ms=12099.164,samples_ms=12039.543;12063.792;12107.794;12112.541;12172.151;
+main,fp16,rows=1000000,dim=1536,degree=64,iterations=20,median_ms=8118.813,mean_ms=8117.540,samples_ms=8058.373;8109.704;8118.813;8130.375;8170.434;
