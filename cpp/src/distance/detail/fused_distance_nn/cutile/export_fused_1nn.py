@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Export fused 1-NN cuTile kernels to cubin or TileIR bytecode."""
 
@@ -19,7 +19,13 @@ from cuda.tile.compilation import (
     export_kernel,
 )
 
-from fused_1nn_kernel import (
+# CI enables Python safe-path mode, so the script directory is not guaranteed
+# to be importable even when this file is executed directly.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from fused_1nn_kernel import (  # noqa: E402
     INDEX_TYPES,
     METRICS,
     _idx_dtype,
