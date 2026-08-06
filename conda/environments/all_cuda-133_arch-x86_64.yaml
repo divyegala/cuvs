@@ -47,5 +47,6 @@ dependencies:
 - scikit-learn>=1.5
 - sysroot_linux-64==2.28
 - pip:
-  - cuda-tile[tileiras]
+  - cuda-tile
+  - cuda-toolkit[tileiras]==13.3.*
 name: all_cuda-133_arch-x86_64

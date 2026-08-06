@@ -425,30 +425,46 @@ dependencies:
               cuda: "12.*"
             packages:
           - matrix:
+              cuda: "13.3"
+            packages:
+              - pip
+              - pip:
+                  - cuda-tile
+                  - cuda-toolkit[tileiras]==13.3.*
+          - matrix:
               cuda: "13.*"
             packages:
               - pip
               - pip:
-                  - cuda-tile[tileiras]
+                  - cuda-tile
+                  - cuda-toolkit[tileiras]==13.*
           - matrix:
             packages:
               - pip
               - pip:
-                  - cuda-tile[tileiras]
+                  - cuda-tile
+                  - cuda-toolkit[tileiras]==13.*
       - output_types: [requirements, pyproject]
         matrices:
           - matrix:
               cuda: "12.*"
             packages:
           - matrix:
+              cuda: "13.3"
+            packages:
+              - cuda-tile
+              - cuda-toolkit[tileiras]==13.3.*
+          - matrix:
               cuda: "13.*"
             packages:
-              - &cutile_python_cu13 cuda-tile[tileiras]
+              - &cutile_python_cu13 cuda-tile
+              - &cutile_toolkit_cu13 cuda-toolkit[tileiras]==13.*
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (as a source of documentation in the generated pyproject.toml)
           - matrix:
             packages:
               - *cutile_python_cu13
+              - *cutile_toolkit_cu13
   cuda_wheels:
     specific:
       # cuVS needs 'nvJitLink>={whatever-cuvs-was-built-against}' at runtime, and mixing

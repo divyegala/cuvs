@@ -33,7 +33,9 @@ cache:
         # cuTile and TileIRAS are PyPI-only build tools. Their CUDA components
         # are installed under the Python package namespace, alongside the conda toolchain.
         if [[ "${{ cuda_major }}" == "13" ]]; then
-          python -m pip install --no-cache-dir "cuda-tile[tileiras]"
+          python -m pip install --no-cache-dir \
+            "cuda-tile" \
+            "cuda-toolkit[tileiras]==${{ cuda_version }}.*"
         fi
 
         ./build.sh libcuvs bench-ann tests --allgpuarch --mnmg-tests --build-metrics=compile_lib --incl-cache-stats --no-nvtx -n
