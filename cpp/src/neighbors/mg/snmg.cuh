@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,7 @@
 #include <raft/core/copy.cuh>
 #include <raft/core/device_mdspan.hpp>
 #include <raft/core/host_mdspan.hpp>
+#include <raft/core/numpy_serializer.hpp>
 #include <raft/core/resource/multi_gpu.hpp>
 #include <raft/core/resource/nccl_comm.hpp>
 #include <raft/core/serialize.hpp>
@@ -586,7 +587,8 @@ void search(const raft::resources& clique,
         static_cast<const cuvs::neighbors::mg_search_params<ivf_pq::search_params>*>(search_params);
       search_mode      = mg_search_params->search_mode;
       n_rows_per_batch = mg_search_params->n_rows_per_batch;
-    } else if constexpr (std::is_same<AnnIndexType, cagra::index<T, IdxT>>::value) {
+    } else if constexpr (std::is_same<AnnIndexType, cagra::device_padded_index<T, IdxT>>::value ||
+                         std::is_same<AnnIndexType, cagra::device_standard_index<T, IdxT>>::value) {
       const cuvs::neighbors::mg_search_params<cagra::search_params>* mg_search_params =
         static_cast<const cuvs::neighbors::mg_search_params<cagra::search_params>*>(search_params);
       search_mode      = mg_search_params->search_mode;
@@ -665,7 +667,8 @@ void search(const raft::resources& clique,
         static_cast<const cuvs::neighbors::mg_search_params<ivf_pq::search_params>*>(search_params);
       merge_mode       = mg_search_params->merge_mode;
       n_rows_per_batch = mg_search_params->n_rows_per_batch;
-    } else if constexpr (std::is_same<AnnIndexType, cagra::index<T, IdxT>>::value) {
+    } else if constexpr (std::is_same<AnnIndexType, cagra::device_padded_index<T, IdxT>>::value ||
+                         std::is_same<AnnIndexType, cagra::device_standard_index<T, IdxT>>::value) {
       const cuvs::neighbors::mg_search_params<cagra::search_params>* mg_search_params =
         static_cast<const cuvs::neighbors::mg_search_params<cagra::search_params>*>(search_params);
       merge_mode       = mg_search_params->merge_mode;
@@ -738,7 +741,7 @@ void serialize(const raft::resources& clique,
   std::ofstream of(filename, std::ios::out | std::ios::binary);
   if (!of) { RAFT_FAIL("Cannot open file %s", filename.c_str()); }
 
-  std::string dtype_string = raft::detail::numpy_serializer::get_numpy_dtype<T>().to_string();
+  std::string dtype_string = raft::numpy_serializer::get_numpy_dtype<T>().to_string();
   dtype_string.resize(4);
   of << dtype_string;
 
@@ -762,6 +765,12 @@ void serialize(const raft::resources& clique,
 namespace cuvs::neighbors {
 using namespace cuvs::neighbors;
 using namespace raft;
+
+template <typename AnnIndexType, typename T, typename IdxT>
+mg_index<AnnIndexType, T, IdxT>::mg_index(const raft::resources& clique)
+  : mg_index(clique, cuvs::neighbors::REPLICATED)
+{
+}
 
 template <typename AnnIndexType, typename T, typename IdxT>
 mg_index<AnnIndexType, T, IdxT>::mg_index(const raft::resources& clique, distribution_mode mode)

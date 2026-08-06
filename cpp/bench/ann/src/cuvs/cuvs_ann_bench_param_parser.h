@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,6 +23,12 @@ extern template class cuvs::bench::cuvs_ivf_flat<int8_t, int64_t>;
 extern template class cuvs::bench::cuvs_ivf_pq<float, int64_t>;
 extern template class cuvs::bench::cuvs_ivf_pq<uint8_t, int64_t>;
 extern template class cuvs::bench::cuvs_ivf_pq<int8_t, int64_t>;
+#endif
+#if defined(CUVS_ANN_BENCH_USE_CUVS_IVF_RABITQ)
+#include "cuvs_ivf_rabitq_wrapper.h"
+#endif
+#ifdef CUVS_ANN_BENCH_USE_CUVS_IVF_RABITQ
+extern template class cuvs::bench::cuvs_ivf_rabitq<float, int64_t>;
 #endif
 #if defined(CUVS_ANN_BENCH_USE_CUVS_CAGRA) || defined(CUVS_ANN_BENCH_USE_CUVS_CAGRA_HNSWLIB) || \
   defined(CUVS_ANN_BENCH_USE_CUVS_CAGRA_DISKANN)
@@ -207,6 +213,47 @@ void parse_search_param(const nlohmann::json& conf,
 }
 #endif
 
+#if defined(CUVS_ANN_BENCH_USE_CUVS_IVF_RABITQ)
+template <typename T, typename IdxT>
+void parse_build_param(const nlohmann::json& conf,
+                       typename cuvs::bench::cuvs_ivf_rabitq<T, IdxT>::build_param& param)
+{
+  if (conf.contains("nlist")) { param.n_lists = conf.at("nlist"); }
+  if (conf.contains("niter")) { param.kmeans_n_iters = conf.at("niter"); }
+  if (conf.contains("max_points_per_cluster")) {
+    param.max_train_points_per_cluster = conf.at("max_points_per_cluster");
+  }
+  if (conf.contains("bits_per_dim")) { param.bits_per_dim = conf.at("bits_per_dim"); }
+  if (conf.contains("fast_quantize_flag")) {
+    param.fast_quantize_flag = conf.at("fast_quantize_flag");
+  }
+  if (conf.contains("force_streaming")) { param.force_streaming = conf.at("force_streaming"); }
+}
+
+template <typename T, typename IdxT>
+void parse_search_param(const nlohmann::json& conf,
+                        typename cuvs::bench::cuvs_ivf_rabitq<T, IdxT>::search_param& param)
+{
+  if (conf.contains("nprobe")) { param.rabitq_param.n_probes = conf.at("nprobe"); }
+
+  if (conf.contains("mode")) {
+    std::string mode = conf.at("mode");
+    if (mode == "lut16") {
+      param.rabitq_param.mode = cuvs::neighbors::ivf_rabitq::search_mode::LUT16;
+    } else if (mode == "lut32") {
+      param.rabitq_param.mode = cuvs::neighbors::ivf_rabitq::search_mode::LUT32;
+    } else if (mode == "quant4") {
+      param.rabitq_param.mode = cuvs::neighbors::ivf_rabitq::search_mode::QUANT4;
+    } else if (mode == "quant8") {
+      param.rabitq_param.mode = cuvs::neighbors::ivf_rabitq::search_mode::QUANT8;
+    } else {
+      throw std::runtime_error("mode: '" + mode +
+                               "', should be either 'lut16', 'lut32', 'quant4' or 'quant8'");
+    }
+  }
+}
+#endif
+
 #if defined(CUVS_ANN_BENCH_USE_CUVS_CAGRA) || defined(CUVS_ANN_BENCH_USE_CUVS_CAGRA_HNSWLIB) || \
   defined(CUVS_ANN_BENCH_USE_CUVS_MG) || defined(CUVS_ANN_BENCH_USE_CUVS_CAGRA_DISKANN)
 template <typename T, typename IdxT>
@@ -281,13 +328,6 @@ void parse_build_param(const nlohmann::json& conf, cuvs::neighbors::cagra::index
     // Only update the intermediate graph degree if it's invalid.
     params.intermediate_graph_degree =
       std::max(params.graph_degree, params.intermediate_graph_degree);
-  }
-
-  nlohmann::json comp_search_conf = collect_conf_with_prefix(conf, "compression_");
-  if (!comp_search_conf.empty()) {
-    auto vpq_pams = params.compression.value_or(cuvs::neighbors::vpq_params{});
-    parse_build_param(comp_search_conf, vpq_pams);
-    params.compression.emplace(vpq_pams);
   }
 
   if (conf.contains("guarantee_connectivity")) {
