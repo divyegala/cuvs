@@ -1,6 +1,5 @@
 [
   {
-    "python_executable": "../../../../../../tileiras13.4/.venv/bin/python",
     "_abi": [
       {
         "matrix_layout": "strict",
@@ -93,7 +92,6 @@
     ]
   },
   {
-    "python_executable": "../../../../../../tileiras13.4/.venv/bin/python",
     "_abi": [
       {
         "matrix_layout": "strict",
