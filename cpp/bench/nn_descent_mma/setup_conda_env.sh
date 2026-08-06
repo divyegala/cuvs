@@ -6,14 +6,13 @@ repo_root=$(git -C "${script_dir}" rev-parse --show-toplevel)
 source "${script_dir}/conda_helpers.sh"
 
 ENV_NAME=${ENV_NAME:-nn-descent-mma-opt}
-CUDA_LINE=${CUDA_LINE:-129}
 machine_arch=$(uname -m)
 case "${machine_arch}" in
   x86_64|aarch64) ;;
   *) printf 'Unsupported machine architecture: %s\n' "${machine_arch}" >&2; exit 2 ;;
 esac
 
-recipe="${repo_root}/conda/environments/all_cuda-${CUDA_LINE}_arch-${machine_arch}.yaml"
+recipe="${repo_root}/conda/environments/all_cuda-133_arch-${machine_arch}.yaml"
 if [[ ! -f "${recipe}" ]]; then
   printf 'Conda recipe does not exist: %s\n' "${recipe}" >&2
   exit 2

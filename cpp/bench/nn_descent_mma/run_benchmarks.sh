@@ -211,10 +211,10 @@ collect_instructions() {
   local library="${tree}/cpp/build/libcuvs.so"
   local symbols
   symbols=$("${cuobjdump_exe}" --list-text "${library}" 2>/dev/null \
-    | grep -E "local_join_kernel_(mma|wmma(_legacy)?|simt)" \
+    | grep -E "local_join_kernel_(tf32|wmma|simt)" \
     | sed -E "s/^.*x-//; s/\.sm_[^.]+\.elf\.bin$//" | sort -u | paste -sd, -)
   "${cuobjdump_exe}" --list-text "${library}" 2>/dev/null \
-    | grep -E "local_join_kernel_(mma|wmma(_legacy)?|simt)" \
+    | grep -E "local_join_kernel_(tf32|wmma|simt)" \
     >"${result_dir}/${prefix}-kernel-symbols.txt" || true
   if [[ -n "${symbols}" ]]; then
     "${cuobjdump_exe}" --dump-sass --function "${symbols}" "${library}" 2>/dev/null \

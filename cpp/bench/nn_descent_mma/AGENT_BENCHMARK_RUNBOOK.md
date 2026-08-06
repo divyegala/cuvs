@@ -1,4 +1,4 @@
-# NN-descent MMA benchmark handoff for SM90 and SM100
+# NN-descent TF32 benchmark handoff for SM90, SM100, SM120, and SM121
 
 ## Objective
 
@@ -7,7 +7,14 @@ Run two matched comparisons on one otherwise-idle GPU:
 1. `nn-descent-mma-opt` candidate TF32 versus `origin/main` FP32.
 2. `nn-descent-mma-opt` candidate FP16 versus `origin/main` FP16.
 
-The runner detects the installed GPU and chooses the build target automatically. On compute capability 9.0 it builds `90a-real`; on compute capability 10.0 it builds `100a-real`. Runtime dispatch inside cuVS then selects the appropriate NN-descent backend.
+The runner detects the installed GPU and chooses the build target automatically:
+
+- Compute capability 9.0: `90a-real`
+- Compute capability 10.0: `100a-real`
+- Compute capability 12.0: `120-real`
+- Compute capability 12.1: `121-real`
+
+Runtime dispatch inside cuVS then selects the appropriate fused TF32 backend: SM90 WGMMA, SM100 TCGen05, or portable warp-level TF32 MMA for SM120/SM121.
 
 The default full run uses 1,000,000 rows, graph degree 64, 20 iterations, five timed repetitions, and dimensions `16,64,128,256,512,786,1024,1536`. Both revisions receive identical inputs and parameters.
 
@@ -41,10 +48,10 @@ The helper searches for conda under these roots, in order:
 
 It recognizes `miniforge3`, `mambaforge`, `miniconda3`, and `anaconda3`. Set `CONDA_EXE=/absolute/path/to/conda` if the installation is elsewhere.
 
-Use the CUDA 12.9 all-development recipe and create the requested environment name:
+Use the CUDA 13.3 all-development recipe and create the requested environment name:
 
 ```bash
-CUDA_LINE=129 ENV_NAME=nn-descent-mma-opt \
+ENV_NAME=nn-descent-mma-opt \
   ./cpp/bench/nn_descent_mma/setup_conda_env.sh
 ```
 

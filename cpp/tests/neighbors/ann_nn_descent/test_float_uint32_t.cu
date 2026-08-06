@@ -11,7 +11,7 @@ namespace cuvs::neighbors::nn_descent {
 
 namespace {
 
-const std::vector<AnnNNDescentInputs> directMmaDispatchInputs{
+const std::vector<AnnNNDescentInputs> kernelDispatchInputs{
   // Direct TF32 WGMMA uses K=64 tiles. Cover exact and partial tiles across several dimensions.
   {512, 159, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
   {512, 160, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
@@ -21,7 +21,7 @@ const std::vector<AnnNNDescentInputs> directMmaDispatchInputs{
   {512, 256, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::TF32},
   {512, 257, 32, cuvs::distance::DistanceType::CosineExpanded, false, 0.90, DIST_COMP_DTYPE::TF32},
 
-  // FP16 uses the legacy two-stage kernel. Cover tiny, partial, exact, and large dimensions.
+  // FP16 uses the default two-phase WMMA kernel. Cover tiny, partial, exact, and large dimensions.
   {512, 7, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::FP16},
   {512, 65, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::FP16},
   {512, 127, 32, cuvs::distance::DistanceType::InnerProduct, false, 0.90, DIST_COMP_DTYPE::FP16},
@@ -37,7 +37,7 @@ const std::vector<AnnNNDescentInputs> directMmaDispatchInputs{
    0.90,
    DIST_COMP_DTYPE::FP16}};
 
-std::string directMmaDispatchName(const ::testing::TestParamInfo<AnnNNDescentInputs>& test_info)
+std::string kernelDispatchName(const ::testing::TestParamInfo<AnnNNDescentInputs>& test_info)
 {
   const auto& input      = test_info.param;
   const char* dtype_name = input.dist_comp_dtype == DIST_COMP_DTYPE::TF32 ? "TF32" : "FP16";
@@ -57,10 +57,10 @@ INSTANTIATE_TEST_CASE_P(AnnNNDescentTest, AnnNNDescentTestF_U32, ::testing::Valu
 INSTANTIATE_TEST_CASE_P(AnnNNDescentTF32MmaBoundaries,
                         AnnNNDescentTestF_U32,
                         ::testing::ValuesIn(tf32MmaBoundaryInputs));
-INSTANTIATE_TEST_CASE_P(AnnNNDescentDirectMmaDispatch,
+INSTANTIATE_TEST_CASE_P(AnnNNDescentKernelDispatch,
                         AnnNNDescentTestF_U32,
-                        ::testing::ValuesIn(directMmaDispatchInputs),
-                        directMmaDispatchName);
+                        ::testing::ValuesIn(kernelDispatchInputs),
+                        kernelDispatchName);
 INSTANTIATE_TEST_CASE_P(AnnNNDescentDistEpi,
                         AnnNNDescentTestDistEpiF_U32,
                         ::testing::ValuesIn(inputsDistEpilogue));

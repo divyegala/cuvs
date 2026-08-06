@@ -879,22 +879,22 @@ __launch_bounds__(BLOCK_SIZE, 4)
 __launch_bounds__(BLOCK_SIZE)
 #endif
 #endif
-  local_join_kernel_wmma_legacy(const Index_t* graph_new,
-                                const Index_t* rev_graph_new,
-                                const int2* sizes_new,
-                                const Index_t* graph_old,
-                                const Index_t* rev_graph_old,
-                                const int2* sizes_old,
-                                const int width,
-                                const Data_t* data,
-                                const int data_dim,
-                                ID_t* graph,
-                                DistData_t* dists,
-                                int graph_width,
-                                int* locks,
-                                DistData_t* l2_norms,
-                                cuvs::distance::DistanceType metric,
-                                DistEpilogue_t dist_epilogue)
+  local_join_kernel_wmma(const Index_t* graph_new,
+                         const Index_t* rev_graph_new,
+                         const int2* sizes_new,
+                         const Index_t* graph_old,
+                         const Index_t* rev_graph_old,
+                         const int2* sizes_old,
+                         const int width,
+                         const Data_t* data,
+                         const int data_dim,
+                         ID_t* graph,
+                         DistData_t* dists,
+                         int graph_width,
+                         int* locks,
+                         DistData_t* l2_norms,
+                         cuvs::distance::DistanceType metric,
+                         DistEpilogue_t dist_epilogue)
 {
 #if (__CUDA_ARCH__ >= 700)
   using namespace nvcuda;
@@ -1126,320 +1126,57 @@ __launch_bounds__(BLOCK_SIZE)
 #endif
 }
 
-constexpr int FEATURE_MMA_BLOCK_SIZE  = 128;
-constexpr int PORTABLE_MMA_BLOCK_SIZE = 512;
-constexpr int FUSED_DISTANCE_COLS           = MAX_NUM_BI_SAMPLES * 2;
-constexpr int FUSED_DISTANCE_LD             = skew_dim<float>(FUSED_DISTANCE_COLS);
+constexpr int SM90_TF32_BLOCK_SIZE     = 128;
+constexpr int SM100_TF32_BLOCK_SIZE    = 128;
+constexpr int PORTABLE_TF32_BLOCK_SIZE = 512;
+constexpr int FUSED_DISTANCE_COLS      = MAX_NUM_BI_SAMPLES * 2;
+constexpr int FUSED_DISTANCE_LD        = skew_dim<float>(FUSED_DISTANCE_COLS);
 
-template <typename Data_t, bool UseTf32>
-struct FusedMmaPolicy {
-  static_assert(!Byte<Data_t>, "Byte inputs use the legacy FP16-conversion WMMA path");
-  static constexpr bool IS_TF32 = UseTf32;
-  static constexpr int K        = UseTf32 ? 8 : 16;
-  static constexpr int K_TILE   = UseTf32 ? 64 : 128;
-  static constexpr int K_PAD    = UseTf32 ? 4 : 8;
-  static constexpr int K_LD     = K_TILE + K_PAD;
+struct Tf32MmaPolicy {
+  static constexpr int K      = 8;
+  static constexpr int K_TILE = 64;
+  static constexpr int K_PAD  = 4;
+  static constexpr int K_LD   = K_TILE + K_PAD;
 
-  using operand_t          = std::conditional_t<UseTf32, float, __half>;
-  using fragment_operand_t = std::conditional_t<UseTf32, nvcuda::wmma::precision::tf32, operand_t>;
+  using operand_t          = float;
+  using fragment_operand_t = nvcuda::wmma::precision::tf32;
   using accumulator_t      = float;
 };
 
-#include "nn_descent_tcgen05.cuh"
-
-#if defined(CUTE_ARCH_MMA_SM90A_ENABLED)
-template <typename Policy>
-CUTE_DEVICE auto make_sm90_tiled_mma()
-{
-  if constexpr (Policy::IS_TF32) {
-    return cute::make_tiled_mma(cute::SM90_64x128x8_F32TF32TF32_SS_TN{});
-  } else {
-    return cute::make_tiled_mma(
-      cute::SM90_64x128x16_F32F16F16_SS<cute::GMMA::Major::K, cute::GMMA::Major::K>{});
-  }
-}
-
-template <typename SmemTensor>
-CUTE_DEVICE void store_wgmma_u64(SmemTensor& smem, int row, int k, uint2 const& bits)
-{
-  auto* dst = &smem(row, k);
-  cutlass::arch::shared_store<8>(cute::cast_smem_ptr_to_uint(dst), &bits);
-}
-
-CUTE_DEVICE uint2 pack_tf32x2(float2 values)
-{
-  cute::tfloat32_t x{values.x};
-  cute::tfloat32_t y{values.y};
-  return uint2{x.raw(), y.raw()};
-}
-
-CUTE_DEVICE uint2 pack_fp16x4(float4 values)
-{
-  __half2 lo = __floats2half2_rn(values.x, values.y);
-  __half2 hi = __floats2half2_rn(values.z, values.w);
-  return uint2{cutlass::platform::bit_cast<unsigned>(lo),
-               cutlass::platform::bit_cast<unsigned>(hi)};
-}
-
-template <typename Policy, typename Data_t, typename Index_t>
-CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
-                                          const Data_t* data,
-                                          int data_dim,
-                                          const Index_t* new_neighbors,
-                                          int list_new_size,
-                                          const Index_t* old_neighbors,
-                                          int list_old_size)
-{
-  using element_t     = std::conditional_t<Policy::IS_TF32, cute::tfloat32_t, cute::half_t>;
-  using accumulator_t = typename Policy::accumulator_t;
-
-  constexpr auto smem_shape =
-    cute::make_shape(cute::Int<FUSED_DISTANCE_COLS>{}, cute::Int<Policy::K_TILE>{});
-  using SmemLayout =
-    decltype(cute::tile_to_shape(cute::GMMA::Layout_K_SW128_Atom<element_t>{}, smem_shape));
-
-  auto s_candidates =
-    cute::make_tensor(cute::make_smem_ptr(reinterpret_cast<element_t*>(workspace)), SmemLayout{});
-  auto s_a =
-    cute::local_tile(s_candidates,
-                     cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<Policy::K_TILE>{}),
-                     cute::make_coord(cute::_0{}, cute::_0{}));
-  auto s_c = cute::make_tensor(
-    cute::make_smem_ptr(reinterpret_cast<accumulator_t*>(workspace)),
-    cute::make_layout(
-      cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<FUSED_DISTANCE_COLS>{}),
-      cute::make_stride(cute::Int<FUSED_DISTANCE_LD>{}, cute::_1{})));
-
-  auto mma        = make_sm90_tiled_mma<Policy>();
-  auto thread_mma = mma.get_slice(threadIdx.x);
-  auto tCsA       = thread_mma.partition_A(s_a);
-  auto tCsB       = thread_mma.partition_B(s_candidates);
-  auto tCsC       = thread_mma.partition_C(s_c);
-  auto tCrA       = thread_mma.make_fragment_A(tCsA);
-  auto tCrB       = thread_mma.make_fragment_B(tCsB);
-  auto tCrC       = thread_mma.make_fragment_C(tCsC);
-  cute::clear(tCrC);
-
-  int warp_id = threadIdx.x / raft::warp_size();
-  int lane_id = threadIdx.x % raft::warp_size();
-
-  for (int data_base = 0; data_base < data_dim; data_base += Policy::K_TILE) {
-    int valid_dims = min(Policy::K_TILE, data_dim - data_base);
-    for (int candidate = warp_id; candidate < FUSED_DISTANCE_COLS; candidate += 4) {
-      bool is_new       = candidate < MAX_NUM_BI_SAMPLES;
-      int candidate_idx = is_new ? candidate : candidate - MAX_NUM_BI_SAMPLES;
-      bool is_active    = is_new ? candidate_idx < list_new_size : candidate_idx < list_old_size;
-      const Data_t* src = nullptr;
-
-      if (is_active) {
-        Index_t neighbor_id = is_new ? new_neighbors[candidate_idx] : old_neighbors[candidate_idx];
-        src = data + static_cast<size_t>(neighbor_id) * data_dim + data_base;
-      }
-
-      if constexpr (std::is_same_v<Data_t, float> && Policy::IS_TF32) {
-        int k0        = lane_id * 2;
-        float2 values = {};
-        if (is_active) {
-          if (k0 + 2 <= valid_dims &&
-              (reinterpret_cast<size_t>(src + k0) % alignof(float2)) == 0) {
-            values = *reinterpret_cast<const float2*>(src + k0);
-          } else {
-            if (k0 < valid_dims) { values.x = src[k0]; }
-            if (k0 + 1 < valid_dims) { values.y = src[k0 + 1]; }
-          }
-        }
-        store_wgmma_u64(s_candidates, candidate, k0, pack_tf32x2(values));
-      } else if constexpr (std::is_same_v<Data_t, float> && !Policy::IS_TF32) {
-        int k0        = lane_id * 4;
-        float4 values = {};
-        if (is_active) {
-          if (k0 + 4 <= valid_dims &&
-              (reinterpret_cast<size_t>(src + k0) % alignof(float4)) == 0) {
-            values = *reinterpret_cast<const float4*>(src + k0);
-          } else {
-            if (k0 < valid_dims) { values.x = src[k0]; }
-            if (k0 + 1 < valid_dims) { values.y = src[k0 + 1]; }
-            if (k0 + 2 < valid_dims) { values.z = src[k0 + 2]; }
-            if (k0 + 3 < valid_dims) { values.w = src[k0 + 3]; }
-          }
-        }
-        store_wgmma_u64(s_candidates, candidate, k0, pack_fp16x4(values));
-      } else {
-        constexpr int ELEMENTS_PER_LANE = Policy::K_TILE / raft::warp_size();
-        static_assert(ELEMENTS_PER_LANE * sizeof(element_t) == sizeof(uint2));
-        int k0 = lane_id * ELEMENTS_PER_LANE;
-        cutlass::Array<element_t, ELEMENTS_PER_LANE> converted;
-#pragma unroll
-        for (int i = 0; i < ELEMENTS_PER_LANE; ++i) {
-          float value = 0.0f;
-          if (is_active && k0 + i < valid_dims) {
-            value = static_cast<float>(src[k0 + i]);
-          }
-          converted[i] = element_t(value);
-        }
-        auto packed = cutlass::platform::bit_cast<uint2>(converted);
-        store_wgmma_u64(s_candidates, candidate, k0, packed);
-      }
-    }
-
-    cutlass::arch::fence_view_async_shared();
-    asm volatile("bar.sync 1, 128;" ::: "memory");
-    cute::warpgroup_fence_operand(tCrC);
-    cute::warpgroup_arrive();
-    cute::gemm(mma, tCrA, tCrB, tCrC);
-    cute::warpgroup_commit_batch();
-    cute::warpgroup_wait<0>();
-    cute::warpgroup_fence_operand(tCrC);
-    asm volatile("bar.sync 1, 128;" ::: "memory");
-  }
-
-  cute::copy(tCrC, tCsC);
-}
-#endif
-template <typename Policy, typename Data_t>
-__device__ __forceinline__ void load_mma_candidate(typename Policy::operand_t* dst,
-                                                   const Data_t* src,
-                                                   int valid_dims,
-                                                   int lane_id)
-{
-  for (int idx = lane_id; idx < Policy::K_TILE; idx += raft::warp_size()) {
-    if (idx < valid_dims) {
-      if constexpr (std::is_same_v<typename Policy::fragment_operand_t,
-                                   nvcuda::wmma::precision::tf32>) {
-        dst[idx] = nvcuda::wmma::__float_to_tf32(static_cast<float>(src[idx]));
-      } else {
-        dst[idx] = static_cast<typename Policy::operand_t>(src[idx]);
-      }
-    } else {
-      dst[idx] = typename Policy::operand_t{0};
-    }
-  }
-}
-
-template <int CtaThreads, typename Policy, typename Data_t, typename Index_t>
-__device__ __forceinline__ void compute_fused_mma_tile(typename Policy::operand_t* candidates,
-                                                       void* output,
-                                                       const Data_t* data,
-                                                       int data_dim,
-                                                       const Index_t* new_neighbors,
-                                                       int list_new_size,
-                                                       const Index_t* old_neighbors,
-                                                       int list_old_size)
-{
-  using namespace nvcuda;
-  using operand_t     = typename Policy::fragment_operand_t;
-  using accumulator_t = typename Policy::accumulator_t;
-
-  constexpr int NUM_MMA_WARPS      = CtaThreads / raft::warp_size();
-  constexpr int OUTPUT_ROW_TILES   = MAX_NUM_BI_SAMPLES / WMMA_M;
-  constexpr int OUTPUT_COL_TILES   = FUSED_DISTANCE_COLS / WMMA_N;
-  constexpr int WARPS_PER_ROW      = NUM_MMA_WARPS / OUTPUT_ROW_TILES;
-  constexpr int FRAGMENTS_PER_WARP = OUTPUT_COL_TILES / WARPS_PER_ROW;
-  static_assert(CtaThreads == FEATURE_MMA_BLOCK_SIZE || CtaThreads == PORTABLE_MMA_BLOCK_SIZE);
-  static_assert(NUM_MMA_WARPS == OUTPUT_ROW_TILES * WARPS_PER_ROW);
-  static_assert(OUTPUT_COL_TILES % WARPS_PER_ROW == 0);
-
-  int warp_id          = threadIdx.x / raft::warp_size();
-  int lane_id          = threadIdx.x % raft::warp_size();
-  int row_tile         = warp_id / WARPS_PER_ROW;
-  int active_fragments = list_old_size > 0 ? FRAGMENTS_PER_WARP : FRAGMENTS_PER_WARP / 2;
-  int first_col_tile   = (warp_id % WARPS_PER_ROW) * active_fragments;
-
-  wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, Policy::K, operand_t, wmma::row_major> a_frag;
-  wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, Policy::K, operand_t, wmma::col_major>
-    b_frag[FRAGMENTS_PER_WARP];
-  wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, Policy::K, accumulator_t>
-    accum[FRAGMENTS_PER_WARP];
-
-#pragma unroll
-  for (int fragment = 0; fragment < active_fragments; ++fragment) {
-    wmma::fill_fragment(accum[fragment], accumulator_t{0});
-  }
-
-  // Inactive rows remain inactive for the complete dot product. Initialize them once instead of
-  // rewriting their zero padding for every K tile.
-  for (int candidate = warp_id; candidate < FUSED_DISTANCE_COLS; candidate += NUM_MMA_WARPS) {
-    bool is_new       = candidate < MAX_NUM_BI_SAMPLES;
-    int candidate_idx = is_new ? candidate : candidate - MAX_NUM_BI_SAMPLES;
-    bool is_active    = is_new ? candidate_idx < list_new_size : candidate_idx < list_old_size;
-    if (!is_active) {
-      load_mma_candidate<Policy>(
-        candidates + candidate * Policy::K_LD, static_cast<const Data_t*>(nullptr), 0, lane_id);
-    }
-  }
-  __syncthreads();
-
-  for (int data_base = 0; data_base < data_dim; data_base += Policy::K_TILE) {
-    int valid_dims = min(Policy::K_TILE, data_dim - data_base);
-    for (int candidate = warp_id; candidate < FUSED_DISTANCE_COLS; candidate += NUM_MMA_WARPS) {
-      bool is_new       = candidate < MAX_NUM_BI_SAMPLES;
-      int candidate_idx = is_new ? candidate : candidate - MAX_NUM_BI_SAMPLES;
-      bool is_active    = is_new ? candidate_idx < list_new_size : candidate_idx < list_old_size;
-      if (is_active) {
-        Index_t neighbor_id = is_new ? new_neighbors[candidate_idx] : old_neighbors[candidate_idx];
-        const Data_t* src   = data + static_cast<size_t>(neighbor_id) * data_dim + data_base;
-        load_mma_candidate<Policy>(candidates + candidate * Policy::K_LD, src, valid_dims, lane_id);
-      }
-    }
-    __syncthreads();
-
-    for (int k_base = 0; k_base < Policy::K_TILE; k_base += Policy::K) {
-      wmma::load_matrix_sync(
-        a_frag, candidates + row_tile * WMMA_M * Policy::K_LD + k_base, Policy::K_LD);
-#pragma unroll
-      for (int fragment = 0; fragment < active_fragments; ++fragment) {
-        int col_tile = first_col_tile + fragment;
-        wmma::load_matrix_sync(
-          b_frag[fragment], candidates + col_tile * WMMA_N * Policy::K_LD + k_base, Policy::K_LD);
-        wmma::mma_sync(accum[fragment], a_frag, b_frag[fragment], accum[fragment]);
-      }
-    }
-    __syncthreads();
-  }
-
-  auto* typed_output = reinterpret_cast<accumulator_t*>(output);
-#pragma unroll
-  for (int fragment = 0; fragment < active_fragments; ++fragment) {
-    int col_tile = first_col_tile + fragment;
-    wmma::store_matrix_sync(
-      typed_output + row_tile * WMMA_M * FUSED_DISTANCE_LD + col_tile * WMMA_N,
-      accum[fragment],
-      FUSED_DISTANCE_LD,
-      wmma::mem_row_major);
-  }
-}
+#include "nn_descent_tf32_tcgen05.cuh"
+#include "nn_descent_tf32_wgmma.cuh"
+#include "nn_descent_tf32_wmma.cuh"
 
 // Computes new[64, K] x concat(new, old)^T[K, 128] as one logical CTA tile. On architectures
 // without a 64x128 instruction, portable MMA warps cooperatively compose it from 16x16 atoms.
-template <typename Data_t,
-          bool UseTf32,
-          int CtaThreads,
+template <int CtaThreads,
           typename Index_t,
           typename ID_t = InternalID_t<Index_t>,
           typename DistEpilogue_t>
-RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* graph_new,
-                                                                const Index_t* rev_graph_new,
-                                                                const int2* sizes_new,
-                                                                const Index_t* graph_old,
-                                                                const Index_t* rev_graph_old,
-                                                                const int2* sizes_old,
-                                                                const int width,
-                                                                const Data_t* data,
-                                                                const int data_dim,
-                                                                ID_t* graph,
-                                                                DistData_t* dists,
-                                                                int graph_width,
-                                                                int* locks,
-                                                                DistData_t* l2_norms,
-                                                                cuvs::distance::DistanceType metric,
-                                                                DistEpilogue_t dist_epilogue)
+RAFT_KERNEL __launch_bounds__(CtaThreads)
+  local_join_kernel_tf32(const Index_t* graph_new,
+                         const Index_t* rev_graph_new,
+                         const int2* sizes_new,
+                         const Index_t* graph_old,
+                         const Index_t* rev_graph_old,
+                         const int2* sizes_old,
+                         const int width,
+                         const float* data,
+                         const int data_dim,
+                         ID_t* graph,
+                         DistData_t* dists,
+                         int graph_width,
+                         int* locks,
+                         DistData_t* l2_norms,
+                         cuvs::distance::DistanceType metric,
+                         DistEpilogue_t dist_epilogue)
 {
 #if (__CUDA_ARCH__ >= 700)
-  using Policy    = FusedMmaPolicy<Data_t, UseTf32>;
+  using Policy    = Tf32MmaPolicy;
   using operand_t = typename Policy::operand_t;
 
 #if defined(CUTE_ARCH_TCGEN05_TMEM_ENABLED)
-  constexpr int INPUT_BYTES = Sm100MmaWorkspaceSize<Policy>::value;
+  constexpr int INPUT_BYTES = Sm100Tf32WorkspaceSize::value;
 #else
   constexpr int INPUT_BYTES =
     FUSED_DISTANCE_COLS * Policy::K_LD * static_cast<int>(sizeof(operand_t));
@@ -1509,44 +1246,27 @@ RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* g
   list_old_size = list_old_size2.x + s_unique_counter[1];
 
 #if defined(CUTE_ARCH_TCGEN05_TMEM_ENABLED)
-  compute_fused_tcgen05_tile<Policy>(s_work,
-                                     s_mma_barrier,
-                                     s_tmem_base_ptr,
-                                     data,
-                                     data_dim,
-                                     new_neighbors,
-                                     list_new_size,
-                                     old_neighbors,
-                                     list_old_size);
+  compute_tf32_tcgen05_tile(s_work,
+                            s_mma_barrier,
+                            s_tmem_base_ptr,
+                            data,
+                            data_dim,
+                            new_neighbors,
+                            list_new_size,
+                            old_neighbors,
+                            list_old_size);
 #elif defined(CUTE_ARCH_MMA_SM90A_ENABLED)
-  if (tx < FEATURE_MMA_BLOCK_SIZE) {
-    compute_fused_wgmma_tile<Policy>(
+  if (tx < SM90_TF32_BLOCK_SIZE) {
+    compute_tf32_wgmma_tile(
       s_work, data, data_dim, new_neighbors, list_new_size, old_neighbors, list_old_size);
   }
 #else
-  if constexpr (UseTf32) {
 #if (__CUDA_ARCH__ >= 800)
-    compute_fused_mma_tile<CtaThreads, Policy>(candidates,
-                                               s_work,
-                                               data,
-                                               data_dim,
-                                               new_neighbors,
-                                               list_new_size,
-                                               old_neighbors,
-                                               list_old_size);
+  compute_tf32_wmma_tile<CtaThreads>(
+    candidates, s_work, data, data_dim, new_neighbors, list_new_size, old_neighbors, list_old_size);
 #else
-    return;
+  return;
 #endif
-  } else {
-    compute_fused_mma_tile<CtaThreads, Policy>(candidates,
-                                               s_work,
-                                               data,
-                                               data_dim,
-                                               new_neighbors,
-                                               list_new_size,
-                                               old_neighbors,
-                                               list_old_size);
-  }
 #endif
   __syncthreads();
 
@@ -1934,8 +1654,8 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
 {
   raft::matrix::fill(res, dists_buffer_.view(), std::numeric_limits<float>::max());
 
-  // AUTO retains its historical FP32/FP16 choice and never selects TF32. All FP16 and byte
-  // inputs use the original two-phase WMMA kernel; explicit TF32 stays fused.
+  // AUTO retains its historical FP32/FP16 choice and never selects TF32. FP16 and byte inputs
+  // continue to use the default two-phase WMMA kernel; explicit TF32 selects the fused kernel.
   using DCT = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE;
   bool use_fp16_dist =
     std::is_same_v<input_t, float> && (build_config_.dist_comp_dtype == DCT::FP16 ||
@@ -1954,29 +1674,29 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
                   build_config_.metric == cuvs::distance::DistanceType::L1 ||
                   build_config_.metric == cuvs::distance::DistanceType::BitwiseHamming ||
                   (use_tf32_dist && compute_capability < 80);
-  bool use_feature_mma = compute_capability >= 90 && compute_capability < 120;
-  bool use_legacy_fp16 = std::is_same_v<input_t, half> || use_fp16_dist;
+  bool use_sm90_tf32    = compute_capability >= 90 && compute_capability < 100;
+  bool use_sm100_tf32   = compute_capability >= 100 && compute_capability < 120;
+  bool use_default_wmma = std::is_same_v<input_t, half> || use_fp16_dist;
 
   auto launch_kernel = [&](auto* typed_ptr) {
     using KernelData_t = std::remove_cv_t<std::remove_pointer_t<decltype(typed_ptr)>>;
-    auto launch_legacy = [&] {
-      local_join_kernel_wmma_legacy<<<nrow_, BLOCK_SIZE, 0, stream>>>(
-        graph_.h_graph_new.data_handle(),
-        h_rev_graph_new_.data_handle(),
-        d_list_sizes_new_.data_handle(),
-        h_graph_old_.data_handle(),
-        h_rev_graph_old_.data_handle(),
-        d_list_sizes_old_.data_handle(),
-        NUM_SAMPLES,
-        typed_ptr,
-        ndim_,
-        graph_buffer_.data_handle(),
-        dists_buffer_.data_handle(),
-        DEGREE_ON_DEVICE,
-        d_locks_.data_handle(),
-        l2_norms_.data_handle(),
-        build_config_.metric,
-        dist_epilogue);
+    auto launch_wmma   = [&] {
+      local_join_kernel_wmma<<<nrow_, BLOCK_SIZE, 0, stream>>>(graph_.h_graph_new.data_handle(),
+                                                               h_rev_graph_new_.data_handle(),
+                                                               d_list_sizes_new_.data_handle(),
+                                                               h_graph_old_.data_handle(),
+                                                               h_rev_graph_old_.data_handle(),
+                                                               d_list_sizes_old_.data_handle(),
+                                                               NUM_SAMPLES,
+                                                               typed_ptr,
+                                                               ndim_,
+                                                               graph_buffer_.data_handle(),
+                                                               dists_buffer_.data_handle(),
+                                                               DEGREE_ON_DEVICE,
+                                                               d_locks_.data_handle(),
+                                                               l2_norms_.data_handle(),
+                                                               build_config_.metric,
+                                                               dist_epilogue);
     };
 
     if (use_simt) {
@@ -1997,47 +1717,40 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
                                                                build_config_.metric,
                                                                dist_epilogue);
     } else if constexpr (Byte<KernelData_t>) {
-      launch_legacy();
-    } else if (use_legacy_fp16) {
-      launch_legacy();
-    } else {
-      auto launch_mma = [&](auto tf32_tag, auto cta_threads_tag) {
-        constexpr bool USE_TF32       = decltype(tf32_tag)::value;
-        constexpr int MMA_CTA_THREADS = decltype(cta_threads_tag)::value;
-        local_join_kernel_mma<KernelData_t, USE_TF32, MMA_CTA_THREADS>
-          <<<nrow_, MMA_CTA_THREADS, 0, stream>>>(graph_.h_graph_new.data_handle(),
-                                                  h_rev_graph_new_.data_handle(),
-                                                  d_list_sizes_new_.data_handle(),
-                                                  h_graph_old_.data_handle(),
-                                                  h_rev_graph_old_.data_handle(),
-                                                  d_list_sizes_old_.data_handle(),
-                                                  NUM_SAMPLES,
-                                                  typed_ptr,
-                                                  ndim_,
-                                                  graph_buffer_.data_handle(),
-                                                  dists_buffer_.data_handle(),
-                                                  DEGREE_ON_DEVICE,
-                                                  d_locks_.data_handle(),
-                                                  l2_norms_.data_handle(),
-                                                  build_config_.metric,
-                                                  dist_epilogue);
+      launch_wmma();
+    } else if (use_default_wmma) {
+      launch_wmma();
+    } else if constexpr (std::is_same_v<KernelData_t, float>) {
+      auto launch_tf32 = [&](auto cta_threads_tag) {
+        constexpr int TF32_CTA_THREADS = decltype(cta_threads_tag)::value;
+        local_join_kernel_tf32<TF32_CTA_THREADS>
+          <<<nrow_, TF32_CTA_THREADS, 0, stream>>>(graph_.h_graph_new.data_handle(),
+                                                   h_rev_graph_new_.data_handle(),
+                                                   d_list_sizes_new_.data_handle(),
+                                                   h_graph_old_.data_handle(),
+                                                   h_rev_graph_old_.data_handle(),
+                                                   d_list_sizes_old_.data_handle(),
+                                                   NUM_SAMPLES,
+                                                   typed_ptr,
+                                                   ndim_,
+                                                   graph_buffer_.data_handle(),
+                                                   dists_buffer_.data_handle(),
+                                                   DEGREE_ON_DEVICE,
+                                                   d_locks_.data_handle(),
+                                                   l2_norms_.data_handle(),
+                                                   build_config_.metric,
+                                                   dist_epilogue);
       };
-      auto launch_selected_mma = [&](auto tf32_tag) {
-        if (use_feature_mma) {
-          launch_mma(tf32_tag, std::integral_constant<int, FEATURE_MMA_BLOCK_SIZE>{});
-        } else {
-          launch_mma(tf32_tag, std::integral_constant<int, PORTABLE_MMA_BLOCK_SIZE>{});
-        }
-      };
-      if constexpr (std::is_same_v<KernelData_t, float>) {
-        if (use_tf32_dist) {
-          launch_selected_mma(std::true_type{});
-        } else {
-          launch_selected_mma(std::false_type{});
-        }
+      if (use_sm90_tf32) {
+        launch_tf32(std::integral_constant<int, SM90_TF32_BLOCK_SIZE>{});
+      } else if (use_sm100_tf32) {
+        launch_tf32(std::integral_constant<int, SM100_TF32_BLOCK_SIZE>{});
       } else {
-        launch_selected_mma(std::false_type{});
+        launch_tf32(std::integral_constant<int, PORTABLE_TF32_BLOCK_SIZE>{});
       }
+    } else {
+      // All currently supported non-float inputs use the default WMMA path.
+      launch_wmma();
     }
     RAFT_CUDA_TRY(cudaPeekAtLastError());
   };
