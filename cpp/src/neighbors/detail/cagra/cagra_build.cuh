@@ -2315,8 +2315,15 @@ auto build_cagra_host_graph_from_knn_params(raft::resources const& res,
         "nn-descent graph_degree.",
         nn_descent_params.graph_degree,
         intermediate_degree);
-      nn_descent_params =
-        cagra::graph_build_params::nn_descent_params(intermediate_degree, params.metric);
+      nn_descent_params.graph_degree = intermediate_degree;
+    }
+    if (nn_descent_params.intermediate_graph_degree < intermediate_degree) {
+      RAFT_LOG_WARN(
+        "Intermediate graph degree (%lu) for nn-descent cannot be smaller than cagra "
+        "intermediate graph degree (%lu), aligning nn-descent intermediate_graph_degree.",
+        nn_descent_params.intermediate_graph_degree,
+        intermediate_degree);
+      nn_descent_params.intermediate_graph_degree = intermediate_degree;
     }
 
     nn_descent_params.return_distances = false;

@@ -152,4 +152,45 @@ TEST(AnnCagraMultiPartition, MixedGraphDegreeRejected)
                                        cagra::search_params{});
 }
 
+TEST(AnnCagraNnDescentParams, AlignsInternalDegreeWithCagraGraph)
+{
+  constexpr int64_t n_rows = 256;
+  constexpr int64_t dim    = 16;
+  constexpr int64_t degree = 32;
+
+  raft::resources res;
+  auto stream  = raft::resource::get_cuda_stream(res);
+  auto dataset = raft::make_device_matrix<float, int64_t>(res, n_rows, dim);
+  raft::random::RngState rng(1234ULL);
+  raft::random::uniform(res, rng, dataset.data_handle(), dataset.size(), -1.0f, 1.0f);
+
+  cagra::index_params params;
+  params.graph_degree              = degree;
+  params.intermediate_graph_degree = degree * 2;
+
+  graph_build_params::nn_descent_params nn_descent_params(degree / 2, params.metric);
+  nn_descent_params.intermediate_graph_degree = degree / 2;
+  nn_descent_params.max_iterations            = 2;
+  nn_descent_params.dist_comp_dtype           = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE::TF32;
+  params.graph_build_params                   = nn_descent_params;
+
+  cuvs::neighbors::test::padded_device_matrix_for_cagra<float> padded(
+    res, raft::make_const_mdspan(dataset.view()));
+  auto index = cagra::build(res, params, padded.view);
+
+  ASSERT_EQ(index.graph().extent(0), n_rows);
+  ASSERT_EQ(index.graph().extent(1), degree);
+
+  auto host_graph = raft::make_host_matrix<uint32_t, int64_t>(n_rows, degree);
+  raft::copy(host_graph.data_handle(), index.graph().data_handle(), index.graph().size(), stream);
+  raft::resource::sync_stream(res);
+
+  for (int64_t row = 0; row < n_rows; ++row) {
+    for (int64_t col = 0; col < degree; ++col) {
+      ASSERT_LT(host_graph(row, col), n_rows);
+      EXPECT_NE(host_graph(row, col), row);
+    }
+  }
+}
+
 }  // namespace cuvs::neighbors::cagra
