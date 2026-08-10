@@ -76,6 +76,16 @@
         "artifact_ext": "cubin",
         "artifact_basename": "@data_type@_@index_abbrev@_@abi_abbrev@_@gpu_code@",
         "register": "cubin",
+        "gpu_code": "sm_89",
+        "cc_major": 8,
+        "cc_minor": 9,
+        "arch_tag": "cutile_arch_8_9"
+      },
+      {
+        "output_format": "cubin",
+        "artifact_ext": "cubin",
+        "artifact_basename": "@data_type@_@index_abbrev@_@abi_abbrev@_@gpu_code@",
+        "register": "cubin",
         "gpu_code": "sm_90",
         "cc_major": 9,
         "cc_minor": 0,
