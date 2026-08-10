@@ -1126,6 +1126,7 @@ __launch_bounds__(BLOCK_SIZE)
 #endif
 }
 
+constexpr int SM90_MMA_BLOCK_SIZE     = 256;
 constexpr int FEATURE_MMA_BLOCK_SIZE  = 128;
 constexpr int PORTABLE_MMA_BLOCK_SIZE = 512;
 constexpr int FUSED_DISTANCE_COLS           = MAX_NUM_BI_SAMPLES * 2;
@@ -1152,10 +1153,10 @@ template <typename Policy>
 CUTE_DEVICE auto make_sm90_tiled_mma()
 {
   if constexpr (Policy::IS_TF32) {
-    return cute::make_tiled_mma(cute::SM90_64x128x8_F32TF32TF32_SS_TN{});
+    return cute::make_tiled_mma(cute::SM90_64x64x8_F32TF32TF32_SS_TN{});
   } else {
     return cute::make_tiled_mma(
-      cute::SM90_64x128x16_F32F16F16_SS<cute::GMMA::Major::K, cute::GMMA::Major::K>{});
+      cute::SM90_64x64x16_F32F16F16_SS<cute::GMMA::Major::K, cute::GMMA::Major::K>{});
   }
 }
 
@@ -1200,32 +1201,56 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
 
   auto s_candidates =
     cute::make_tensor(cute::make_smem_ptr(reinterpret_cast<element_t*>(workspace)), SmemLayout{});
-  auto s_a =
-    cute::local_tile(s_candidates,
-                     cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<Policy::K_TILE>{}),
-                     cute::make_coord(cute::_0{}, cute::_0{}));
+  // Two warpgroups split N=128 into independent N=64 accumulators. All eight warps
+  // cooperatively gather the shared new/old stage, and both groups reuse its new half as A.
+  constexpr int WARP_GROUP_THREADS = 128;
+  static_assert(SM90_MMA_BLOCK_SIZE == 2 * WARP_GROUP_THREADS);
+  int warp_group_id   = threadIdx.x / WARP_GROUP_THREADS;
+  int thread_in_group = threadIdx.x % WARP_GROUP_THREADS;
+
+  constexpr auto n64_k_shape =
+    cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<Policy::K_TILE>{});
+  auto s_a = cute::local_tile(
+    s_candidates, n64_k_shape, cute::make_coord(cute::_0{}, cute::_0{}));
+  auto s_b = cute::local_tile(
+    s_candidates, n64_k_shape, cute::make_coord(warp_group_id, cute::_0{}));
   auto s_c = cute::make_tensor(
     cute::make_smem_ptr(reinterpret_cast<accumulator_t*>(workspace)),
     cute::make_layout(
       cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<FUSED_DISTANCE_COLS>{}),
       cute::make_stride(cute::Int<FUSED_DISTANCE_LD>{}, cute::_1{})));
+  constexpr auto n64_n64_shape = cute::make_shape(
+    cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<MAX_NUM_BI_SAMPLES>{});
+  auto s_c_tile = cute::local_tile(
+    s_c, n64_n64_shape, cute::make_coord(cute::_0{}, warp_group_id));
 
   auto mma        = make_sm90_tiled_mma<Policy>();
-  auto thread_mma = mma.get_slice(threadIdx.x);
+  auto thread_mma = mma.get_slice(thread_in_group);
   auto tCsA       = thread_mma.partition_A(s_a);
-  auto tCsB       = thread_mma.partition_B(s_candidates);
-  auto tCsC       = thread_mma.partition_C(s_c);
+  auto tCsB       = thread_mma.partition_B(s_b);
+  auto tCsC       = thread_mma.partition_C(s_c_tile);
   auto tCrA       = thread_mma.make_fragment_A(tCsA);
   auto tCrB       = thread_mma.make_fragment_B(tCsB);
   auto tCrC       = thread_mma.make_fragment_C(tCsC);
   cute::clear(tCrC);
 
-  int warp_id = threadIdx.x / raft::warp_size();
-  int lane_id = threadIdx.x % raft::warp_size();
+  constexpr int ELEMENTS_PER_LANE = sizeof(uint2) / sizeof(element_t);
+  constexpr int LANES_PER_ROW     = Policy::K_TILE / ELEMENTS_PER_LANE;
+  constexpr int ROWS_PER_WARP     = raft::warp_size() / LANES_PER_ROW;
+  static_assert(Policy::K_TILE % ELEMENTS_PER_LANE == 0);
+  static_assert(LANES_PER_ROW <= raft::warp_size() &&
+                raft::warp_size() % LANES_PER_ROW == 0);
+
+  int warp_id     = threadIdx.x / raft::warp_size();
+  int lane_id     = threadIdx.x % raft::warp_size();
+  int row_in_warp = lane_id / LANES_PER_ROW;
+  int row_lane    = lane_id % LANES_PER_ROW;
 
   for (int data_base = 0; data_base < data_dim; data_base += Policy::K_TILE) {
     int valid_dims = min(Policy::K_TILE, data_dim - data_base);
-    for (int candidate = warp_id; candidate < FUSED_DISTANCE_COLS; candidate += 4) {
+    for (int candidate = warp_id * ROWS_PER_WARP + row_in_warp;
+         candidate < FUSED_DISTANCE_COLS;
+         candidate += (SM90_MMA_BLOCK_SIZE / raft::warp_size()) * ROWS_PER_WARP) {
       bool is_new       = candidate < MAX_NUM_BI_SAMPLES;
       int candidate_idx = is_new ? candidate : candidate - MAX_NUM_BI_SAMPLES;
       bool is_active    = is_new ? candidate_idx < list_new_size : candidate_idx < list_old_size;
@@ -1237,7 +1262,7 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
       }
 
       if constexpr (std::is_same_v<Data_t, float> && Policy::IS_TF32) {
-        int k0        = lane_id * 2;
+        int k0        = row_lane * 2;
         float2 values = {};
         if (is_active) {
           if (k0 + 2 <= valid_dims &&
@@ -1250,7 +1275,7 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
         }
         store_wgmma_u64(s_candidates, candidate, k0, pack_tf32x2(values));
       } else if constexpr (std::is_same_v<Data_t, float> && !Policy::IS_TF32) {
-        int k0        = lane_id * 4;
+        int k0        = row_lane * 4;
         float4 values = {};
         if (is_active) {
           if (k0 + 4 <= valid_dims &&
@@ -1264,10 +1289,26 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
           }
         }
         store_wgmma_u64(s_candidates, candidate, k0, pack_fp16x4(values));
+      } else if constexpr (std::is_same_v<Data_t, half> && !Policy::IS_TF32) {
+        int k0      = row_lane * 4;
+        uint2 packed{};
+        if (is_active) {
+          if (k0 + 4 <= valid_dims &&
+              (reinterpret_cast<size_t>(src + k0) % alignof(uint2)) == 0) {
+            packed = *reinterpret_cast<const uint2*>(src + k0);
+          } else {
+            cutlass::Array<half, 4> values{};
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+              if (k0 + i < valid_dims) { values[i] = src[k0 + i]; }
+            }
+            packed = cutlass::platform::bit_cast<uint2>(values);
+          }
+        }
+        store_wgmma_u64(s_candidates, candidate, k0, packed);
       } else {
-        constexpr int ELEMENTS_PER_LANE = Policy::K_TILE / raft::warp_size();
         static_assert(ELEMENTS_PER_LANE * sizeof(element_t) == sizeof(uint2));
-        int k0 = lane_id * ELEMENTS_PER_LANE;
+        int k0 = row_lane * ELEMENTS_PER_LANE;
         cutlass::Array<element_t, ELEMENTS_PER_LANE> converted;
 #pragma unroll
         for (int i = 0; i < ELEMENTS_PER_LANE; ++i) {
@@ -1283,14 +1324,16 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
     }
 
     cutlass::arch::fence_view_async_shared();
-    asm volatile("bar.sync 1, 128;" ::: "memory");
+    asm volatile("bar.sync 1, 256;" ::: "memory");
+    // Always issue both halves. Inactive old rows were zero-filled above; keeping this
+    // sequence uniform avoids compiler-inserted warpgroup dependency serialization.
     cute::warpgroup_fence_operand(tCrC);
     cute::warpgroup_arrive();
     cute::gemm(mma, tCrA, tCrB, tCrC);
     cute::warpgroup_commit_batch();
     cute::warpgroup_wait<0>();
     cute::warpgroup_fence_operand(tCrC);
-    asm volatile("bar.sync 1, 128;" ::: "memory");
+    asm volatile("bar.sync 1, 256;" ::: "memory");
   }
 
   cute::copy(tCrC, tCsC);
@@ -1335,7 +1378,8 @@ __device__ __forceinline__ void compute_fused_mma_tile(typename Policy::operand_
   constexpr int OUTPUT_COL_TILES   = FUSED_DISTANCE_COLS / WMMA_N;
   constexpr int WARPS_PER_ROW      = NUM_MMA_WARPS / OUTPUT_ROW_TILES;
   constexpr int FRAGMENTS_PER_WARP = OUTPUT_COL_TILES / WARPS_PER_ROW;
-  static_assert(CtaThreads == FEATURE_MMA_BLOCK_SIZE || CtaThreads == PORTABLE_MMA_BLOCK_SIZE);
+  static_assert(CtaThreads == SM90_MMA_BLOCK_SIZE || CtaThreads == FEATURE_MMA_BLOCK_SIZE ||
+                CtaThreads == PORTABLE_MMA_BLOCK_SIZE);
   static_assert(NUM_MMA_WARPS == OUTPUT_ROW_TILES * WARPS_PER_ROW);
   static_assert(OUTPUT_COL_TILES % WARPS_PER_ROW == 0);
 
@@ -1519,7 +1563,7 @@ RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* g
                                      old_neighbors,
                                      list_old_size);
 #elif defined(CUTE_ARCH_MMA_SM90A_ENABLED)
-  if (tx < FEATURE_MMA_BLOCK_SIZE) {
+  if (tx < SM90_MMA_BLOCK_SIZE) {
     compute_fused_wgmma_tile<Policy>(
       s_work, data, data_dim, new_neighbors, list_new_size, old_neighbors, list_old_size);
   }
@@ -1934,8 +1978,8 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
 {
   raft::matrix::fill(res, dists_buffer_.view(), std::numeric_limits<float>::max());
 
-  // AUTO retains its historical FP32/FP16 choice and never selects TF32. All FP16 and byte
-  // inputs use the original two-phase WMMA kernel; explicit TF32 stays fused.
+  // AUTO retains its historical FP32/FP16 choice and never selects TF32. SM90 uses the fused
+  // WGMMA kernel for explicit/automatic FP16; other architectures and byte inputs use legacy WMMA.
   using DCT = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE;
   bool use_fp16_dist =
     std::is_same_v<input_t, float> && (build_config_.dist_comp_dtype == DCT::FP16 ||
@@ -1955,7 +1999,8 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
                   build_config_.metric == cuvs::distance::DistanceType::BitwiseHamming ||
                   (use_tf32_dist && compute_capability < 80);
   bool use_feature_mma = compute_capability >= 90 && compute_capability < 120;
-  bool use_legacy_fp16 = std::is_same_v<input_t, half> || use_fp16_dist;
+  bool use_sm90_fp16   = compute_capability >= 90 && compute_capability < 100;
+  bool use_legacy_fp16 = !use_sm90_fp16 && (std::is_same_v<input_t, half> || use_fp16_dist);
 
   auto launch_kernel = [&](auto* typed_ptr) {
     using KernelData_t = std::remove_cv_t<std::remove_pointer_t<decltype(typed_ptr)>>;
@@ -2023,7 +2068,9 @@ void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_
                                                   dist_epilogue);
       };
       auto launch_selected_mma = [&](auto tf32_tag) {
-        if (use_feature_mma) {
+        if (compute_capability >= 90 && compute_capability < 100) {
+          launch_mma(tf32_tag, std::integral_constant<int, SM90_MMA_BLOCK_SIZE>{});
+        } else if (use_feature_mma) {
           launch_mma(tf32_tag, std::integral_constant<int, FEATURE_MMA_BLOCK_SIZE>{});
         } else {
           launch_mma(tf32_tag, std::integral_constant<int, PORTABLE_MMA_BLOCK_SIZE>{});
