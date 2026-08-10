@@ -1,0 +1,35 @@
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaIfLb0ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SA_PK4int2SA_SA_SD_iPKT_iPT3_PfiPiSJ_NS_8distance12DistanceTypeET4_:
+  REG:63 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaIfLb1ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SA_PK4int2SA_SA_SD_iPKT_iPT3_PfiPiSJ_NS_8distance12DistanceTypeET4_:
+  REG:72 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaI6__halfLb0ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SB_PK4int2SB_SB_SE_iPKT_iPT3_PfiPiSK_NS_8distance12DistanceTypeET4_:
+  REG:61 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaI6__halfLb0ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SB_PK4int2SB_SB_SE_iPKT_iPT3_PfiPiSK_NS_8distance12DistanceTypeET4_:
+  REG:61 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaI6__halfLb0ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SB_PK4int2SB_SB_SE_iPKT_iPT3_PfiPiSK_NS_8distance12DistanceTypeET4_:
+  REG:61 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaI6__halfLb0ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SB_PK4int2SB_SB_SE_iPKT_iPT3_PfiPiSK_NS_8distance12DistanceTypeET4_:
+  REG:61 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaIfLb0ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SA_PK4int2SA_SA_SD_iPKT_iPT3_PfiPiSJ_NS_8distance12DistanceTypeET4_:
+  REG:63 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaIfLb1ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SA_PK4int2SA_SA_SD_iPKT_iPT3_PfiPiSJ_NS_8distance12DistanceTypeET4_:
+  REG:72 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaI6__halfLb0ELi256EiNS2_12InternalID_tIiEEN4raft11identity_opEEEvPKT2_SB_PK4int2SB_SB_SE_iPKT_iPT3_PfiPiSK_NS_8distance12DistanceTypeET4_:
+  REG:61 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:645 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaIfLb0ELi256EiNS2_12InternalID_tIiEENS0_6detail12reachability23ReachabilityPostProcessIifEEEEvPKT2_SC_PK4int2SC_SC_SF_iPKT_iPT3_PfiPiSL_NS_8distance12DistanceTypeET4_:
+  REG:63 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:672 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaIfLb1ELi256EiNS2_12InternalID_tIiEENS0_6detail12reachability23ReachabilityPostProcessIifEEEEvPKT2_SC_PK4int2SC_SC_SF_iPKT_iPT3_PfiPiSL_NS_8distance12DistanceTypeET4_:
+  REG:66 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:672 TEXTURE:0 SURFACE:0 SAMPLER:0
+--
+ Function _ZN4cuvs9neighbors10nn_descent6detail21local_join_kernel_mmaI6__halfLb0ELi256EiNS2_12InternalID_tIiEENS0_6detail12reachability23ReachabilityPostProcessIifEEEEvPKT2_SD_PK4int2SD_SD_SG_iPKT_iPT3_PfiPiSM_NS_8distance12DistanceTypeET4_:
+  REG:61 STACK:0 SHARED:67088 LOCAL:0 CONSTANT[0]:672 TEXTURE:0 SURFACE:0 SAMPLER:0

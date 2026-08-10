@@ -1,0 +1,16 @@
+candidate,tf32,rows=1000000,dim=16,degree=64,iterations=20,median_ms=6580.001,mean_ms=6586.465,samples_ms=6541.318;6580.001;6638.076;
+candidate,fp16,rows=1000000,dim=16,degree=64,iterations=20,median_ms=6675.772,mean_ms=6649.443,samples_ms=6593.893;6675.772;6678.664;
+candidate,tf32,rows=1000000,dim=64,degree=64,iterations=20,median_ms=6686.010,mean_ms=6639.287,samples_ms=6494.725;6686.010;6737.126;
+candidate,fp16,rows=1000000,dim=64,degree=64,iterations=20,median_ms=6713.251,mean_ms=6721.632,samples_ms=6676.714;6713.251;6774.932;
+candidate,tf32,rows=1000000,dim=128,degree=64,iterations=20,median_ms=6761.062,mean_ms=6783.430,samples_ms=6710.468;6761.062;6878.759;
+candidate,fp16,rows=1000000,dim=128,degree=64,iterations=20,median_ms=6802.413,mean_ms=6793.238,samples_ms=6733.499;6802.413;6843.802;
+candidate,tf32,rows=1000000,dim=256,degree=64,iterations=20,median_ms=7066.412,mean_ms=7044.001,samples_ms=6965.875;7066.412;7099.715;
+candidate,fp16,rows=1000000,dim=256,degree=64,iterations=20,median_ms=6866.430,mean_ms=6859.980,samples_ms=6786.238;6866.430;6927.272;
+candidate,tf32,rows=1000000,dim=512,degree=64,iterations=20,median_ms=7296.783,mean_ms=7281.295,samples_ms=7231.865;7296.783;7315.236;
+candidate,fp16,rows=1000000,dim=512,degree=64,iterations=20,median_ms=7098.261,mean_ms=7127.422,samples_ms=7096.048;7098.261;7187.958;
+candidate,tf32,rows=1000000,dim=786,degree=64,iterations=20,median_ms=7615.376,mean_ms=7624.793,samples_ms=7559.028;7615.376;7699.976;
+candidate,fp16,rows=1000000,dim=786,degree=64,iterations=20,median_ms=7317.020,mean_ms=7349.766,samples_ms=7289.187;7317.020;7443.092;
+candidate,tf32,rows=1000000,dim=1024,degree=64,iterations=20,median_ms=7648.509,mean_ms=7674.852,samples_ms=7599.616;7648.509;7776.431;
+candidate,fp16,rows=1000000,dim=1024,degree=64,iterations=20,median_ms=7412.773,mean_ms=7421.234,samples_ms=7401.869;7412.773;7449.061;
+candidate,tf32,rows=1000000,dim=1536,degree=64,iterations=20,median_ms=8107.263,mean_ms=8120.562,samples_ms=8084.721;8107.263;8169.702;
+candidate,fp16,rows=1000000,dim=1536,degree=64,iterations=20,median_ms=7542.120,mean_ms=7563.273,samples_ms=7492.454;7542.120;7655.244;
