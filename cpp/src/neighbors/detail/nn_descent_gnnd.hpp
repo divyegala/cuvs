@@ -24,6 +24,17 @@ using DistData_t = float;
 constexpr int DEGREE_ON_DEVICE{32};
 constexpr int SEGMENT_SIZE{32};
 constexpr int counter_interval{100};
+
+constexpr bool is_sm90_tf32_virtual_arch(int virtual_arch)
+{
+  return virtual_arch >= 900 && virtual_arch < 1000;
+}
+
+constexpr bool is_sm100_tf32_virtual_arch(int virtual_arch)
+{
+  return virtual_arch >= 1000 && virtual_arch < 1200;
+}
+
 template <typename Index_t>
 struct InternalID_t;
 
@@ -216,8 +227,23 @@ class CUVS_EXPORT GNND {
                          int2* list_sizes,
                          cudaStream_t stream = 0);
 
+  enum class JoinBackend {
+    SIMT,
+    WMMA,
+    TF32_SM90,
+    TF32_SM100,
+    TF32_PORTABLE,
+  };
+
   template <typename DistEpilogue_t>
   void local_join(cudaStream_t stream = 0, DistEpilogue_t dist_epilogue = DistEpilogue_t{});
+
+  template <typename DistEpilogue_t>
+  void local_join(cudaStream_t stream,
+                  JoinBackend join_backend,
+                  DistEpilogue_t dist_epilogue = DistEpilogue_t{});
+
+  JoinBackend resolve_join_backend() const;
 
   raft::resources const& res;
 

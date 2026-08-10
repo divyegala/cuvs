@@ -47,6 +47,20 @@ std::string kernelDispatchName(const ::testing::TestParamInfo<AnnNNDescentInputs
 }
 
 }  // namespace
+
+TEST(NNDescentTf32DispatchPolicy, SelectsBackendFromVirtualImage)
+{
+  EXPECT_FALSE(detail::is_sm90_tf32_virtual_arch(899));
+  EXPECT_TRUE(detail::is_sm90_tf32_virtual_arch(900));
+  EXPECT_TRUE(detail::is_sm90_tf32_virtual_arch(999));
+  EXPECT_FALSE(detail::is_sm90_tf32_virtual_arch(1000));
+
+  EXPECT_FALSE(detail::is_sm100_tf32_virtual_arch(999));
+  EXPECT_TRUE(detail::is_sm100_tf32_virtual_arch(1000));
+  EXPECT_TRUE(detail::is_sm100_tf32_virtual_arch(1199));
+  EXPECT_FALSE(detail::is_sm100_tf32_virtual_arch(1200));
+}
+
 typedef AnnNNDescentTest<float, float, std::uint32_t> AnnNNDescentTestF_U32;
 TEST_P(AnnNNDescentTestF_U32, AnnNNDescent) { this->testNNDescent(); }
 

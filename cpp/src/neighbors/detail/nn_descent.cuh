@@ -1649,34 +1649,89 @@ void GNND<Data_t, Index_t>::add_reverse_edges(Index_t* graph_ptr,
 }
 
 template <typename Data_t, typename Index_t>
-template <typename DistEpilogue_t>
-void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_epilogue)
+auto GNND<Data_t, Index_t>::resolve_join_backend() const -> JoinBackend
 {
-  raft::matrix::fill(res, dists_buffer_.view(), std::numeric_limits<float>::max());
-
-  // AUTO retains its historical FP32/FP16 choice and never selects TF32. FP16 and byte inputs
-  // continue to use the default two-phase WMMA kernel; explicit TF32 selects the fused kernel.
-  using DCT = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE;
-  bool use_fp16_dist =
-    std::is_same_v<input_t, float> && (build_config_.dist_comp_dtype == DCT::FP16 ||
-                                       (build_config_.dist_comp_dtype == DCT::AUTO && ndim_ > 16));
-  bool use_tf32_dist = std::is_same_v<input_t, float> && build_config_.dist_comp_dtype == DCT::TF32;
-
   int device;
   int compute_major;
   int compute_minor;
   RAFT_CUDA_TRY(cudaGetDevice(&device));
   RAFT_CUDA_TRY(cudaDeviceGetAttribute(&compute_major, cudaDevAttrComputeCapabilityMajor, device));
   RAFT_CUDA_TRY(cudaDeviceGetAttribute(&compute_minor, cudaDevAttrComputeCapabilityMinor, device));
-  int compute_capability = compute_major * 10 + compute_minor;
+  int physical_compute_capability = compute_major * 10 + compute_minor;
 
-  bool use_simt = (std::is_same_v<input_t, float> && !use_fp16_dist && !use_tf32_dist) ||
-                  build_config_.metric == cuvs::distance::DistanceType::L1 ||
-                  build_config_.metric == cuvs::distance::DistanceType::BitwiseHamming ||
-                  (use_tf32_dist && compute_capability < 80);
-  bool use_sm90_tf32    = compute_capability >= 90 && compute_capability < 100;
-  bool use_sm100_tf32   = compute_capability >= 100 && compute_capability < 120;
-  bool use_default_wmma = std::is_same_v<input_t, half> || use_fp16_dist;
+  auto kernel             = compute_l2_norms_kernel<input_t>;
+  void* kernel_ptr        = reinterpret_cast<void*>(kernel);
+  int kernel_virtual_arch = raft::util::arch::kernel_virtual_arch(kernel_ptr).value();
+  if (kernel_virtual_arch < raft::util::arch::SM_70{}.value()) {
+    THROW("NN_DESCENT cannot be run for __CUDA_ARCH__ < 700");
+  }
+
+  using DCT       = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE;
+  bool force_simt = build_config_.metric == cuvs::distance::DistanceType::L1 ||
+                    build_config_.metric == cuvs::distance::DistanceType::BitwiseHamming;
+
+  JoinBackend backend;
+  if (force_simt) {
+    backend = JoinBackend::SIMT;
+  } else if constexpr (!std::is_same_v<input_t, float>) {
+    backend = JoinBackend::WMMA;
+  } else if (build_config_.dist_comp_dtype == DCT::FP16 ||
+             (build_config_.dist_comp_dtype == DCT::AUTO && ndim_ > 16)) {
+    backend = JoinBackend::WMMA;
+  } else if (build_config_.dist_comp_dtype == DCT::TF32) {
+    if (physical_compute_capability < 80 ||
+        kernel_virtual_arch < raft::util::arch::SM_80{}.value()) {
+      RAFT_LOG_WARN(
+        "TF32 NN-descent requested, but the selected kernel was compiled for SM%d on physical "
+        "SM%d; falling back to SIMT.",
+        kernel_virtual_arch / 10,
+        physical_compute_capability);
+      backend = JoinBackend::SIMT;
+    } else if (is_sm90_tf32_virtual_arch(kernel_virtual_arch)) {
+      backend = JoinBackend::TF32_SM90;
+    } else if (is_sm100_tf32_virtual_arch(kernel_virtual_arch)) {
+      backend = JoinBackend::TF32_SM100;
+    } else {
+      backend = JoinBackend::TF32_PORTABLE;
+    }
+  } else {
+    backend = JoinBackend::SIMT;
+  }
+
+  const char* backend_name = "unknown";
+  switch (backend) {
+    case JoinBackend::SIMT: backend_name = "simt"; break;
+    case JoinBackend::WMMA: backend_name = "wmma"; break;
+    case JoinBackend::TF32_SM90: backend_name = "tf32-sm90"; break;
+    case JoinBackend::TF32_SM100: backend_name = "tf32-sm100"; break;
+    case JoinBackend::TF32_PORTABLE: backend_name = "tf32-portable"; break;
+  }
+  RAFT_LOG_DEBUG("NN-descent local-join backend: %s (physical SM%d, virtual SM%d)",
+                 backend_name,
+                 physical_compute_capability,
+                 kernel_virtual_arch / 10);
+  return backend;
+}
+
+template <typename Data_t, typename Index_t>
+template <typename DistEpilogue_t>
+void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_epilogue)
+{
+  local_join(stream, resolve_join_backend(), dist_epilogue);
+}
+
+template <typename Data_t, typename Index_t>
+template <typename DistEpilogue_t>
+void GNND<Data_t, Index_t>::local_join(cudaStream_t stream,
+                                       JoinBackend join_backend,
+                                       DistEpilogue_t dist_epilogue)
+{
+  raft::matrix::fill(res, dists_buffer_.view(), std::numeric_limits<float>::max());
+
+  bool use_simt         = join_backend == JoinBackend::SIMT;
+  bool use_sm90_tf32    = join_backend == JoinBackend::TF32_SM90;
+  bool use_sm100_tf32   = join_backend == JoinBackend::TF32_SM100;
+  bool use_default_wmma = join_backend == JoinBackend::WMMA;
 
   auto launch_kernel = [&](auto* typed_ptr) {
     using KernelData_t = std::remove_cv_t<std::remove_pointer_t<decltype(typed_ptr)>>;
@@ -1781,6 +1836,10 @@ void GNND<Data_t, Index_t>::build(Data_t* data,
     RAFT_FAIL(
       "Data type needs to be int8 or uint8 for NN Descent to run with BitwiseHamming distance.");
   }
+
+  // Resolve and validate the effective local-join backend before starting any worker thread. The
+  // result is invariant for this GNND instance and is reused by every iteration.
+  auto join_backend = resolve_join_backend();
 
   cudaStream_t stream = raft::resource::get_cuda_stream(res);
   nrow_               = nrow;
@@ -1923,21 +1982,7 @@ void GNND<Data_t, Index_t>::build(Data_t* data,
                       d_list_sizes_old_.data_handle(),
                       stream);
 
-    // Tensor operations from `mma.h` are guarded with archicteture
-    // __CUDA_ARCH__ >= 700. Since RAFT supports compilation for ARCH 600,
-    // we need to ensure that `local_join_kernel` (which uses tensor) operations
-    // is not only not compiled, but also a runtime error is presented to the user
-    auto kernel       = compute_l2_norms_kernel<input_t>;
-    void* kernel_ptr  = reinterpret_cast<void*>(kernel);
-    auto runtime_arch = raft::util::arch::kernel_virtual_arch(kernel_ptr);
-    auto wmma_range =
-      raft::util::arch::SM_range(raft::util::arch::SM_70(), raft::util::arch::SM_future());
-
-    if (wmma_range.contains(runtime_arch)) {
-      local_join(stream, dist_epilogue);
-    } else {
-      THROW("NN_DESCENT cannot be run for __CUDA_ARCH__ < 700");
-    }
+    local_join(stream, join_backend, dist_epilogue);
 
     update_and_sample_thread.join();
 
