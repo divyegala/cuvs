@@ -38,6 +38,8 @@ void convert_nn_descent_params(cuvsNNDescentIndexParams params,
   out->max_iterations            = params.max_iterations;
   out->termination_threshold     = params.termination_threshold;
   out->return_distances          = params.return_distances;
+  out->dist_comp_dtype           = static_cast<cuvs::neighbors::nn_descent::DIST_COMP_DTYPE>(
+    static_cast<int>(params.dist_comp_dtype));
 }
 
 static cuvs::neighbors::all_neighbors::all_neighbors_params convert_params(
