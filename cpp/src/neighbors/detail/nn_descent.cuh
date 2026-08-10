@@ -1127,10 +1127,12 @@ __launch_bounds__(BLOCK_SIZE)
 }
 
 constexpr int SM90_MMA_BLOCK_SIZE     = 256;
+constexpr int SM90_MMA_MIN_BLOCKS     = 3;
+constexpr int SM90_WGMMA_STAGES       = 2;
 constexpr int FEATURE_MMA_BLOCK_SIZE  = 128;
 constexpr int PORTABLE_MMA_BLOCK_SIZE = 512;
-constexpr int FUSED_DISTANCE_COLS           = MAX_NUM_BI_SAMPLES * 2;
-constexpr int FUSED_DISTANCE_LD             = skew_dim<float>(FUSED_DISTANCE_COLS);
+constexpr int FUSED_DISTANCE_COLS     = MAX_NUM_BI_SAMPLES * 2;
+constexpr int FUSED_DISTANCE_LD       = skew_dim<float>(FUSED_DISTANCE_COLS);
 
 template <typename Data_t, bool UseTf32>
 struct FusedMmaPolicy {
@@ -1161,25 +1163,31 @@ CUTE_DEVICE auto make_sm90_tiled_mma()
 }
 
 template <typename SmemTensor>
-CUTE_DEVICE void store_wgmma_u64(SmemTensor& smem, int row, int k, uint2 const& bits)
+CUTE_DEVICE void store_wgmma_u128(SmemTensor& smem, int row, int k, uint4 const& bits)
 {
   auto* dst = &smem(row, k);
-  cutlass::arch::shared_store<8>(cute::cast_smem_ptr_to_uint(dst), &bits);
+  cutlass::arch::shared_store<16>(cute::cast_smem_ptr_to_uint(dst), &bits);
 }
 
-CUTE_DEVICE uint2 pack_tf32x2(float2 values)
+CUTE_DEVICE uint4 pack_tf32x4(float4 values)
 {
   cute::tfloat32_t x{values.x};
   cute::tfloat32_t y{values.y};
-  return uint2{x.raw(), y.raw()};
+  cute::tfloat32_t z{values.z};
+  cute::tfloat32_t w{values.w};
+  return uint4{x.raw(), y.raw(), z.raw(), w.raw()};
 }
 
-CUTE_DEVICE uint2 pack_fp16x4(float4 values)
+CUTE_DEVICE uint4 pack_fp16x8(float4 lo_values, float4 hi_values)
 {
-  __half2 lo = __floats2half2_rn(values.x, values.y);
-  __half2 hi = __floats2half2_rn(values.z, values.w);
-  return uint2{cutlass::platform::bit_cast<unsigned>(lo),
-               cutlass::platform::bit_cast<unsigned>(hi)};
+  __half2 x = __floats2half2_rn(lo_values.x, lo_values.y);
+  __half2 y = __floats2half2_rn(lo_values.z, lo_values.w);
+  __half2 z = __floats2half2_rn(hi_values.x, hi_values.y);
+  __half2 w = __floats2half2_rn(hi_values.z, hi_values.w);
+  return uint4{cutlass::platform::bit_cast<unsigned>(x),
+               cutlass::platform::bit_cast<unsigned>(y),
+               cutlass::platform::bit_cast<unsigned>(z),
+               cutlass::platform::bit_cast<unsigned>(w)};
 }
 
 template <typename Policy, typename Data_t, typename Index_t>
@@ -1199,57 +1207,66 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
   using SmemLayout =
     decltype(cute::tile_to_shape(cute::GMMA::Layout_K_SW128_Atom<element_t>{}, smem_shape));
 
-  auto s_candidates =
-    cute::make_tensor(cute::make_smem_ptr(reinterpret_cast<element_t*>(workspace)), SmemLayout{});
+  constexpr int STAGE_ELEMENTS = FUSED_DISTANCE_COLS * Policy::K_TILE;
+  auto* stage_base             = reinterpret_cast<element_t*>(workspace);
+  auto s_candidates0           = cute::make_tensor(cute::make_smem_ptr(stage_base), SmemLayout{});
+  auto s_candidates1 =
+    cute::make_tensor(cute::make_smem_ptr(stage_base + STAGE_ELEMENTS), SmemLayout{});
   // Two warpgroups split N=128 into independent N=64 accumulators. All eight warps
-  // cooperatively gather the shared new/old stage, and both groups reuse its new half as A.
+  // cooperatively gather the next new/old stage while WGMMA consumes the current one.
   constexpr int WARP_GROUP_THREADS = 128;
   static_assert(SM90_MMA_BLOCK_SIZE == 2 * WARP_GROUP_THREADS);
+  static_assert(SM90_WGMMA_STAGES == 2);
   int warp_group_id   = threadIdx.x / WARP_GROUP_THREADS;
   int thread_in_group = threadIdx.x % WARP_GROUP_THREADS;
 
   constexpr auto n64_k_shape =
     cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<Policy::K_TILE>{});
-  auto s_a = cute::local_tile(
-    s_candidates, n64_k_shape, cute::make_coord(cute::_0{}, cute::_0{}));
-  auto s_b = cute::local_tile(
-    s_candidates, n64_k_shape, cute::make_coord(warp_group_id, cute::_0{}));
+  auto s_a0 =
+    cute::local_tile(s_candidates0, n64_k_shape, cute::make_coord(cute::_0{}, cute::_0{}));
+  auto s_b0 =
+    cute::local_tile(s_candidates0, n64_k_shape, cute::make_coord(warp_group_id, cute::_0{}));
+  auto s_a1 =
+    cute::local_tile(s_candidates1, n64_k_shape, cute::make_coord(cute::_0{}, cute::_0{}));
+  auto s_b1 =
+    cute::local_tile(s_candidates1, n64_k_shape, cute::make_coord(warp_group_id, cute::_0{}));
   auto s_c = cute::make_tensor(
     cute::make_smem_ptr(reinterpret_cast<accumulator_t*>(workspace)),
     cute::make_layout(
       cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<FUSED_DISTANCE_COLS>{}),
       cute::make_stride(cute::Int<FUSED_DISTANCE_LD>{}, cute::_1{})));
-  constexpr auto n64_n64_shape = cute::make_shape(
-    cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<MAX_NUM_BI_SAMPLES>{});
-  auto s_c_tile = cute::local_tile(
-    s_c, n64_n64_shape, cute::make_coord(cute::_0{}, warp_group_id));
+  constexpr auto n64_n64_shape =
+    cute::make_shape(cute::Int<MAX_NUM_BI_SAMPLES>{}, cute::Int<MAX_NUM_BI_SAMPLES>{});
+  auto s_c_tile = cute::local_tile(s_c, n64_n64_shape, cute::make_coord(cute::_0{}, warp_group_id));
 
   auto mma        = make_sm90_tiled_mma<Policy>();
   auto thread_mma = mma.get_slice(thread_in_group);
-  auto tCsA       = thread_mma.partition_A(s_a);
-  auto tCsB       = thread_mma.partition_B(s_b);
+  auto tCsA0      = thread_mma.partition_A(s_a0);
+  auto tCsB0      = thread_mma.partition_B(s_b0);
+  auto tCsA1      = thread_mma.partition_A(s_a1);
+  auto tCsB1      = thread_mma.partition_B(s_b1);
   auto tCsC       = thread_mma.partition_C(s_c_tile);
-  auto tCrA       = thread_mma.make_fragment_A(tCsA);
-  auto tCrB       = thread_mma.make_fragment_B(tCsB);
+  auto tCrA0      = thread_mma.make_fragment_A(tCsA0);
+  auto tCrB0      = thread_mma.make_fragment_B(tCsB0);
+  auto tCrA1      = thread_mma.make_fragment_A(tCsA1);
+  auto tCrB1      = thread_mma.make_fragment_B(tCsB1);
   auto tCrC       = thread_mma.make_fragment_C(tCsC);
   cute::clear(tCrC);
 
-  constexpr int ELEMENTS_PER_LANE = sizeof(uint2) / sizeof(element_t);
+  constexpr int ELEMENTS_PER_LANE = sizeof(uint4) / sizeof(element_t);
   constexpr int LANES_PER_ROW     = Policy::K_TILE / ELEMENTS_PER_LANE;
   constexpr int ROWS_PER_WARP     = raft::warp_size() / LANES_PER_ROW;
   static_assert(Policy::K_TILE % ELEMENTS_PER_LANE == 0);
-  static_assert(LANES_PER_ROW <= raft::warp_size() &&
-                raft::warp_size() % LANES_PER_ROW == 0);
+  static_assert(LANES_PER_ROW <= raft::warp_size() && raft::warp_size() % LANES_PER_ROW == 0);
 
   int warp_id     = threadIdx.x / raft::warp_size();
   int lane_id     = threadIdx.x % raft::warp_size();
   int row_in_warp = lane_id / LANES_PER_ROW;
   int row_lane    = lane_id % LANES_PER_ROW;
 
-  for (int data_base = 0; data_base < data_dim; data_base += Policy::K_TILE) {
+  auto load_stage = [&](auto& s_candidates, int data_base) {
     int valid_dims = min(Policy::K_TILE, data_dim - data_base);
-    for (int candidate = warp_id * ROWS_PER_WARP + row_in_warp;
-         candidate < FUSED_DISTANCE_COLS;
+    for (int candidate = warp_id * ROWS_PER_WARP + row_in_warp; candidate < FUSED_DISTANCE_COLS;
          candidate += (SM90_MMA_BLOCK_SIZE / raft::warp_size()) * ROWS_PER_WARP) {
       bool is_new       = candidate < MAX_NUM_BI_SAMPLES;
       int candidate_idx = is_new ? candidate : candidate - MAX_NUM_BI_SAMPLES;
@@ -1258,28 +1275,14 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
 
       if (is_active) {
         Index_t neighbor_id = is_new ? new_neighbors[candidate_idx] : old_neighbors[candidate_idx];
-        src = data + static_cast<size_t>(neighbor_id) * data_dim + data_base;
+        src                 = data + static_cast<size_t>(neighbor_id) * data_dim + data_base;
       }
 
       if constexpr (std::is_same_v<Data_t, float> && Policy::IS_TF32) {
-        int k0        = row_lane * 2;
-        float2 values = {};
-        if (is_active) {
-          if (k0 + 2 <= valid_dims &&
-              (reinterpret_cast<size_t>(src + k0) % alignof(float2)) == 0) {
-            values = *reinterpret_cast<const float2*>(src + k0);
-          } else {
-            if (k0 < valid_dims) { values.x = src[k0]; }
-            if (k0 + 1 < valid_dims) { values.y = src[k0 + 1]; }
-          }
-        }
-        store_wgmma_u64(s_candidates, candidate, k0, pack_tf32x2(values));
-      } else if constexpr (std::is_same_v<Data_t, float> && !Policy::IS_TF32) {
         int k0        = row_lane * 4;
         float4 values = {};
         if (is_active) {
-          if (k0 + 4 <= valid_dims &&
-              (reinterpret_cast<size_t>(src + k0) % alignof(float4)) == 0) {
+          if (k0 + 4 <= valid_dims && (reinterpret_cast<size_t>(src + k0) % alignof(float4)) == 0) {
             values = *reinterpret_cast<const float4*>(src + k0);
           } else {
             if (k0 < valid_dims) { values.x = src[k0]; }
@@ -1288,52 +1291,94 @@ CUTE_DEVICE void compute_fused_wgmma_tile(void* workspace,
             if (k0 + 3 < valid_dims) { values.w = src[k0 + 3]; }
           }
         }
-        store_wgmma_u64(s_candidates, candidate, k0, pack_fp16x4(values));
-      } else if constexpr (std::is_same_v<Data_t, half> && !Policy::IS_TF32) {
-        int k0      = row_lane * 4;
-        uint2 packed{};
+        store_wgmma_u128(s_candidates, candidate, k0, pack_tf32x4(values));
+      } else if constexpr (std::is_same_v<Data_t, float> && !Policy::IS_TF32) {
+        int k0           = row_lane * 8;
+        float4 lo_values = {};
+        float4 hi_values = {};
         if (is_active) {
-          if (k0 + 4 <= valid_dims &&
-              (reinterpret_cast<size_t>(src + k0) % alignof(uint2)) == 0) {
-            packed = *reinterpret_cast<const uint2*>(src + k0);
+          if (k0 + 8 <= valid_dims && (reinterpret_cast<size_t>(src + k0) % alignof(float4)) == 0) {
+            lo_values = *reinterpret_cast<const float4*>(src + k0);
+            hi_values = *reinterpret_cast<const float4*>(src + k0 + 4);
           } else {
-            cutlass::Array<half, 4> values{};
+            cutlass::Array<float, 8> values{};
 #pragma unroll
-            for (int i = 0; i < 4; ++i) {
+            for (int i = 0; i < 8; ++i) {
               if (k0 + i < valid_dims) { values[i] = src[k0 + i]; }
             }
-            packed = cutlass::platform::bit_cast<uint2>(values);
+            lo_values = float4{values[0], values[1], values[2], values[3]};
+            hi_values = float4{values[4], values[5], values[6], values[7]};
           }
         }
-        store_wgmma_u64(s_candidates, candidate, k0, packed);
+        store_wgmma_u128(s_candidates, candidate, k0, pack_fp16x8(lo_values, hi_values));
+      } else if constexpr (std::is_same_v<Data_t, half> && !Policy::IS_TF32) {
+        int k0 = row_lane * 8;
+        uint4 packed{};
+        if (is_active) {
+          if (k0 + 8 <= valid_dims && (reinterpret_cast<size_t>(src + k0) % alignof(uint4)) == 0) {
+            packed = *reinterpret_cast<const uint4*>(src + k0);
+          } else {
+            cutlass::Array<half, 8> values{};
+#pragma unroll
+            for (int i = 0; i < 8; ++i) {
+              if (k0 + i < valid_dims) { values[i] = src[k0 + i]; }
+            }
+            packed = cutlass::platform::bit_cast<uint4>(values);
+          }
+        }
+        store_wgmma_u128(s_candidates, candidate, k0, packed);
       } else {
-        static_assert(ELEMENTS_PER_LANE * sizeof(element_t) == sizeof(uint2));
+        static_assert(ELEMENTS_PER_LANE * sizeof(element_t) == sizeof(uint4));
         int k0 = row_lane * ELEMENTS_PER_LANE;
         cutlass::Array<element_t, ELEMENTS_PER_LANE> converted;
 #pragma unroll
         for (int i = 0; i < ELEMENTS_PER_LANE; ++i) {
           float value = 0.0f;
-          if (is_active && k0 + i < valid_dims) {
-            value = static_cast<float>(src[k0 + i]);
-          }
+          if (is_active && k0 + i < valid_dims) { value = static_cast<float>(src[k0 + i]); }
           converted[i] = element_t(value);
         }
-        auto packed = cutlass::platform::bit_cast<uint2>(converted);
-        store_wgmma_u64(s_candidates, candidate, k0, packed);
+        auto packed = cutlass::platform::bit_cast<uint4>(converted);
+        store_wgmma_u128(s_candidates, candidate, k0, packed);
       }
     }
+  };
 
-    cutlass::arch::fence_view_async_shared();
-    asm volatile("bar.sync 1, 256;" ::: "memory");
+  int tile_count = raft::ceildiv(data_dim, Policy::K_TILE);
+  load_stage(s_candidates0, 0);
+  cutlass::arch::fence_view_async_shared();
+  asm volatile("bar.sync 1, 256;" ::: "memory");
+
+  for (int tile = 0; tile < tile_count; ++tile) {
+    int stage = tile % SM90_WGMMA_STAGES;
     // Always issue both halves. Inactive old rows were zero-filled above; keeping this
     // sequence uniform avoids compiler-inserted warpgroup dependency serialization.
     cute::warpgroup_fence_operand(tCrC);
     cute::warpgroup_arrive();
-    cute::gemm(mma, tCrA, tCrB, tCrC);
+    if (stage == 0) {
+      cute::gemm(mma, tCrA0, tCrB0, tCrC);
+    } else {
+      cute::gemm(mma, tCrA1, tCrB1, tCrC);
+    }
     cute::warpgroup_commit_batch();
+
+    bool has_next = tile + 1 < tile_count;
+    if (has_next) {
+      int next_base = (tile + 1) * Policy::K_TILE;
+      if (stage == 0) {
+        load_stage(s_candidates1, next_base);
+      } else {
+        load_stage(s_candidates0, next_base);
+      }
+    }
+
+    // The gather above executes while WGMMA consumes the other stage. Draining here
+    // makes that stage safe to reuse two iterations later without cross-warpgroup hazards.
     cute::warpgroup_wait<0>();
     cute::warpgroup_fence_operand(tCrC);
-    asm volatile("bar.sync 1, 256;" ::: "memory");
+    if (has_next) {
+      cutlass::arch::fence_view_async_shared();
+      asm volatile("bar.sync 1, 256;" ::: "memory");
+    }
   }
 
   cute::copy(tCrC, tCsC);
@@ -1461,22 +1506,25 @@ template <typename Data_t,
           typename Index_t,
           typename ID_t = InternalID_t<Index_t>,
           typename DistEpilogue_t>
-RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* graph_new,
-                                                                const Index_t* rev_graph_new,
-                                                                const int2* sizes_new,
-                                                                const Index_t* graph_old,
-                                                                const Index_t* rev_graph_old,
-                                                                const int2* sizes_old,
-                                                                const int width,
-                                                                const Data_t* data,
-                                                                const int data_dim,
-                                                                ID_t* graph,
-                                                                DistData_t* dists,
-                                                                int graph_width,
-                                                                int* locks,
-                                                                DistData_t* l2_norms,
-                                                                cuvs::distance::DistanceType metric,
-                                                                DistEpilogue_t dist_epilogue)
+// Two operand stages and the N64 accumulator retain three resident SM90 CTAs.
+RAFT_KERNEL __launch_bounds__(CtaThreads,
+                              CtaThreads == SM90_MMA_BLOCK_SIZE ? SM90_MMA_MIN_BLOCKS : 1)
+  local_join_kernel_mma(const Index_t* graph_new,
+                        const Index_t* rev_graph_new,
+                        const int2* sizes_new,
+                        const Index_t* graph_old,
+                        const Index_t* rev_graph_old,
+                        const int2* sizes_old,
+                        const int width,
+                        const Data_t* data,
+                        const int data_dim,
+                        ID_t* graph,
+                        DistData_t* dists,
+                        int graph_width,
+                        int* locks,
+                        DistData_t* l2_norms,
+                        cuvs::distance::DistanceType metric,
+                        DistEpilogue_t dist_epilogue)
 {
 #if (__CUDA_ARCH__ >= 700)
   using Policy    = FusedMmaPolicy<Data_t, UseTf32>;
@@ -1484,6 +1532,9 @@ RAFT_KERNEL __launch_bounds__(CtaThreads) local_join_kernel_mma(const Index_t* g
 
 #if defined(CUTE_ARCH_TCGEN05_TMEM_ENABLED)
   constexpr int INPUT_BYTES = Sm100MmaWorkspaceSize<Policy>::value;
+#elif defined(CUTE_ARCH_MMA_SM90A_ENABLED)
+  constexpr int INPUT_BYTES =
+    SM90_WGMMA_STAGES * FUSED_DISTANCE_COLS * Policy::K_TILE * static_cast<int>(sizeof(operand_t));
 #else
   constexpr int INPUT_BYTES =
     FUSED_DISTANCE_COLS * Policy::K_LD * static_cast<int>(sizeof(operand_t));
