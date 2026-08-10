@@ -1964,6 +1964,13 @@ void GNND<Data_t, Index_t>::build(Data_t* data,
     raft::resource::sync_stream(res);
 
     std::thread update_and_sample_thread(update_and_sample, it);
+    struct ThreadJoiner {
+      std::thread& thread;
+      ~ThreadJoiner()
+      {
+        if (thread.joinable()) { thread.join(); }
+      }
+    } update_and_sample_joiner{update_and_sample_thread};
 
     RAFT_LOG_DEBUG("# GNND iteration: %lu / %lu", it + 1, build_config_.max_iterations);
 
