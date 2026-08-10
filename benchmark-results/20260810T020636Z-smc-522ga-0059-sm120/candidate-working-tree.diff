@@ -1,0 +1,348 @@
+diff --git a/c/src/neighbors/all_neighbors.cpp b/c/src/neighbors/all_neighbors.cpp
+index 0d1508a2..874c96a2 100644
+--- a/c/src/neighbors/all_neighbors.cpp
++++ b/c/src/neighbors/all_neighbors.cpp
+@@ -38,6 +38,8 @@ void convert_nn_descent_params(cuvsNNDescentIndexParams params,
+   out->max_iterations            = params.max_iterations;
+   out->termination_threshold     = params.termination_threshold;
+   out->return_distances          = params.return_distances;
++  out->dist_comp_dtype           = static_cast<cuvs::neighbors::nn_descent::DIST_COMP_DTYPE>(
++    static_cast<int>(params.dist_comp_dtype));
+ }
+ 
+ static cuvs::neighbors::all_neighbors::all_neighbors_params convert_params(
+diff --git a/cpp/src/neighbors/detail/cagra/cagra_build.cuh b/cpp/src/neighbors/detail/cagra/cagra_build.cuh
+index c06f9b12..1bea99e4 100644
+--- a/cpp/src/neighbors/detail/cagra/cagra_build.cuh
++++ b/cpp/src/neighbors/detail/cagra/cagra_build.cuh
+@@ -2315,8 +2315,15 @@ auto build_cagra_host_graph_from_knn_params(raft::resources const& res,
+         "nn-descent graph_degree.",
+         nn_descent_params.graph_degree,
+         intermediate_degree);
+-      nn_descent_params =
+-        cagra::graph_build_params::nn_descent_params(intermediate_degree, params.metric);
++      nn_descent_params.graph_degree = intermediate_degree;
++    }
++    if (nn_descent_params.intermediate_graph_degree < intermediate_degree) {
++      RAFT_LOG_WARN(
++        "Intermediate graph degree (%lu) for nn-descent cannot be smaller than cagra "
++        "intermediate graph degree (%lu), aligning nn-descent intermediate_graph_degree.",
++        nn_descent_params.intermediate_graph_degree,
++        intermediate_degree);
++      nn_descent_params.intermediate_graph_degree = intermediate_degree;
+     }
+ 
+     nn_descent_params.return_distances = false;
+diff --git a/cpp/src/neighbors/detail/nn_descent.cuh b/cpp/src/neighbors/detail/nn_descent.cuh
+index 29a783dc..4cb43b1f 100644
+--- a/cpp/src/neighbors/detail/nn_descent.cuh
++++ b/cpp/src/neighbors/detail/nn_descent.cuh
+@@ -1649,34 +1649,89 @@ void GNND<Data_t, Index_t>::add_reverse_edges(Index_t* graph_ptr,
+ }
+ 
+ template <typename Data_t, typename Index_t>
+-template <typename DistEpilogue_t>
+-void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_epilogue)
++auto GNND<Data_t, Index_t>::resolve_join_backend() const -> JoinBackend
+ {
+-  raft::matrix::fill(res, dists_buffer_.view(), std::numeric_limits<float>::max());
+-
+-  // AUTO retains its historical FP32/FP16 choice and never selects TF32. FP16 and byte inputs
+-  // continue to use the default two-phase WMMA kernel; explicit TF32 selects the fused kernel.
+-  using DCT = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE;
+-  bool use_fp16_dist =
+-    std::is_same_v<input_t, float> && (build_config_.dist_comp_dtype == DCT::FP16 ||
+-                                       (build_config_.dist_comp_dtype == DCT::AUTO && ndim_ > 16));
+-  bool use_tf32_dist = std::is_same_v<input_t, float> && build_config_.dist_comp_dtype == DCT::TF32;
+-
+   int device;
+   int compute_major;
+   int compute_minor;
+   RAFT_CUDA_TRY(cudaGetDevice(&device));
+   RAFT_CUDA_TRY(cudaDeviceGetAttribute(&compute_major, cudaDevAttrComputeCapabilityMajor, device));
+   RAFT_CUDA_TRY(cudaDeviceGetAttribute(&compute_minor, cudaDevAttrComputeCapabilityMinor, device));
+-  int compute_capability = compute_major * 10 + compute_minor;
++  int physical_compute_capability = compute_major * 10 + compute_minor;
++
++  auto kernel             = compute_l2_norms_kernel<input_t>;
++  void* kernel_ptr        = reinterpret_cast<void*>(kernel);
++  int kernel_virtual_arch = raft::util::arch::kernel_virtual_arch(kernel_ptr).value();
++  if (kernel_virtual_arch < raft::util::arch::SM_70{}.value()) {
++    THROW("NN_DESCENT cannot be run for __CUDA_ARCH__ < 700");
++  }
+ 
+-  bool use_simt = (std::is_same_v<input_t, float> && !use_fp16_dist && !use_tf32_dist) ||
+-                  build_config_.metric == cuvs::distance::DistanceType::L1 ||
+-                  build_config_.metric == cuvs::distance::DistanceType::BitwiseHamming ||
+-                  (use_tf32_dist && compute_capability < 80);
+-  bool use_sm90_tf32    = compute_capability >= 90 && compute_capability < 100;
+-  bool use_sm100_tf32   = compute_capability >= 100 && compute_capability < 120;
+-  bool use_default_wmma = std::is_same_v<input_t, half> || use_fp16_dist;
++  using DCT       = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE;
++  bool force_simt = build_config_.metric == cuvs::distance::DistanceType::L1 ||
++                    build_config_.metric == cuvs::distance::DistanceType::BitwiseHamming;
++
++  JoinBackend backend;
++  if (force_simt) {
++    backend = JoinBackend::SIMT;
++  } else if constexpr (!std::is_same_v<input_t, float>) {
++    backend = JoinBackend::WMMA;
++  } else if (build_config_.dist_comp_dtype == DCT::FP16 ||
++             (build_config_.dist_comp_dtype == DCT::AUTO && ndim_ > 16)) {
++    backend = JoinBackend::WMMA;
++  } else if (build_config_.dist_comp_dtype == DCT::TF32) {
++    if (physical_compute_capability < 80 ||
++        kernel_virtual_arch < raft::util::arch::SM_80{}.value()) {
++      RAFT_LOG_WARN(
++        "TF32 NN-descent requested, but the selected kernel was compiled for SM%d on physical "
++        "SM%d; falling back to SIMT.",
++        kernel_virtual_arch / 10,
++        physical_compute_capability);
++      backend = JoinBackend::SIMT;
++    } else if (is_sm90_tf32_virtual_arch(kernel_virtual_arch)) {
++      backend = JoinBackend::TF32_SM90;
++    } else if (is_sm100_tf32_virtual_arch(kernel_virtual_arch)) {
++      backend = JoinBackend::TF32_SM100;
++    } else {
++      backend = JoinBackend::TF32_PORTABLE;
++    }
++  } else {
++    backend = JoinBackend::SIMT;
++  }
++
++  const char* backend_name = "unknown";
++  switch (backend) {
++    case JoinBackend::SIMT: backend_name = "simt"; break;
++    case JoinBackend::WMMA: backend_name = "wmma"; break;
++    case JoinBackend::TF32_SM90: backend_name = "tf32-sm90"; break;
++    case JoinBackend::TF32_SM100: backend_name = "tf32-sm100"; break;
++    case JoinBackend::TF32_PORTABLE: backend_name = "tf32-portable"; break;
++  }
++  RAFT_LOG_DEBUG("NN-descent local-join backend: %s (physical SM%d, virtual SM%d)",
++                 backend_name,
++                 physical_compute_capability,
++                 kernel_virtual_arch / 10);
++  return backend;
++}
++
++template <typename Data_t, typename Index_t>
++template <typename DistEpilogue_t>
++void GNND<Data_t, Index_t>::local_join(cudaStream_t stream, DistEpilogue_t dist_epilogue)
++{
++  local_join(stream, resolve_join_backend(), dist_epilogue);
++}
++
++template <typename Data_t, typename Index_t>
++template <typename DistEpilogue_t>
++void GNND<Data_t, Index_t>::local_join(cudaStream_t stream,
++                                       JoinBackend join_backend,
++                                       DistEpilogue_t dist_epilogue)
++{
++  raft::matrix::fill(res, dists_buffer_.view(), std::numeric_limits<float>::max());
++
++  bool use_simt         = join_backend == JoinBackend::SIMT;
++  bool use_sm90_tf32    = join_backend == JoinBackend::TF32_SM90;
++  bool use_sm100_tf32   = join_backend == JoinBackend::TF32_SM100;
++  bool use_default_wmma = join_backend == JoinBackend::WMMA;
+ 
+   auto launch_kernel = [&](auto* typed_ptr) {
+     using KernelData_t = std::remove_cv_t<std::remove_pointer_t<decltype(typed_ptr)>>;
+@@ -1782,6 +1837,10 @@ void GNND<Data_t, Index_t>::build(Data_t* data,
+       "Data type needs to be int8 or uint8 for NN Descent to run with BitwiseHamming distance.");
+   }
+ 
++  // Resolve and validate the effective local-join backend before starting any worker thread. The
++  // result is invariant for this GNND instance and is reused by every iteration.
++  auto join_backend = resolve_join_backend();
++
+   cudaStream_t stream = raft::resource::get_cuda_stream(res);
+   nrow_               = nrow;
+   graph_.nrow         = nrow;
+@@ -1905,6 +1964,13 @@ void GNND<Data_t, Index_t>::build(Data_t* data,
+     raft::resource::sync_stream(res);
+ 
+     std::thread update_and_sample_thread(update_and_sample, it);
++    struct ThreadJoiner {
++      std::thread& thread;
++      ~ThreadJoiner()
++      {
++        if (thread.joinable()) { thread.join(); }
++      }
++    } update_and_sample_joiner{update_and_sample_thread};
+ 
+     RAFT_LOG_DEBUG("# GNND iteration: %lu / %lu", it + 1, build_config_.max_iterations);
+ 
+@@ -1923,21 +1989,7 @@ void GNND<Data_t, Index_t>::build(Data_t* data,
+                       d_list_sizes_old_.data_handle(),
+                       stream);
+ 
+-    // Tensor operations from `mma.h` are guarded with archicteture
+-    // __CUDA_ARCH__ >= 700. Since RAFT supports compilation for ARCH 600,
+-    // we need to ensure that `local_join_kernel` (which uses tensor) operations
+-    // is not only not compiled, but also a runtime error is presented to the user
+-    auto kernel       = compute_l2_norms_kernel<input_t>;
+-    void* kernel_ptr  = reinterpret_cast<void*>(kernel);
+-    auto runtime_arch = raft::util::arch::kernel_virtual_arch(kernel_ptr);
+-    auto wmma_range =
+-      raft::util::arch::SM_range(raft::util::arch::SM_70(), raft::util::arch::SM_future());
+-
+-    if (wmma_range.contains(runtime_arch)) {
+-      local_join(stream, dist_epilogue);
+-    } else {
+-      THROW("NN_DESCENT cannot be run for __CUDA_ARCH__ < 700");
+-    }
++    local_join(stream, join_backend, dist_epilogue);
+ 
+     update_and_sample_thread.join();
+ 
+diff --git a/cpp/src/neighbors/detail/nn_descent_gnnd.hpp b/cpp/src/neighbors/detail/nn_descent_gnnd.hpp
+index 1e69e1a0..9fcf84d6 100644
+--- a/cpp/src/neighbors/detail/nn_descent_gnnd.hpp
++++ b/cpp/src/neighbors/detail/nn_descent_gnnd.hpp
+@@ -24,6 +24,17 @@ using DistData_t = float;
+ constexpr int DEGREE_ON_DEVICE{32};
+ constexpr int SEGMENT_SIZE{32};
+ constexpr int counter_interval{100};
++
++constexpr bool is_sm90_tf32_virtual_arch(int virtual_arch)
++{
++  return virtual_arch >= 900 && virtual_arch < 1000;
++}
++
++constexpr bool is_sm100_tf32_virtual_arch(int virtual_arch)
++{
++  return virtual_arch >= 1000 && virtual_arch < 1200;
++}
++
+ template <typename Index_t>
+ struct InternalID_t;
+ 
+@@ -216,9 +227,24 @@ class CUVS_EXPORT GNND {
+                          int2* list_sizes,
+                          cudaStream_t stream = 0);
+ 
++  enum class JoinBackend {
++    SIMT,
++    WMMA,
++    TF32_SM90,
++    TF32_SM100,
++    TF32_PORTABLE,
++  };
++
+   template <typename DistEpilogue_t>
+   void local_join(cudaStream_t stream = 0, DistEpilogue_t dist_epilogue = DistEpilogue_t{});
+ 
++  template <typename DistEpilogue_t>
++  void local_join(cudaStream_t stream,
++                  JoinBackend join_backend,
++                  DistEpilogue_t dist_epilogue = DistEpilogue_t{});
++
++  JoinBackend resolve_join_backend() const;
++
+   raft::resources const& res;
+ 
+   BuildConfig build_config_;
+diff --git a/cpp/src/neighbors/detail/nn_descent_tf32_wmma.cuh b/cpp/src/neighbors/detail/nn_descent_tf32_wmma.cuh
+index 0b093bf4..a6c5419f 100644
+--- a/cpp/src/neighbors/detail/nn_descent_tf32_wmma.cuh
++++ b/cpp/src/neighbors/detail/nn_descent_tf32_wmma.cuh
+@@ -12,13 +12,18 @@ __device__ __forceinline__ void load_tf32_candidate(float* dst,
+                                                     int valid_dims,
+                                                     int lane_id)
+ {
+-  for (int idx = lane_id; idx < Tf32MmaPolicy::K_TILE; idx += raft::warp_size()) {
+-    if (idx < valid_dims) {
+-      dst[idx] = nvcuda::wmma::__float_to_tf32(src[idx]);
+-    } else {
+-      dst[idx] = 0.0f;
+-    }
++  static_assert(Tf32MmaPolicy::K_TILE == raft::warp_size() * 2);
++
++  int k0        = lane_id * 2;
++  float2 values = {};
++  if (src != nullptr) {
++    if (k0 < valid_dims) { values.x = src[k0]; }
++    if (k0 + 1 < valid_dims) { values.y = src[k0 + 1]; }
+   }
++
++  float2 tf32_values{nvcuda::wmma::__float_to_tf32(values.x),
++                     nvcuda::wmma::__float_to_tf32(values.y)};
++  *reinterpret_cast<float2*>(dst + k0) = tf32_values;
+ }
+ 
+ template <int CtaThreads, typename Index_t>
+diff --git a/cpp/tests/neighbors/ann_cagra/test_float_uint32_t.cu b/cpp/tests/neighbors/ann_cagra/test_float_uint32_t.cu
+index de06bef3..ceb06bd3 100644
+--- a/cpp/tests/neighbors/ann_cagra/test_float_uint32_t.cu
++++ b/cpp/tests/neighbors/ann_cagra/test_float_uint32_t.cu
+@@ -152,4 +152,45 @@ TEST(AnnCagraMultiPartition, MixedGraphDegreeRejected)
+                                        cagra::search_params{});
+ }
+ 
++TEST(AnnCagraNnDescentParams, AlignsInternalDegreeWithCagraGraph)
++{
++  constexpr int64_t n_rows = 256;
++  constexpr int64_t dim    = 16;
++  constexpr int64_t degree = 32;
++
++  raft::resources res;
++  auto stream  = raft::resource::get_cuda_stream(res);
++  auto dataset = raft::make_device_matrix<float, int64_t>(res, n_rows, dim);
++  raft::random::RngState rng(1234ULL);
++  raft::random::uniform(res, rng, dataset.data_handle(), dataset.size(), -1.0f, 1.0f);
++
++  cagra::index_params params;
++  params.graph_degree              = degree;
++  params.intermediate_graph_degree = degree * 2;
++
++  graph_build_params::nn_descent_params nn_descent_params(degree / 2, params.metric);
++  nn_descent_params.intermediate_graph_degree = degree / 2;
++  nn_descent_params.max_iterations            = 2;
++  nn_descent_params.dist_comp_dtype           = cuvs::neighbors::nn_descent::DIST_COMP_DTYPE::TF32;
++  params.graph_build_params                   = nn_descent_params;
++
++  cuvs::neighbors::test::padded_device_matrix_for_cagra<float> padded(
++    res, raft::make_const_mdspan(dataset.view()));
++  auto index = cagra::build(res, params, padded.view);
++
++  ASSERT_EQ(index.graph().extent(0), n_rows);
++  ASSERT_EQ(index.graph().extent(1), degree);
++
++  auto host_graph = raft::make_host_matrix<uint32_t, int64_t>(n_rows, degree);
++  raft::copy(host_graph.data_handle(), index.graph().data_handle(), index.graph().size(), stream);
++  raft::resource::sync_stream(res);
++
++  for (int64_t row = 0; row < n_rows; ++row) {
++    for (int64_t col = 0; col < degree; ++col) {
++      ASSERT_LT(host_graph(row, col), n_rows);
++      EXPECT_NE(host_graph(row, col), row);
++    }
++  }
++}
++
+ }  // namespace cuvs::neighbors::cagra
+diff --git a/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu b/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu
+index 28c65b16..043c59e4 100644
+--- a/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu
++++ b/cpp/tests/neighbors/ann_nn_descent/test_float_uint32_t.cu
+@@ -47,6 +47,20 @@ std::string kernelDispatchName(const ::testing::TestParamInfo<AnnNNDescentInputs
+ }
+ 
+ }  // namespace
++
++TEST(NNDescentTf32DispatchPolicy, SelectsBackendFromVirtualImage)
++{
++  EXPECT_FALSE(detail::is_sm90_tf32_virtual_arch(899));
++  EXPECT_TRUE(detail::is_sm90_tf32_virtual_arch(900));
++  EXPECT_TRUE(detail::is_sm90_tf32_virtual_arch(999));
++  EXPECT_FALSE(detail::is_sm90_tf32_virtual_arch(1000));
++
++  EXPECT_FALSE(detail::is_sm100_tf32_virtual_arch(999));
++  EXPECT_TRUE(detail::is_sm100_tf32_virtual_arch(1000));
++  EXPECT_TRUE(detail::is_sm100_tf32_virtual_arch(1199));
++  EXPECT_FALSE(detail::is_sm100_tf32_virtual_arch(1200));
++}
++
+ typedef AnnNNDescentTest<float, float, std::uint32_t> AnnNNDescentTestF_U32;
+ TEST_P(AnnNNDescentTestF_U32, AnnNNDescent) { this->testNNDescent(); }
+ 
