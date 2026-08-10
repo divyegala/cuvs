@@ -12,13 +12,18 @@ __device__ __forceinline__ void load_tf32_candidate(float* dst,
                                                     int valid_dims,
                                                     int lane_id)
 {
-  for (int idx = lane_id; idx < Tf32MmaPolicy::K_TILE; idx += raft::warp_size()) {
-    if (idx < valid_dims) {
-      dst[idx] = nvcuda::wmma::__float_to_tf32(src[idx]);
-    } else {
-      dst[idx] = 0.0f;
-    }
+  static_assert(Tf32MmaPolicy::K_TILE == raft::warp_size() * 2);
+
+  int k0        = lane_id * 2;
+  float2 values = {};
+  if (src != nullptr) {
+    if (k0 < valid_dims) { values.x = src[k0]; }
+    if (k0 + 1 < valid_dims) { values.y = src[k0 + 1]; }
   }
+
+  float2 tf32_values{nvcuda::wmma::__float_to_tf32(values.x),
+                     nvcuda::wmma::__float_to_tf32(values.y)};
+  *reinterpret_cast<float2*>(dst + k0) = tf32_values;
 }
 
 template <int CtaThreads, typename Index_t>
