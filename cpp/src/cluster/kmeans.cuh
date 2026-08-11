@@ -14,9 +14,13 @@
 #include <raft/core/operators.hpp>
 #include <raft/core/resource/comms.hpp>
 #include <raft/core/resource/cuda_stream.hpp>
+#include <raft/linalg/add.cuh>
 #include <raft/linalg/norm.cuh>
 
+#include <algorithm>
+#include <limits>
 #include <optional>
+#include <type_traits>
 
 namespace cuvs::cluster::kmeans {
 
@@ -350,6 +354,39 @@ void cluster_cost(
   RAFT_EXPECTS(metric == cuvs::distance::DistanceType::L2Expanded ||
                  metric == cuvs::distance::DistanceType::L2Unexpanded,
                "cluster_cost requires a squared-L2 distance metric");
+
+  if constexpr (std::is_same_v<IndexT, int64_t>) {
+    if (metric == cuvs::distance::DistanceType::L2Unexpanded) {
+      constexpr IndexT max_i32 = std::numeric_limits<int>::max();
+      RAFT_EXPECTS(n_clusters > 0 && n_clusters <= max_i32 && n_features <= max_i32,
+                   "stable cluster_cost requires n_clusters and n_features to fit in int32");
+
+      raft::matrix::fill(handle, cost, DataT{0});
+      auto batch_cost    = raft::make_device_scalar<DataT>(handle, DataT{0});
+      auto centroids_i32 = raft::make_device_matrix_view<const DataT, int>(
+        centroids.data_handle(), static_cast<int>(n_clusters), static_cast<int>(n_features));
+      const IndexT max_batch_rows = max_i32 / n_clusters;
+
+      for (IndexT offset = 0; offset < n_samples; offset += max_batch_rows) {
+        const int batch_rows = static_cast<int>(std::min(max_batch_rows, n_samples - offset));
+        auto X_i32           = raft::make_device_matrix_view<const DataT, int>(
+          X.data_handle() + offset * n_features, batch_rows, static_cast<int>(n_features));
+
+        std::optional<raft::device_vector_view<const DataT, int>> batch_weights = std::nullopt;
+        if (sample_weight.has_value()) {
+          batch_weights = raft::make_device_vector_view<const DataT, int>(
+            sample_weight->data_handle() + offset, batch_rows);
+        }
+
+        raft::matrix::fill(handle, batch_cost.view(), DataT{0});
+        cluster_cost<DataT, int>(
+          handle, X_i32, centroids_i32, batch_cost.view(), batch_weights, metric);
+        raft::linalg::add(
+          cost.data_handle(), cost.data_handle(), batch_cost.data_handle(), 1, stream);
+      }
+      return;
+    }
+  }
 
   rmm::device_uvector<char> workspace(n_samples * sizeof(IndexT), stream);
 

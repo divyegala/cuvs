@@ -382,12 +382,16 @@ void pairwise_distance_kmeans(raft::resources const& handle,
                              raft::layout_c_contiguous,
                              IndexT>(handle, X, centroids, pairwiseDistance);
   } else if (metric == cuvs::distance::DistanceType::L2Unexpanded) {
-    cuvs::distance::distance<cuvs::distance::DistanceType::L2Unexpanded,
-                             DataT,
-                             DataT,
-                             DataT,
-                             raft::layout_c_contiguous,
-                             IndexT>(handle, X, centroids, pairwiseDistance);
+    if constexpr (std::is_same_v<IndexT, int>) {
+      cuvs::distance::distance<cuvs::distance::DistanceType::L2Unexpanded,
+                               DataT,
+                               DataT,
+                               DataT,
+                               raft::layout_c_contiguous,
+                               IndexT>(handle, X, centroids, pairwiseDistance);
+    } else {
+      RAFT_FAIL("L2Unexpanded KMeans distance requires int32-indexed batches");
+    }
   } else {
     RAFT_FAIL("kmeans requires L2Expanded, L2SqrtExpanded, or L2Unexpanded distance, have %i",
               static_cast<int>(metric));
