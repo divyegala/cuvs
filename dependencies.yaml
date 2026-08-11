@@ -428,7 +428,7 @@ dependencies:
               cuda: "13.3"
             packages:
               - cutile-python
-              - cuda-tileiras==13.3.*
+              - cuda-tileiras
           - matrix:
               cuda: "13.*"
             packages:

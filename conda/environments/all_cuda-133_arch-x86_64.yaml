@@ -15,7 +15,7 @@ dependencies:
 - cuda-nvrtc-dev
 - cuda-nvtx-dev
 - cuda-profiler-api
-- cuda-tileiras==13.3.*
+- cuda-tileiras
 - cuda-version=13.3
 - cupy>=14.0.1,!=14.1.0
 - cutile-python

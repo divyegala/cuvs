@@ -55,7 +55,7 @@ def make_kernel(
     core_shape = (tile_m, tile_n)
     best_shape = (tile_m, 1)
 
-    @ct.kernel(occupancy=ct.ByTarget(sm_100=2, sm_120=2))
+    @ct.kernel(occupancy=ct.ByTarget(sm_120=2))
     def fused_1nn_kernel(
         A,
         B,
@@ -120,13 +120,14 @@ def make_kernel(
                     B_norm, index=(n,), shape=(tn,), padding_mode=zero_pad
                 )
                 if metric_code == METRIC_L2_EXPANDED:
+                    # L2 receives squared row norms; cosine receives L2 magnitudes.
                     # The A norm is constant across centroids. Reduce
                     # 0.5 * ||y||^2 - dot(x, y), then recover full L2 once.
                     score = (0.5 * b_norm)[None, :] - accumulator
                 else:
                     # Defer the A-norm division until after selecting the
                     # winning centroid.
-                    score = -(accumulator / b_norm[None, :])
+                    score = accumulator / (-b_norm)[None, :]
 
             if n == num_tiles_n - 1:
                 col = ct.arange(tn, dtype=ct.int16)

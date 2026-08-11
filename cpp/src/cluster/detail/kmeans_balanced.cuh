@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "../kmeans.cuh"
 #include "kmeans_common.cuh"
 #include <cuvs/cluster/kmeans.hpp>
 
@@ -104,7 +105,7 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
 
       if constexpr (std::is_same_v<LabelT, IdxT>) {
         auto labels_view = raft::make_device_vector_view<IdxT, IdxT>(labels, n_rows);
-        cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<MathT, IdxT>(
+        cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(
           handle,
           X_view,
           centroids_view,
@@ -119,18 +120,17 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
       } else {
         auto nearest_idx =
           raft::make_device_mdarray<IdxT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
-        cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<MathT, IdxT>(
-          handle,
-          X_view,
-          centroids_view,
-          nearest_idx.view(),
-          nearest_dist.view(),
-          X_norm_view,
-          L2NormBuf_OR_DistBuf,
-          params.metric,
-          0,
-          0,
-          workspace);
+        cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(handle,
+                                                                     X_view,
+                                                                     centroids_view,
+                                                                     nearest_idx.view(),
+                                                                     nearest_dist.view(),
+                                                                     X_norm_view,
+                                                                     L2NormBuf_OR_DistBuf,
+                                                                     params.metric,
+                                                                     0,
+                                                                     0,
+                                                                     workspace);
         raft::copy(
           handle, raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows), nearest_idx.view());
       }
@@ -152,33 +152,31 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
 
         if constexpr (std::is_same_v<LabelT, IdxT>) {
           auto labels_view = raft::make_device_vector_view<IdxT, IdxT>(labels, n_rows);
-          cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<MathT, IdxT>(
-            handle,
-            X_view,
-            centroids_view,
-            labels_view,
-            nearest_dist.view(),
-            X_norm_view,
-            L2NormBuf_OR_DistBuf,
-            params.metric,
-            0,
-            0,
-            workspace);
+          cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(handle,
+                                                                       X_view,
+                                                                       centroids_view,
+                                                                       labels_view,
+                                                                       nearest_dist.view(),
+                                                                       X_norm_view,
+                                                                       L2NormBuf_OR_DistBuf,
+                                                                       params.metric,
+                                                                       0,
+                                                                       0,
+                                                                       workspace);
         } else {
           auto nearest_idx =
             raft::make_device_mdarray<IdxT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
-          cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<MathT, IdxT>(
-            handle,
-            X_view,
-            centroids_view,
-            nearest_idx.view(),
-            nearest_dist.view(),
-            X_norm_view,
-            L2NormBuf_OR_DistBuf,
-            params.metric,
-            0,
-            0,
-            workspace);
+          cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(handle,
+                                                                       X_view,
+                                                                       centroids_view,
+                                                                       nearest_idx.view(),
+                                                                       nearest_dist.view(),
+                                                                       X_norm_view,
+                                                                       L2NormBuf_OR_DistBuf,
+                                                                       params.metric,
+                                                                       0,
+                                                                       0,
+                                                                       workspace);
           raft::copy(handle,
                      raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows),
                      nearest_idx.view());

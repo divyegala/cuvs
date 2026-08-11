@@ -73,7 +73,7 @@ cache:
       - if: cuda_major == "13"
         then:
           - cutile-python
-          - cuda-tileiras ==${{ cuda_version }}.*
+          - cuda-tileiras
       - ${{ stdlib("c") }}
     host:
       - libnvjitlink-dev

@@ -57,12 +57,6 @@ struct Fused1nnTilePlanner : TileAlgorithmPlanner {
     using cuvs::detail::jit_lto::cutile_arch_9_0;
 
     constexpr bool is_relaxed = std::is_same_v<AbiTag, cutile_abi_relaxed>;
-    using Tile80              = std::conditional_t<is_relaxed,
-                                                   fused_1nn_matrix_tile_cutile_arch_8_0_relaxed,
-                                                   fused_1nn_matrix_tile_cutile_arch_8_0_strict>;
-    using Tile86              = std::conditional_t<is_relaxed,
-                                                   fused_1nn_matrix_tile_cutile_arch_8_6_relaxed,
-                                                   fused_1nn_matrix_tile_cutile_arch_8_6_strict>;
     using Tile90              = std::conditional_t<is_relaxed,
                                                    fused_1nn_matrix_tile_cutile_arch_9_0_relaxed,
                                                    fused_1nn_matrix_tile_cutile_arch_9_0_strict>;
@@ -73,10 +67,14 @@ struct Fused1nnTilePlanner : TileAlgorithmPlanner {
                                                    fused_1nn_matrix_tile_cutile_arch_12_0_relaxed,
                                                    fused_1nn_matrix_tile_cutile_arch_12_0_strict>;
 
-    this->add_static_fragment<
-      fragment_tag_fused_1nn_cubin<DataTag, IndexTag, Tile80, AbiTag, cutile_arch_8_0>>();
-    this->add_static_fragment<
-      fragment_tag_fused_1nn_cubin<DataTag, IndexTag, Tile86, AbiTag, cutile_arch_8_6>>();
+    if constexpr (is_relaxed) {
+      using Tile80 = fused_1nn_matrix_tile_cutile_arch_8_0_relaxed;
+      using Tile86 = fused_1nn_matrix_tile_cutile_arch_8_6_relaxed;
+      this->add_static_fragment<
+        fragment_tag_fused_1nn_cubin<DataTag, IndexTag, Tile80, AbiTag, cutile_arch_8_0>>();
+      this->add_static_fragment<
+        fragment_tag_fused_1nn_cubin<DataTag, IndexTag, Tile86, AbiTag, cutile_arch_8_6>>();
+    }
     this->add_static_fragment<
       fragment_tag_fused_1nn_cubin<DataTag, IndexTag, Tile90, AbiTag, cutile_arch_9_0>>();
     this->add_static_fragment<
