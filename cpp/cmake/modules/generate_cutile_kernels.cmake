@@ -64,9 +64,8 @@ function(_cutile_kernels_setup)
   )
   if(NOT _cutile_import_result EQUAL 0)
     message(
-      FATAL_ERROR
-        "cuda.tile (cuTile Python) is required to build cuTile embedded kernels. "
-        "Install it in the active Python environment, e.g. pip install cuda-tile[tileiras]."
+      FATAL_ERROR "cuda.tile (cuTile Python) is required to build cuTile embedded kernels. "
+                  "Install cutile-python and cuda-tileiras (conda), or cuda-tile[tileiras] (pip)."
     )
   endif()
 

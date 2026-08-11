@@ -427,23 +427,17 @@ dependencies:
           - matrix:
               cuda: "13.3"
             packages:
-              - pip
-              - pip:
-                  - cuda-tile
-                  - cuda-toolkit[tileiras]==13.3.*
+              - cutile-python
+              - cuda-tileiras=13.3.*
           - matrix:
               cuda: "13.*"
             packages:
-              - pip
-              - pip:
-                  - cuda-tile
-                  - cuda-toolkit[tileiras]==13.*
+              - cutile-python
+              - cuda-tileiras
           - matrix:
             packages:
-              - pip
-              - pip:
-                  - cuda-tile
-                  - cuda-toolkit[tileiras]==13.*
+              - cutile-python
+              - cuda-tileiras
       - output_types: [requirements, pyproject]
         matrices:
           - matrix:
