@@ -49,10 +49,9 @@ CutileTileConfig TileAlgorithmPlanner::tile_config() const
   int cc_major = 0;
   int cc_minor = 0;
   if (cuvs::detail::jit_lto::get_device_compute_capability(cc_major, cc_minor)) {
-    for (const auto& fragment : cubin_fragments_) {
-      if (fragment->get_cc_major() == cc_major && fragment->get_cc_minor() == cc_minor) {
-        return tile_config_from_fragment(fragment.get(), entrypoint);
-      }
+    if (const auto* fragment = cuvs::detail::jit_lto::find_compatible_cubin_fragment(
+          cc_major, cc_minor, cubin_fragments_)) {
+      return tile_config_from_fragment(fragment, entrypoint);
     }
   }
 

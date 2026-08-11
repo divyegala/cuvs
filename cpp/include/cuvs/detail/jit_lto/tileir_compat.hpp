@@ -44,7 +44,7 @@ inline bool cutile_integration_enabled()
   return library_built_with_cutile() && runtime_cuda13_or_newer();
 }
 
-/** True when this build embeds a prebuilt cubin for the given compute capability. */
+/** True when this build embeds compatible SASS in the device's compute-capability major family. */
 inline bool has_embedded_cubin_for_arch(int cc_major, int cc_minor)
 {
   return is_embedded_cubin_arch(cc_major, cc_minor);
@@ -58,8 +58,8 @@ inline bool tileir_fallback_available(int driver_version)
 
 /**
  * True when a cuTile launch may be attempted for the given device: cuTile is enabled, the runtime
- * is CUDA 13+, and either a matching embedded cubin exists (no driver JIT required) or the driver
- * can JIT the embedded TileIR bytecode fallback.
+ * is CUDA 13+, and either compatible same-family SASS exists (no driver JIT required) or the
+ * driver can JIT the embedded TileIR bytecode fallback.
  */
 #if CUVS_CUTILE_ENABLED
 inline bool cutile_launch_available_for_arch(int cc_major, int cc_minor, int driver_version)

@@ -24,11 +24,6 @@ struct cutile_arch_8_6 {
   static constexpr int cc_minor = 6;
 };
 
-struct cutile_arch_8_9 {
-  static constexpr int cc_major = 8;
-  static constexpr int cc_minor = 9;
-};
-
 struct cutile_arch_9_0 {
   static constexpr int cc_major = 9;
   static constexpr int cc_minor = 0;
@@ -46,13 +41,8 @@ struct cutile_arch_12_0 {
 
 inline bool is_embedded_cubin_arch(int cc_major, int cc_minor)
 {
-  if (cc_major == 8 && cc_minor == 0) { return true; }
-  if (cc_major == 8 && cc_minor == 6) { return true; }
-  if (cc_major == 8 && cc_minor == 9) { return true; }
-  if (cc_major == 9 && cc_minor == 0) { return true; }
-  if (cc_major == 10 && cc_minor == 0) { return true; }
-  if (cc_major == 12 && cc_minor == 0) { return true; }
-  return false;
+  if (cc_minor < 0) { return false; }
+  return cc_major == 8 || cc_major == 9 || cc_major == 10 || cc_major == 12;
 }
 
 #else
