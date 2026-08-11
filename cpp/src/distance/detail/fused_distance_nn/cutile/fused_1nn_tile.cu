@@ -8,6 +8,7 @@
 #include "fused_1nn_planner.hpp"
 
 #include <cuvs/core/export.hpp>
+#include <cuvs/detail/jit_lto/cutile_module.hpp>
 #include <cuvs/detail/jit_lto/fused_distance_nn/fused_1nn_fragments.hpp>
 #include <raft/core/operators.hpp>
 #include <raft/linalg/unary_op.cuh>

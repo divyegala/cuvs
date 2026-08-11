@@ -1,11 +1,30 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
 
 include_guard(GLOBAL)
+
+function(cuvs_find_build_python output_var)
+  if(DEFINED ENV{BUILD_PREFIX})
+    find_program(
+      _cuvs_build_python
+      NAMES python3 python
+      PATHS "$ENV{BUILD_PREFIX}/bin"
+      NO_DEFAULT_PATH REQUIRED NO_CACHE
+    )
+    set(_python_executable "${_cuvs_build_python}")
+  else()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(_python_executable "${Python3_EXECUTABLE}")
+  endif()
+  set(${output_var}
+      "${_python_executable}"
+      PARENT_SCOPE
+  )
+endfunction()
 
 function(compute_matrix_product output_var)
   set(options)
@@ -14,19 +33,21 @@ function(compute_matrix_product output_var)
 
   cmake_parse_arguments(_JIT_LTO "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  cuvs_find_build_python(_matrix_python_executable)
 
   if(_JIT_LTO_MATRIX_JSON_FILE)
     execute_process(
-      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compute_matrix_product.py"
-              "${_JIT_LTO_MATRIX_JSON_FILE}" #
+      COMMAND
+        "${_matrix_python_executable}"
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compute_matrix_product.py"
+        "${_JIT_LTO_MATRIX_JSON_FILE}"
       OUTPUT_VARIABLE output COMMAND_ERROR_IS_FATAL ANY
     )
   else()
     execute_process(
       COMMAND "${CMAKE_COMMAND}" -E echo "${_JIT_LTO_MATRIX_JSON_STRING}"
-      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compute_matrix_product.py"
-              -
+      COMMAND "${_matrix_python_executable}"
+              "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compute_matrix_product.py" -
       OUTPUT_VARIABLE output COMMAND_ERROR_IS_FATAL ANY
     )
   endif()

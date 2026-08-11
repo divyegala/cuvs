@@ -36,17 +36,6 @@ function(_cutile_kernels_setup)
   set(multi_value)
   cmake_parse_arguments(_CUTILE "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
-  if(DEFINED ENV{BUILD_PREFIX})
-    find_program(
-      _cutile_build_python
-      NAMES python3 python
-      PATHS "$ENV{BUILD_PREFIX}/bin"
-      NO_DEFAULT_PATH REQUIRED NO_CACHE
-    )
-    set(Python3_EXECUTABLE "${_cutile_build_python}")
-  else()
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  endif()
   find_package(CUDAToolkit REQUIRED)
 
   if(CUDAToolkit_VERSION VERSION_LESS 13.0)
@@ -60,6 +49,8 @@ function(_cutile_kernels_setup)
     )
     return()
   endif()
+
+  cuvs_find_build_python(Python3_EXECUTABLE)
 
   find_program(
     CUTILE_BIN2C
@@ -203,7 +194,9 @@ function(process_cutile_matrix_entry source_list_var)
   set(multi_value FRAGMENT_TAG_HEADER_FILES)
   cmake_parse_arguments(_CUTILE "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(NOT Python3_EXECUTABLE)
+    cuvs_find_build_python(Python3_EXECUTABLE)
+  endif()
 
   populate_matrix_variables("${_CUTILE_MATRIX_JSON_ENTRY}")
 
