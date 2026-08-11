@@ -557,7 +557,8 @@ void mnmg_fit(
           batch_data_view,
           rank_centroids_const,
           raft::make_device_scalar_view(batch_clustering_cost.data_handle()),
-          batch_sw);
+          batch_sw,
+          cuvs::distance::DistanceType::L2Unexpanded);
 
         raft::linalg::add(dev_res,
                           raft::make_const_mdspan(clustering_cost.view()),

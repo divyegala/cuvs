@@ -331,6 +331,7 @@ void min_cluster_distance(raft::resources const& handle,
  * @param[in]  centroids      Cluster centroids [n_clusters x n_features]
  * @param[out] cost           Sum of squared distances to nearest centroid (device)
  * @param[in]  sample_weight  Optional per-sample weights [n_samples]
+ * @param[in]  metric         Squared-L2 implementation used to evaluate inertia
  */
 template <typename DataT, typename IndexT>
 void cluster_cost(
@@ -338,22 +339,27 @@ void cluster_cost(
   raft::device_matrix_view<const DataT, IndexT> X,
   raft::device_matrix_view<const DataT, IndexT> centroids,
   raft::device_scalar_view<DataT> cost,
-  std::optional<raft::device_vector_view<const DataT, IndexT>> sample_weight = std::nullopt)
+  std::optional<raft::device_vector_view<const DataT, IndexT>> sample_weight = std::nullopt,
+  cuvs::distance::DistanceType metric = cuvs::distance::DistanceType::L2Unexpanded)
 {
   auto stream     = raft::resource::get_cuda_stream(handle);
   auto n_clusters = centroids.extent(0);
   auto n_samples  = X.extent(0);
   auto n_features = X.extent(1);
 
+  RAFT_EXPECTS(metric == cuvs::distance::DistanceType::L2Expanded ||
+                 metric == cuvs::distance::DistanceType::L2Unexpanded,
+               "cluster_cost requires a squared-L2 distance metric");
+
   rmm::device_uvector<char> workspace(n_samples * sizeof(IndexT), stream);
 
   auto x_norms = raft::make_device_vector<DataT>(handle, n_samples);
-  raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(handle, X, x_norms.view());
+  if (metric == cuvs::distance::DistanceType::L2Expanded) {
+    raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(handle, X, x_norms.view());
+  }
 
   auto min_cluster_distance = raft::make_device_vector<DataT>(handle, n_samples);
   rmm::device_uvector<DataT> l2_norm_or_distance_buffer(0, stream);
-
-  auto metric = cuvs::distance::DistanceType::L2Expanded;
 
   cuvs::cluster::kmeans::min_cluster_distance<DataT, IndexT>(
     handle,
