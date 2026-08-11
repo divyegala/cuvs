@@ -36,7 +36,17 @@ function(_cutile_kernels_setup)
   set(multi_value)
   cmake_parse_arguments(_CUTILE "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(DEFINED ENV{BUILD_PREFIX})
+    find_program(
+      _cutile_build_python
+      NAMES python3 python
+      PATHS "$ENV{BUILD_PREFIX}/bin"
+      NO_DEFAULT_PATH REQUIRED NO_CACHE
+    )
+    set(Python3_EXECUTABLE "${_cutile_build_python}")
+  else()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  endif()
   find_package(CUDAToolkit REQUIRED)
 
   if(CUDAToolkit_VERSION VERSION_LESS 13.0)
@@ -68,6 +78,7 @@ function(_cutile_kernels_setup)
                   "Install cutile-python and cuda-tileiras (conda), or cuda-tile[tileiras] (pip)."
     )
   endif()
+  message(STATUS "Using cuTile Python: ${Python3_EXECUTABLE}")
 
   set_property(
     DIRECTORY
