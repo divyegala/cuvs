@@ -12,8 +12,7 @@ function(cuvs_find_build_python output_var)
     find_program(
       _cuvs_build_python
       NAMES python3 python
-      PATHS "$ENV{BUILD_PREFIX}/bin"
-      NO_DEFAULT_PATH REQUIRED NO_CACHE
+      HINTS "$ENV{BUILD_PREFIX}/bin" REQUIRED NO_CACHE
     )
     set(_python_executable "${_cuvs_build_python}")
   else()
