@@ -50,7 +50,7 @@ function(_cutile_kernels_setup)
     return()
   endif()
 
-  cuvs_find_build_python(Python3_EXECUTABLE)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   find_program(
     CUTILE_BIN2C
@@ -61,12 +61,16 @@ function(_cutile_kernels_setup)
   execute_process(
     COMMAND "${Python3_EXECUTABLE}" -c "import cuda.tile"
     RESULT_VARIABLE _cutile_import_result
-    OUTPUT_QUIET ERROR_QUIET
+    ERROR_VARIABLE _cutile_import_error
+    OUTPUT_QUIET ERROR_STRIP_TRAILING_WHITESPACE
   )
   if(NOT _cutile_import_result EQUAL 0)
     message(
-      FATAL_ERROR "cuda.tile (cuTile Python) is required to build cuTile embedded kernels. "
-                  "Install cutile-python and cuda-tileiras (conda), or cuda-tile[tileiras] (pip)."
+      FATAL_ERROR
+        "cuda.tile (cuTile Python) is required to build cuTile embedded kernels. "
+        "Install cutile-python and cuda-tileiras (conda), or cuda-tile[tileiras] (pip).\n"
+        "Interpreter: ${Python3_EXECUTABLE}\n"
+        "Import error: ${_cutile_import_error}"
     )
   endif()
   message(STATUS "Using cuTile Python: ${Python3_EXECUTABLE}")
@@ -195,7 +199,7 @@ function(process_cutile_matrix_entry source_list_var)
   cmake_parse_arguments(_CUTILE "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
   if(NOT Python3_EXECUTABLE)
-    cuvs_find_build_python(Python3_EXECUTABLE)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
   endif()
 
   populate_matrix_variables("${_CUTILE_MATRIX_JSON_ENTRY}")
