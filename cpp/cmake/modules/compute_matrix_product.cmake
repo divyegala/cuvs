@@ -7,6 +7,12 @@
 
 include_guard(GLOBAL)
 
+if(DEFINED ENV{BUILD_PREFIX})
+  set(Python3_ROOT_DIR "$ENV{BUILD_PREFIX}")
+  set(Python3_FIND_STRATEGY LOCATION)
+  set(Python3_FIND_VIRTUALENV STANDARD)
+endif()
+
 function(compute_matrix_product output_var)
   set(options)
   set(one_value MATRIX_JSON_FILE MATRIX_JSON_STRING)
