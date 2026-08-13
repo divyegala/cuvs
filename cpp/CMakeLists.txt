@@ -6,9 +6,23 @@
 cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 if(DEFINED ENV{BUILD_PREFIX})
-  set(Python3_ROOT_DIR "$ENV{BUILD_PREFIX}")
-  set(Python3_FIND_STRATEGY LOCATION)
-  set(Python3_FIND_VIRTUALENV STANDARD)
+  file(
+    GLOB _cuvs_build_python_candidates
+    LIST_DIRECTORIES FALSE
+    "$ENV{BUILD_PREFIX}/bin/python3.[0-9]*"
+  )
+  list(FILTER _cuvs_build_python_candidates EXCLUDE REGEX "-config$")
+  list(LENGTH _cuvs_build_python_candidates _cuvs_build_python_count)
+  if(NOT _cuvs_build_python_count EQUAL 1)
+    message(FATAL_ERROR "Expected one Python interpreter in $ENV{BUILD_PREFIX}/bin, found: "
+                        "${_cuvs_build_python_candidates}"
+    )
+  endif()
+  list(GET _cuvs_build_python_candidates 0 Python3_EXECUTABLE)
+  set(Python3_EXECUTABLE
+      "${Python3_EXECUTABLE}"
+      CACHE FILEPATH "Python interpreter from the conda build prefix" FORCE
+  )
 endif()
 
 include(../cmake/rapids_config.cmake)
