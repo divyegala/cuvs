@@ -4,6 +4,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
+
+if(DEFINED ENV{BUILD_PREFIX})
+  set(Python3_ROOT_DIR "$ENV{BUILD_PREFIX}")
+  set(Python3_FIND_STRATEGY LOCATION)
+  set(Python3_FIND_VIRTUALENV STANDARD)
+endif()
+
 include(../cmake/rapids_config.cmake)
 include(rapids-cmake)
 include(rapids-cpm)
