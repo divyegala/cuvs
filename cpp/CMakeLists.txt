@@ -12,13 +12,23 @@ if(DEFINED ENV{BUILD_PREFIX})
     "$ENV{BUILD_PREFIX}/bin/python3.[0-9]*"
   )
   list(FILTER _cuvs_build_python_candidates EXCLUDE REGEX "-config$")
-  list(LENGTH _cuvs_build_python_candidates _cuvs_build_python_count)
+  if(NOT _cuvs_build_python_candidates)
+    message(FATAL_ERROR "No Python interpreter found in $ENV{BUILD_PREFIX}/bin")
+  endif()
+  set(_cuvs_build_python_executables)
+  foreach(_candidate IN LISTS _cuvs_build_python_candidates)
+    get_filename_component(_executable "${_candidate}" REALPATH)
+    list(APPEND _cuvs_build_python_executables "${_executable}")
+  endforeach()
+  list(REMOVE_DUPLICATES _cuvs_build_python_executables)
+  list(LENGTH _cuvs_build_python_executables _cuvs_build_python_count)
   if(NOT _cuvs_build_python_count EQUAL 1)
-    message(FATAL_ERROR "Expected one Python interpreter in $ENV{BUILD_PREFIX}/bin, found: "
-                        "${_cuvs_build_python_candidates}"
+    message(
+      FATAL_ERROR "Python aliases in $ENV{BUILD_PREFIX}/bin resolve to different interpreters: "
+                  "${_cuvs_build_python_executables}"
     )
   endif()
-  list(GET _cuvs_build_python_candidates 0 Python3_EXECUTABLE)
+  list(GET _cuvs_build_python_executables 0 Python3_EXECUTABLE)
   set(Python3_EXECUTABLE
       "${Python3_EXECUTABLE}"
       CACHE FILEPATH "Python interpreter from the conda build prefix" FORCE
