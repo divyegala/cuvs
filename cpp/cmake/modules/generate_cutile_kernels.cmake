@@ -30,39 +30,6 @@ function(_cutile_fragment_tag_header_files output_var)
   )
 endfunction()
 
-function(_cutile_find_python output_var)
-  if(DEFINED ENV{BUILD_PREFIX})
-    file(
-      GLOB _python_candidates
-      LIST_DIRECTORIES FALSE
-      "$ENV{BUILD_PREFIX}/bin/python3.[0-9]*"
-    )
-    list(FILTER _python_candidates EXCLUDE REGEX "-config$")
-    foreach(_candidate IN LISTS _python_candidates)
-      get_filename_component(_executable "${_candidate}" REALPATH)
-      list(APPEND _python_executables "${_executable}")
-    endforeach()
-    list(REMOVE_DUPLICATES _python_executables)
-    list(LENGTH _python_executables _python_count)
-    if(NOT _python_count EQUAL 1)
-      message(FATAL_ERROR "Expected one Python installation in $ENV{BUILD_PREFIX}, found: "
-                          "${_python_executables}"
-      )
-    endif()
-    list(GET _python_executables 0 Python3_EXECUTABLE)
-    set(${output_var}
-        "${Python3_EXECUTABLE}"
-        PARENT_SCOPE
-    )
-    return()
-  endif()
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  set(${output_var}
-      "${Python3_EXECUTABLE}"
-      PARENT_SCOPE
-  )
-endfunction()
-
 function(_cutile_kernels_setup)
   set(options)
   set(one_value MATRIX_JSON_FILE OUTPUT_DIRECTORY)
@@ -83,7 +50,7 @@ function(_cutile_kernels_setup)
     return()
   endif()
 
-  _cutile_find_python(Python3_EXECUTABLE)
+  cuvs_find_build_python(Python3_EXECUTABLE)
 
   find_program(
     CUTILE_BIN2C
@@ -232,7 +199,7 @@ function(process_cutile_matrix_entry source_list_var)
   cmake_parse_arguments(_CUTILE "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
   if(NOT Python3_EXECUTABLE)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    cuvs_find_build_python(Python3_EXECUTABLE)
   endif()
 
   populate_matrix_variables("${_CUTILE_MATRIX_JSON_ENTRY}")
