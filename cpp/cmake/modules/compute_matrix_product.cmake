@@ -13,7 +13,9 @@ function(cuvs_find_build_python output_var)
     set(Python_FIND_STRATEGY LOCATION)
     set(Python_FIND_VIRTUALENV STANDARD)
   endif()
+  set(CMAKE_FIND_DEBUG_MODE TRUE)
   find_package(Python REQUIRED COMPONENTS Interpreter)
+  set(CMAKE_FIND_DEBUG_MODE FALSE)
   set(${output_var}
       "${Python_EXECUTABLE}"
       PARENT_SCOPE
