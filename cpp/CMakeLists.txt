@@ -155,14 +155,20 @@ if(NOT BUILD_CPU_ONLY)
   # * enable the CMake CUDA language
   # * set other CUDA compilation flags
   rapids_find_package(
-    CUDAToolkit REQUIRED BUILD_EXPORT_SET cuvs-exports INSTALL_EXPORT_SET cuvs-exports
+    CUDAToolkit REQUIRED
+    BUILD_EXPORT_SET cuvs-exports
+    INSTALL_EXPORT_SET cuvs-exports
   )
 else()
   add_compile_definitions(BUILD_CPU_ONLY)
 endif()
 
 if(NOT DISABLE_OPENMP)
-  rapids_find_package(OpenMP REQUIRED BUILD_EXPORT_SET cuvs-exports INSTALL_EXPORT_SET cuvs-exports)
+  rapids_find_package(
+    OpenMP REQUIRED
+    BUILD_EXPORT_SET cuvs-exports
+    INSTALL_EXPORT_SET cuvs-exports
+  )
   if(OPENMP_FOUND)
     message(VERBOSE "cuVS: OpenMP found in ${OpenMP_CXX_INCLUDE_DIRS}")
   endif()
@@ -1513,7 +1519,11 @@ if(NOT BUILD_CPU_ONLY)
   endif()
 
   if(BUILD_MG_ALGOS)
-    rapids_find_generate_module(NCCL HEADER_NAMES nccl.h LIBRARY_NAMES nccl)
+    rapids_find_generate_module(
+      NCCL
+      HEADER_NAMES nccl.h
+      LIBRARY_NAMES nccl
+    )
     find_package(NCCL REQUIRED)
     target_link_libraries(cuvs_objs PUBLIC $<BUILD_LOCAL_INTERFACE:NCCL::NCCL>)
   endif()
