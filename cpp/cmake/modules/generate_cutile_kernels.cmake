@@ -97,7 +97,10 @@ function(_cutile_kernels_setup)
   )
 endfunction()
 
-macro(_cutile_append_matrix_tile_aliases entry abi_abbrev tile_m tile_n tile_k)
+macro(_cutile_append_matrix_tile_aliases entry data_abbrev abi_abbrev tile_geometry)
+  list(GET tile_geometry 0 tile_m)
+  list(GET tile_geometry 1 tile_n)
+  list(GET tile_geometry 2 tile_k)
   string(JSON _cutile_export_len LENGTH "${entry}" "_export")
   set(_cutile_export_idx 0)
   while(_cutile_export_idx LESS _cutile_export_len)
@@ -105,9 +108,9 @@ macro(_cutile_append_matrix_tile_aliases entry abi_abbrev tile_m tile_n tile_k)
     string(JSON _cutile_register GET "${_cutile_export_entry}" "register")
     if(_cutile_register STREQUAL "cubin")
       string(JSON _cutile_arch_tag GET "${_cutile_export_entry}" "arch_tag")
-      set(_cutile_alias_suffix "${_cutile_arch_tag}_${abi_abbrev}")
+      set(_cutile_alias_suffix "${data_abbrev}_${_cutile_arch_tag}_${abi_abbrev}")
     elseif(_cutile_register STREQUAL "tileir")
-      set(_cutile_alias_suffix "tileir_${abi_abbrev}")
+      set(_cutile_alias_suffix "${data_abbrev}_tileir_${abi_abbrev}")
     else()
       message(FATAL_ERROR "Unknown cuTile register kind '${_cutile_register}'")
     endif()
@@ -145,30 +148,39 @@ function(_cutile_generate_matrix_tiles_header header_path matrix_json_file)
       string(JSON _default_tile_k GET "${_entry_tile}" "tile_k")
     endif()
 
-    string(JSON _abi_len LENGTH "${_entry}" "_abi")
-    set(_abi_idx 0)
-    while(_abi_idx LESS _abi_len)
-      string(JSON _abi_entry GET "${_entry}" "_abi" "${_abi_idx}")
-      string(JSON _abi_abbrev GET "${_abi_entry}" "abi_abbrev")
-      string(JSON _tile_m ERROR_VARIABLE _tile_m_error GET "${_abi_entry}" "tile_m")
-      string(JSON _tile_n ERROR_VARIABLE _tile_n_error GET "${_abi_entry}" "tile_n")
-      string(JSON _tile_k ERROR_VARIABLE _tile_k_error GET "${_abi_entry}" "tile_k")
-      if(_tile_m_error
-         OR _tile_n_error
-         OR _tile_k_error
-      )
-        if(_entry_tile_error)
-          message(FATAL_ERROR "Missing cuTile geometry for ABI ${_abi_abbrev}")
-        endif()
-        set(_tile_m "${_default_tile_m}")
-        set(_tile_n "${_default_tile_n}")
-        set(_tile_k "${_default_tile_k}")
-      endif()
+    string(JSON _data_len LENGTH "${_entry}" "_data")
+    set(_data_idx 0)
+    while(_data_idx LESS _data_len)
+      string(JSON _data_entry GET "${_entry}" "_data" "${_data_idx}")
+      string(JSON _data_abbrev GET "${_data_entry}" "data_abbrev")
 
-      _cutile_append_matrix_tile_aliases(
-        "${_entry}" "${_abi_abbrev}" "${_tile_m}" "${_tile_n}" "${_tile_k}"
-      )
-      math(EXPR _abi_idx "${_abi_idx} + 1")
+      string(JSON _abi_len LENGTH "${_entry}" "_abi")
+      set(_abi_idx 0)
+      while(_abi_idx LESS _abi_len)
+        string(JSON _abi_entry GET "${_entry}" "_abi" "${_abi_idx}")
+        string(JSON _abi_abbrev GET "${_abi_entry}" "abi_abbrev")
+        string(JSON _tile_m ERROR_VARIABLE _tile_m_error GET "${_abi_entry}" "tile_m")
+        string(JSON _tile_n ERROR_VARIABLE _tile_n_error GET "${_abi_entry}" "tile_n")
+        string(JSON _tile_k ERROR_VARIABLE _tile_k_error GET "${_abi_entry}" "tile_k")
+        if(_tile_m_error
+           OR _tile_n_error
+           OR _tile_k_error
+        )
+          if(_entry_tile_error)
+            message(FATAL_ERROR "Missing cuTile geometry for ${_data_abbrev}/${_abi_abbrev}")
+          endif()
+          set(_tile_m "${_default_tile_m}")
+          set(_tile_n "${_default_tile_n}")
+          set(_tile_k "${_default_tile_k}")
+        endif()
+
+        set(_tile_geometry "${_tile_m};${_tile_n};${_tile_k}")
+        _cutile_append_matrix_tile_aliases(
+          "${_entry}" "${_data_abbrev}" "${_abi_abbrev}" "${_tile_geometry}"
+        )
+        math(EXPR _abi_idx "${_abi_idx} + 1")
+      endwhile()
+      math(EXPR _data_idx "${_data_idx} + 1")
     endwhile()
     math(EXPR _entry_idx "${_entry_idx} + 1")
   endwhile()
@@ -187,6 +199,40 @@ ${_tile_aliases}
 
 }  // namespace cuvs::distance::detail
 "
+  )
+endfunction()
+
+function(_cutile_make_python_args output_var)
+  set(_python_args
+      --format
+      "${output_format}"
+      --data-type
+      "${data_type}"
+      --metric
+      "${metric}"
+      --index-type
+      "${index_type}"
+      --tile-m
+      "${tile_m}"
+      --tile-n
+      "${tile_n}"
+      --tile-k
+      "${tile_k}"
+      --gpu-code
+      "${gpu_code}"
+  )
+  if(DEFINED bytecode_version AND NOT "${bytecode_version}" STREQUAL "")
+    list(APPEND _python_args --bytecode-version "${bytecode_version}")
+  endif()
+  if(DEFINED matrix_layout AND NOT "${matrix_layout}" STREQUAL "")
+    list(APPEND _python_args --matrix-layout "${matrix_layout}")
+  endif()
+  if(DEFINED occupancy AND NOT "${occupancy}" STREQUAL "")
+    list(APPEND _python_args --occupancy "${occupancy}")
+  endif()
+  set(${output_var}
+      "${_python_args}"
+      PARENT_SCOPE
   )
 endfunction()
 
@@ -227,30 +273,7 @@ function(process_cutile_matrix_entry source_list_var)
   set(_fragment_cpp "${_CUTILE_OUTPUT_DIRECTORY}/${_artifact_stem}_${register}.cpp")
   set(embedded_header_file "${_artifact_stem}_${register}.h")
 
-  set(_python_args
-      --format
-      "${output_format}"
-      --data-type
-      "${data_type}"
-      --metric
-      "${metric}"
-      --index-type
-      "${index_type}"
-      --tile-m
-      "${tile_m}"
-      --tile-n
-      "${tile_n}"
-      --tile-k
-      "${tile_k}"
-      --gpu-code
-      "${gpu_code}"
-  )
-  if(DEFINED bytecode_version AND NOT "${bytecode_version}" STREQUAL "")
-    list(APPEND _python_args --bytecode-version "${bytecode_version}")
-  endif()
-  if(DEFINED matrix_layout AND NOT "${matrix_layout}" STREQUAL "")
-    list(APPEND _python_args --matrix-layout "${matrix_layout}")
-  endif()
+  _cutile_make_python_args(_python_args)
 
   set(_export_python_executable "${Python3_EXECUTABLE}")
   if(DEFINED python_executable AND NOT "${python_executable}" STREQUAL "")

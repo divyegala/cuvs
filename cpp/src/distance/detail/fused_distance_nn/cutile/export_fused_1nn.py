@@ -181,6 +181,7 @@ def export_binary(
     tile_k: int,
     gpu_code: str,
     matrix_layout: str = "strict",
+    occupancy: int | None = None,
     bytecode_version: str | None = None,
 ) -> str:
     kernel = make_kernel(
@@ -192,6 +193,7 @@ def export_binary(
         index_type=index_type,
         gpu_code=gpu_code,
         matrix_layout=matrix_layout,
+        occupancy=occupancy,
     )
     signature = _kernel_signature(
         data_type,
@@ -244,6 +246,7 @@ def main() -> int:
         choices=("strict", "relaxed"),
         default="strict",
     )
+    parser.add_argument("--occupancy", type=int)
     parser.add_argument(
         "--bytecode-version", default=DEFAULT_TILEIR_BYTECODE_VERSION
     )
@@ -261,6 +264,7 @@ def main() -> int:
             tile_k=args.tile_k,
             gpu_code=args.gpu_code,
             matrix_layout=args.matrix_layout,
+            occupancy=args.occupancy,
             bytecode_version=args.bytecode_version,
         )
     )

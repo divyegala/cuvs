@@ -38,6 +38,7 @@ def make_kernel(
     index_type: str = "int32",
     gpu_code: str = "sm_80",
     matrix_layout: str = "strict",
+    occupancy: int | None = None,
 ):
     """Build the flat-reduction runtime-metric cuTile kernel."""
     if data_type not in ("half", "float"):
@@ -54,8 +55,11 @@ def make_kernel(
     out_dist_dtype = ct.float16 if data_type == "half" else ct.float32
     core_shape = (tile_m, tile_n)
     best_shape = (tile_m, 1)
+    kernel_options = {}
+    if occupancy is not None:
+        kernel_options["occupancy"] = ct.ByTarget(**{gpu_code: occupancy})
 
-    @ct.kernel(occupancy=ct.ByTarget(sm_120=2))
+    @ct.kernel(**kernel_options)
     def fused_1nn_kernel(
         A,
         B,
