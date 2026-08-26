@@ -58,20 +58,31 @@ def _elem_stride_divisible_for_tma(elem_dtype) -> tuple[int, int]:
     return (16 // bytes_per_elem, 1)
 
 
+def _elem_shape_divisible_for_ldgsts(elem_dtype) -> tuple[int, int]:
+    """Matrix extent aligned to the same 16-byte row pitch enforced on strides."""
+    bytes_per_elem = 2 if elem_dtype == ct.float16 else 4
+    return (1, 16 // bytes_per_elem)
+
+
 def _cuvs_matrix_constraint(
     elem_dtype,
     *,
     index_dtype=ct.int32,
     require_tma_friendly_pitch: bool = True,
+    require_ldgsts_friendly_shape: bool = False,
 ):
     """Row-major device matrices for cuVS KMeans benchmarks.
 
-      Assumes raft/cupy-style contiguous layout: stride[-1]==1, stride[0]==D,
-      16-byte base alignment, and row pitch 16-byte aligned (float32 D%4==0,
-      float16 D%8==0). Applies to both points and centroids matrices.
+    Assumes raft/cupy-style contiguous layout: stride[-1]==1, stride[0]==D,
+    16-byte base alignment, and row pitch 16-byte aligned (float32 D%4==0,
+    float16 D%8==0). Applies to both points and centroids matrices.
 
-    shape_divisible_by is (1, 1); tail tiles are masked in the kernel.
-      Odd D or general layouts need a separate relaxed export profile.
+    SM80/SM86 strict exports also express the row-pitch guarantee as
+    shape_divisible_by=(1, 4) for float32 or (1, 8) for float16. This
+    duplicates the stride constraint intentionally so the compiler selects
+    LDGSTS instead of LDG. Tail tiles remain masked in the kernel.
+
+    Odd D or general layouts need a separate relaxed export profile.
     """
     return ArrayConstraint(
         elem_dtype,
@@ -86,7 +97,11 @@ def _cuvs_matrix_constraint(
             if require_tma_friendly_pitch
             else (1, 1)
         ),
-        shape_divisible_by=(1, 1),
+        shape_divisible_by=(
+            _elem_shape_divisible_for_ldgsts(elem_dtype)
+            if require_ldgsts_friendly_shape
+            else (1, 1)
+        ),
         base_addr_divisible_by=16,
     )
 
@@ -127,6 +142,7 @@ def _kernel_signature(
     tile_m: int,
     tile_n: int,
     tile_k: int,
+    gpu_code: str,
     matrix_layout: str,
 ) -> KernelSignature:
     elem = _dtype_for(data_type)
@@ -135,6 +151,9 @@ def _kernel_signature(
         elem,
         index_dtype=idx_dtype,
         require_tma_friendly_pitch=matrix_layout == "strict",
+        require_ldgsts_friendly_shape=(
+            matrix_layout == "strict" and gpu_code in ("sm_80", "sm_86")
+        ),
     )
     norm_array = _cuvs_vector_constraint(elem, index_dtype=idx_dtype)
     idx_array = _cuvs_vector_constraint(idx_dtype, index_dtype=idx_dtype)
@@ -202,6 +221,7 @@ def export_binary(
         tile_m,
         tile_n,
         tile_k,
+        gpu_code,
         matrix_layout,
     )
 

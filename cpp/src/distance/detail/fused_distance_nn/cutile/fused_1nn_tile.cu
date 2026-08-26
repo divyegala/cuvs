@@ -199,11 +199,8 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
   if (!cuvs::detail::jit_lto::cutile_launch_available_on_current_device()) { return false; }
   static_assert(std::is_same_v<IdxT, int> || std::is_same_v<IdxT, int64_t>);
 
-  int cc_major = 0;
-  int cc_minor = 0;
-  if (!cuvs::detail::jit_lto::get_device_compute_capability(cc_major, cc_minor)) { return false; }
-  constexpr int tma_pitch_elements = 16 / sizeof(DataT);
-  const bool use_strict_abi        = cc_major >= 9 && k % tma_pitch_elements == 0;
+  constexpr int strict_pitch_elements = 16 / sizeof(DataT);
+  const bool use_strict_abi           = k % strict_pitch_elements == 0;
 
   if constexpr (std::is_same_v<IdxT, int>) {
     if (use_strict_abi) {
