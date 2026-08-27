@@ -211,9 +211,11 @@ const std::vector<NNInputs<IdxT>> input_fp32 = {
 template <typename IdxT>
 const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
   auto inputs = input_fp32<IdxT>;
+#if CUVS_CUTILE_ENABLED
   inputs.insert(
     inputs.begin() + 6,
     NNInputs<IdxT>{512, 1024, 64, DistanceType::InnerProduct, false, uint64_t(31415926), 0.1});
+#endif
   inputs.push_back(
     NNInputs<IdxT>{1000, 8, 32, DistanceType::L2Expanded, false, uint64_t(31415926), 0.1});
   inputs.push_back(
