@@ -365,7 +365,9 @@ void cluster_cost(
       auto batch_cost    = raft::make_device_scalar<DataT>(handle, DataT{0});
       auto centroids_i32 = raft::make_device_matrix_view<const DataT, int>(
         centroids.data_handle(), static_cast<int>(n_clusters), static_cast<int>(n_features));
-      const IndexT max_batch_rows = max_i32 / n_clusters;
+      // The i32 path indexes both X[batch_rows, n_features] and its distance workspace
+      // [batch_rows, n_clusters].
+      const IndexT max_batch_rows = max_i32 / std::max(n_clusters, n_features);
 
       for (IndexT offset = 0; offset < n_samples; offset += max_batch_rows) {
         const int batch_rows = static_cast<int>(std::min(max_batch_rows, n_samples - offset));

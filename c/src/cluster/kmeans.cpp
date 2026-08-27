@@ -44,18 +44,22 @@ cuvs::cluster::kmeans::balanced_params convert_balanced_params(const cuvsKMeansP
 
 constexpr int64_t kKMeansInt32IndexMax = std::numeric_limits<int32_t>::max();
 
-bool dlpack_shape_exceeds_int32_index(const DLTensor& tensor)
+bool dlpack_tensor_size_exceeds_int32_index(const DLTensor& tensor)
 {
+  int64_t size = 1;
   for (int i = 0; i < tensor.ndim; ++i) {
-    if (tensor.shape[i] > kKMeansInt32IndexMax) { return true; }
+    const int64_t extent = tensor.shape[i];
+    if (extent <= 0) { return false; }
+    if (extent > kKMeansInt32IndexMax / size) { return true; }
+    size *= extent;
   }
   return false;
 }
 
 bool kmeans_tensor_shapes_use_int64_index(DLManagedTensor* X, DLManagedTensor* centroids)
 {
-  if (dlpack_shape_exceeds_int32_index(X->dl_tensor)) { return true; }
-  if (dlpack_shape_exceeds_int32_index(centroids->dl_tensor)) { return true; }
+  if (dlpack_tensor_size_exceeds_int32_index(X->dl_tensor)) { return true; }
+  if (dlpack_tensor_size_exceeds_int32_index(centroids->dl_tensor)) { return true; }
   return false;
 }
 
