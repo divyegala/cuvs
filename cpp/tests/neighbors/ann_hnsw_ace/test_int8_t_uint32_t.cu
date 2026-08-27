@@ -7,6 +7,16 @@
 
 namespace cuvs::neighbors::hnsw {
 
+TEST(CagraAceWorkspaceInt8, FailurePreservesCallerDirectory)
+{
+  test_ace_workspace_failure_preserves_caller_directory<int8_t>();
+}
+
+TEST(CagraAceWorkspaceInt8, FailureDoesNotTruncateExistingArtifact)
+{
+  test_ace_workspace_failure_does_not_truncate_existing_artifact<int8_t>();
+}
+
 typedef AnnHnswAceTest<float, int8_t, uint32_t> AnnHnswAceTest_int8_t;
 TEST_P(AnnHnswAceTest_int8_t, AnnHnswAceBuild) { this->testHnswAceBuild(); }
 

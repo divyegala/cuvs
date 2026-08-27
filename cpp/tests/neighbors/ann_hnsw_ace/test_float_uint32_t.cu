@@ -7,6 +7,26 @@
 
 namespace cuvs::neighbors::hnsw {
 
+TEST(CagraAceWorkspace, FailurePreservesCallerDirectory)
+{
+  test_ace_workspace_failure_preserves_caller_directory<float>();
+}
+
+TEST(CagraAceWorkspace, FailureDoesNotTruncateExistingArtifact)
+{
+  test_ace_workspace_failure_does_not_truncate_existing_artifact<float>();
+}
+
+TEST(FileIo, ExclusiveNumpyCreateFailureRemovesPartialFile)
+{
+  test_exclusive_numpy_create_failure_removes_partial_file();
+}
+
+TEST(HnswAceWorkspace, ExistingIndexIsNotTruncated)
+{
+  test_hnsw_ace_build_does_not_truncate_existing_index<float>();
+}
+
 typedef AnnHnswAceTest<float, float, uint32_t> AnnHnswAceTest_float;
 TEST_P(AnnHnswAceTest_float, AnnHnswAceBuild) { this->testHnswAceBuild(); }
 

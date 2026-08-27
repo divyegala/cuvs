@@ -7,6 +7,16 @@
 
 namespace cuvs::neighbors::hnsw {
 
+TEST(CagraAceWorkspaceHalf, FailurePreservesCallerDirectory)
+{
+  test_ace_workspace_failure_preserves_caller_directory<half>();
+}
+
+TEST(CagraAceWorkspaceHalf, FailureDoesNotTruncateExistingArtifact)
+{
+  test_ace_workspace_failure_does_not_truncate_existing_artifact<half>();
+}
+
 typedef AnnHnswAceTest<float, half, uint32_t> AnnHnswAceTest_half;
 TEST_P(AnnHnswAceTest_half, AnnHnswAceBuild) { this->testHnswAceBuild(); }
 
