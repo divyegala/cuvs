@@ -155,7 +155,8 @@ def _kernel_signature(
             matrix_layout == "strict" and gpu_code in ("sm_80", "sm_86")
         ),
     )
-    norm_array = _cuvs_vector_constraint(elem, index_dtype=idx_dtype)
+    norm_elem = ct.float32 if data_type == "half" else elem
+    norm_array = _cuvs_vector_constraint(norm_elem, index_dtype=idx_dtype)
     idx_array = _cuvs_vector_constraint(idx_dtype, index_dtype=idx_dtype)
     dist_array = _cuvs_vector_constraint(elem, index_dtype=idx_dtype)
 

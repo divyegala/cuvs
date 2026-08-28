@@ -88,7 +88,7 @@ def make_kernel(
         if metric_code != METRIC_INNER_PRODUCT:
             a_norm = ct.load(
                 A_norm, index=(bidm,), shape=(tm,), padding_mode=zero_pad
-            )[:, None]
+            )[:, None].astype(acc_dtype)
 
         def reduce_scores(dists, indices):
             def red_op(a_score, a_idx, b_score, b_idx):

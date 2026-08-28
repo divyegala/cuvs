@@ -44,8 +44,8 @@ bool launch_fused_1nn_tile(IdxT* nearest_idx,
                            DataT* nearest_dist,
                            const DataT* x,
                            const DataT* y,
-                           const DataT* xn,
-                           const DataT* yn,
+                           const fused_1nn_cutile_norm_t<DataT>* xn,
+                           const fused_1nn_cutile_norm_t<DataT>* yn,
                            IdxT m,
                            IdxT n,
                            IdxT k,
@@ -100,8 +100,8 @@ bool launch_fused_1nn_tile(IdxT* nearest_idx,
 
   void* x_ptr          = const_cast<DataT*>(x);
   void* y_ptr          = const_cast<DataT*>(y);
-  void* xn_ptr         = const_cast<DataT*>(xn);
-  void* yn_ptr         = const_cast<DataT*>(yn);
+  void* xn_ptr         = const_cast<fused_1nn_cutile_norm_t<DataT>*>(xn);
+  void* yn_ptr         = const_cast<fused_1nn_cutile_norm_t<DataT>*>(yn);
   const IdxT store_idx = nearest_idx != nullptr ? IdxT{1} : IdxT{0};
   void* idx_ptr        = nearest_idx;
   void* dist_ptr       = nearest_dist;
@@ -179,8 +179,8 @@ bool try_fused_1nn_tile_dispatch(IdxT* nearest_idx,
                                  DataT* nearest_dist,
                                  const DataT* x,
                                  const DataT* y,
-                                 const DataT* xn,
-                                 const DataT* yn,
+                                 const fused_1nn_cutile_norm_t<DataT>* xn,
+                                 const fused_1nn_cutile_norm_t<DataT>* yn,
                                  IdxT m,
                                  IdxT n,
                                  IdxT k,
@@ -200,8 +200,8 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
                                DataT* nearest_dist,
                                const DataT* x,
                                const DataT* y,
-                               const DataT* xn,
-                               const DataT* yn,
+                               const fused_1nn_cutile_norm_t<DataT>* xn,
+                               const fused_1nn_cutile_norm_t<DataT>* yn,
                                IdxT m,
                                IdxT n,
                                IdxT k,
@@ -246,8 +246,8 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
                         DataT* nearest_dist,
                         const DataT* x,
                         const DataT* y,
-                        const DataT* xn,
-                        const DataT* yn,
+                        const fused_1nn_cutile_norm_t<DataT>* xn,
+                        const fused_1nn_cutile_norm_t<DataT>* yn,
                         IdxT m,
                         IdxT n,
                         IdxT k,
@@ -322,17 +322,18 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
   }
 }
 
-#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(DataT, IdxT)                         \
-  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>(IdxT*,        \
-                                                                   DataT*,       \
-                                                                   const DataT*, \
-                                                                   const DataT*, \
-                                                                   const DataT*, \
-                                                                   const DataT*, \
-                                                                   IdxT,         \
-                                                                   IdxT,         \
-                                                                   IdxT,         \
-                                                                   cuvs::distance::DistanceType)
+#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(DataT, IdxT)            \
+  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \
+    IdxT*,                                                          \
+    DataT*,                                                         \
+    const DataT*,                                                   \
+    const DataT*,                                                   \
+    const fused_1nn_cutile_norm_t<DataT>*,                          \
+    const fused_1nn_cutile_norm_t<DataT>*,                          \
+    IdxT,                                                           \
+    IdxT,                                                           \
+    IdxT,                                                           \
+    cuvs::distance::DistanceType)
 
 CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(float, int);
 CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(float, int64_t);
@@ -341,19 +342,19 @@ CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(half, int64_t);
 
 #undef CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE
 
-#define CUVS_INST_TRY_FUSED_1NN_TILE(DataT, IdxT)                                         \
-  template CUVS_EXPORT bool try_fused_1nn_tile<DataT, IdxT>(IdxT*,                        \
-                                                            DataT*,                       \
-                                                            const DataT*,                 \
-                                                            const DataT*,                 \
-                                                            const DataT*,                 \
-                                                            const DataT*,                 \
-                                                            IdxT,                         \
-                                                            IdxT,                         \
-                                                            IdxT,                         \
-                                                            cuvs::distance::DistanceType, \
-                                                            bool,                         \
-                                                            void*,                        \
+#define CUVS_INST_TRY_FUSED_1NN_TILE(DataT, IdxT)                                                  \
+  template CUVS_EXPORT bool try_fused_1nn_tile<DataT, IdxT>(IdxT*,                                 \
+                                                            DataT*,                                \
+                                                            const DataT*,                          \
+                                                            const DataT*,                          \
+                                                            const fused_1nn_cutile_norm_t<DataT>*, \
+                                                            const fused_1nn_cutile_norm_t<DataT>*, \
+                                                            IdxT,                                  \
+                                                            IdxT,                                  \
+                                                            IdxT,                                  \
+                                                            cuvs::distance::DistanceType,          \
+                                                            bool,                                  \
+                                                            void*,                                 \
                                                             cudaStream_t)
 
 CUVS_INST_TRY_FUSED_1NN_TILE(float, int);

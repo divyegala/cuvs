@@ -23,6 +23,7 @@
 
 #include <cstddef>  // size_t
 #include <limits>   // std::numeric_limits
+#include <type_traits>
 
 namespace cuvs {
 namespace distance {
@@ -54,7 +55,8 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
   typedef raft::KeyValuePair<IdxT, DataT> KVP;
   constexpr auto maxVal = std::numeric_limits<DataT>::max();
 
-  if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
+  if constexpr (is_fused_1nn_cutile_data_v<DataT> &&
+                std::is_same_v<fused_1nn_cutile_norm_t<DataT>, DataT>) {
     if constexpr (cuvs::detail::jit_lto::library_built_with_cutile()) {
       if (try_fused_1nn_tile<DataT, IdxT>(
             nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, sqrt, workspace, stream)) {

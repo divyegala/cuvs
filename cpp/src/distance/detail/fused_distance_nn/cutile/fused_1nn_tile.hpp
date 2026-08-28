@@ -24,6 +24,10 @@ template <typename DataT>
 inline constexpr bool is_fused_1nn_cutile_data_v =
   std::is_same_v<DataT, float> || std::is_same_v<DataT, half>;
 
+// Tensor-core products accumulate in FP32; FP16 norms must remain FP32 through the epilogue.
+template <typename DataT>
+using fused_1nn_cutile_norm_t = std::conditional_t<std::is_same_v<DataT, half>, float, DataT>;
+
 #if CUVS_CUTILE_ENABLED
 /**
  * Return whether the supplied problem can use cuTile without fallback scratch.
@@ -38,8 +42,8 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
                                DataT* nearest_dist,
                                const DataT* x,
                                const DataT* y,
-                               const DataT* xn,
-                               const DataT* yn,
+                               const fused_1nn_cutile_norm_t<DataT>* xn,
+                               const fused_1nn_cutile_norm_t<DataT>* yn,
                                IdxT m,
                                IdxT n,
                                IdxT k,
@@ -51,8 +55,8 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
                         DataT* nearest_dist,
                         const DataT* x,
                         const DataT* y,
-                        const DataT* xn,
-                        const DataT* yn,
+                        const fused_1nn_cutile_norm_t<DataT>* xn,
+                        const fused_1nn_cutile_norm_t<DataT>* yn,
                         IdxT m,
                         IdxT n,
                         IdxT k,
@@ -66,8 +70,8 @@ bool can_launch_fused_1nn_tile(IdxT*,
                                DataT*,
                                const DataT*,
                                const DataT*,
-                               const DataT*,
-                               const DataT*,
+                               const fused_1nn_cutile_norm_t<DataT>*,
+                               const fused_1nn_cutile_norm_t<DataT>*,
                                IdxT,
                                IdxT,
                                IdxT,
@@ -81,8 +85,8 @@ bool try_fused_1nn_tile(IdxT*,
                         DataT*,
                         const DataT*,
                         const DataT*,
-                        const DataT*,
-                        const DataT*,
+                        const fused_1nn_cutile_norm_t<DataT>*,
+                        const fused_1nn_cutile_norm_t<DataT>*,
                         IdxT,
                         IdxT,
                         IdxT,
