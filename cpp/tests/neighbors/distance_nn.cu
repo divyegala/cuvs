@@ -264,6 +264,54 @@ TEST_P(NNTest_fp16_unfused, test)
 
 INSTANTIATE_TEST_CASE_P(NNTest, NNTest_fp16_unfused, ::testing::ValuesIn(input_fp16<int>));
 
+TEST(Fused1nn, ExpandedL2ClampsNegativeRoundoff)
+{
+  raft::resources handle;
+  auto stream     = raft::resource::get_cuda_stream(handle);
+  constexpr int k = 64;
+
+  auto x         = raft::make_device_matrix<float, int>(handle, 1, k);
+  auto y         = raft::make_device_matrix<float, int>(handle, 1, k);
+  auto x_norm    = raft::make_device_vector<float, int>(handle, 1);
+  auto y_norm    = raft::make_device_vector<float, int>(handle, 1);
+  auto out_idx   = raft::make_device_vector<int, int>(handle, 1);
+  auto out_dist  = raft::make_device_vector<float, int>(handle, 1);
+  auto out_kvp   = raft::make_device_vector<raft::KeyValuePair<int, float>, int>(handle, 1);
+  auto workspace = raft::make_device_vector<int, int>(handle, 1);
+
+  raft::matrix::fill(handle, x.view(), 1.0006f);
+  raft::copy(y.data_handle(), x.data_handle(), k, stream);
+  raft::linalg::rowNorm<raft::linalg::L2Norm, true>(
+    x_norm.data_handle(), x.data_handle(), k, 1, stream);
+  raft::copy(y_norm.data_handle(), x_norm.data_handle(), 1, stream);
+
+  cuvs::distance::fusedDistanceNNMinReduce<float, int>(out_idx.data_handle(),
+                                                       out_dist.data_handle(),
+                                                       x.data_handle(),
+                                                       y.data_handle(),
+                                                       x_norm.data_handle(),
+                                                       y_norm.data_handle(),
+                                                       1,
+                                                       1,
+                                                       k,
+                                                       workspace.data_handle(),
+                                                       true,
+                                                       true,
+                                                       true,
+                                                       DistanceType::L2SqrtExpanded,
+                                                       0.0f,
+                                                       out_kvp.data_handle(),
+                                                       stream);
+
+  int actual_idx;
+  float actual_dist;
+  raft::update_host(&actual_idx, out_idx.data_handle(), 1, stream);
+  raft::update_host(&actual_dist, out_dist.data_handle(), 1, stream);
+  raft::resource::sync_stream(handle);
+  EXPECT_EQ(actual_idx, 0);
+  EXPECT_EQ(actual_dist, 0.0f);
+}
+
 template <typename IdxT>
 const std::vector<NNInputs<IdxT>> input_int8 = {
   {4096, 4096, 64, DistanceType::L2Expanded, false, uint64_t(31415926), 0.1},

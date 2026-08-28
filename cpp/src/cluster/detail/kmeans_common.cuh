@@ -66,7 +66,7 @@ inline constexpr bool is_cutile_fused_data_type_v =
 enum class FusedDistancePath : std::uint8_t {
   /** unfusedDistanceNNMinReduce or batched pairwise distance. */
   Unfused = 0,
-  /** fusedDistanceNNMinReduce via cuTile; no CUTLASS mutex / KVP scratch. */
+  /** fusedDistanceNNMinReduce via cuTile; scratch depends on the launchability probe. */
   FusedCutile,
   /** fusedDistanceNNMinReduce via legacy CUTLASS; needs mutex workspace + KVP scratch. */
   FusedCutlass,
@@ -75,16 +75,6 @@ enum class FusedDistancePath : std::uint8_t {
 inline constexpr bool uses_fused_distance_nn(FusedDistancePath path)
 {
   return path != FusedDistancePath::Unfused;
-}
-
-inline constexpr bool needs_cutlass_kvp_scratch(FusedDistancePath path)
-{
-  return path == FusedDistancePath::FusedCutlass;
-}
-
-inline constexpr bool needs_fused_mutex_workspace(FusedDistancePath path)
-{
-  return path == FusedDistancePath::FusedCutlass;
 }
 
 /**

@@ -116,8 +116,24 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
   const bool is_l2_cos = metric == cuvs::distance::DistanceType::L2Expanded ||
                          metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
                          metric == cuvs::distance::DistanceType::CosineExpanded;
-  const FusedDistancePath fused_path =
+  FusedDistancePath fused_path =
     use_fused<DataT, IndexT, IndexT>(handle, n_samples, n_clusters, n_features, metric);
+  if constexpr (is_cutile_fused_data_type_v<DataT>) {
+    if (fused_path == FusedDistancePath::FusedCutile &&
+        metric == cuvs::distance::DistanceType::InnerProduct &&
+        !cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
+                                                           nearest_dist.data_handle(),
+                                                           X.data_handle(),
+                                                           centroids.data_handle(),
+                                                           static_cast<const DataT*>(nullptr),
+                                                           static_cast<const DataT*>(nullptr),
+                                                           n_samples,
+                                                           n_clusters,
+                                                           n_features,
+                                                           metric)) {
+      fused_path = FusedDistancePath::Unfused;
+    }
+  }
 
   if (uses_fused_distance_nn(fused_path)) {
     const DataT* x_norm_ptr = L2NormX.data_handle();
@@ -159,14 +175,30 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
       }
     }
 
+    bool cutile_ready = false;
+    if constexpr (is_cutile_fused_data_type_v<DataT>) {
+      if (fused_path == FusedDistancePath::FusedCutile) {
+        cutile_ready = cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
+                                                                         nearest_dist.data_handle(),
+                                                                         X.data_handle(),
+                                                                         centroids.data_handle(),
+                                                                         x_norm_ptr,
+                                                                         centroids_norm_ptr,
+                                                                         n_samples,
+                                                                         n_clusters,
+                                                                         n_features,
+                                                                         metric);
+      }
+    }
+
     raft::KeyValuePair<IndexT, DataT>* cutlass_kvp_scratch = nullptr;
     rmm::device_uvector<raft::KeyValuePair<IndexT, DataT>> temp_kvp(0, stream);
-    if (needs_cutlass_kvp_scratch(fused_path)) {
+    const bool needs_index_workspace = cutile_ready && std::is_same_v<IndexT, int64_t>;
+    if (!cutile_ready) {
       temp_kvp.resize(n_samples, stream);
       cutlass_kvp_scratch = temp_kvp.data();
-      workspace.resize(sizeof(int) * n_samples, stream);
-    } else if constexpr (std::is_same_v<IndexT, int64_t>) {
-      // The cuTile kernel uses i32 internally and widens labels after the launch.
+    }
+    if (!cutile_ready || needs_index_workspace) {
       workspace.resize(sizeof(int) * static_cast<size_t>(n_samples), stream);
     }
 
@@ -180,9 +212,7 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
       n_samples,
       n_clusters,
       n_features,
-      needs_fused_mutex_workspace(fused_path) || std::is_same_v<IndexT, int64_t>
-        ? (void*)workspace.data()
-        : nullptr,
+      !cutile_ready || needs_index_workspace ? (void*)workspace.data() : nullptr,
       metric != cuvs::distance::DistanceType::L2Expanded,
       true,
       true,
@@ -422,12 +452,29 @@ void minClusterDistanceCompute(raft::resources const& handle,
       }
     }
 
+    bool cutile_ready = false;
+    if constexpr (is_cutile_fused_data_type_v<DataT>) {
+      if (fused_path == FusedDistancePath::FusedCutile) {
+        cutile_ready =
+          cuvs::distance::detail::can_launch_fused_1nn_tile(static_cast<IndexT*>(nullptr),
+                                                            minClusterDistance.data_handle(),
+                                                            X.data_handle(),
+                                                            centroids.data_handle(),
+                                                            x_norm_ptr,
+                                                            centroids_norm_ptr,
+                                                            n_samples,
+                                                            n_clusters,
+                                                            n_features,
+                                                            metric);
+      }
+    }
+
     raft::KeyValuePair<IndexT, DataT>* cutlass_kvp_scratch = nullptr;
     rmm::device_uvector<raft::KeyValuePair<IndexT, DataT>> temp_kvp(0, stream);
-    if (needs_cutlass_kvp_scratch(fused_path)) {
+    if (!cutile_ready) {
       temp_kvp.resize(n_samples, stream);
       cutlass_kvp_scratch = temp_kvp.data();
-      workspace.resize(sizeof(int) * n_samples, stream);
+      workspace.resize(sizeof(int) * static_cast<size_t>(n_samples), stream);
     }
 
     cuvs::distance::fusedDistanceNNMinReduce<DataT, IndexT>(
@@ -440,7 +487,7 @@ void minClusterDistanceCompute(raft::resources const& handle,
       n_samples,
       n_clusters,
       n_features,
-      needs_fused_mutex_workspace(fused_path) ? (void*)workspace.data() : nullptr,
+      cutile_ready ? nullptr : (void*)workspace.data(),
       metric != cuvs::distance::DistanceType::L2Expanded,
       true,
       true,

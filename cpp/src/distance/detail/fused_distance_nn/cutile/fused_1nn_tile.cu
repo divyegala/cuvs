@@ -25,6 +25,20 @@ namespace detail {
 
 namespace {
 
+bool is_16_byte_aligned(const void* ptr)
+{
+  return ptr == nullptr || reinterpret_cast<std::uintptr_t>(ptr) % 16 == 0;
+}
+
+template <typename DataT, typename AbiTag>
+bool has_fused_1nn_tile_launcher()
+{
+  Fused1nnTilePlanner<DataT, AbiTag> planner;
+  planner.add_entrypoint();
+  planner.add_tileir_fallback();
+  return planner.try_get_launcher() != nullptr;
+}
+
 template <typename DataT, typename IdxT, typename AbiTag>
 bool launch_fused_1nn_tile(IdxT* nearest_idx,
                            DataT* nearest_dist,
@@ -46,9 +60,9 @@ bool launch_fused_1nn_tile(IdxT* nearest_idx,
   Fused1nnTilePlanner<DataT, AbiTag> planner;
   planner.add_entrypoint();
   planner.add_tileir_fallback();
-  const cuvs::detail::jit_lto::CutileTileConfig tile_cfg = planner.tile_config();
-  auto launcher                                          = planner.try_get_launcher();
+  auto launcher = planner.try_get_launcher();
   if (!launcher) { return false; }
+  const cuvs::detail::jit_lto::CutileTileConfig tile_cfg = planner.tile_config();
 
   int metric_code;
   bool apply_sqrt = false;
@@ -182,6 +196,52 @@ bool try_fused_1nn_tile_dispatch(IdxT* nearest_idx,
 
 template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
+bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
+                               DataT* nearest_dist,
+                               const DataT* x,
+                               const DataT* y,
+                               const DataT* xn,
+                               const DataT* yn,
+                               IdxT m,
+                               IdxT n,
+                               IdxT k,
+                               cuvs::distance::DistanceType metric)
+{
+  if (!cuvs::detail::jit_lto::cutile_launch_available_on_current_device()) { return false; }
+  static_assert(std::is_same_v<IdxT, int> || std::is_same_v<IdxT, int64_t>);
+
+  if (nearest_dist == nullptr || x == nullptr || y == nullptr || m <= 0 || n <= 0 || k <= 0) {
+    return false;
+  }
+  if (metric != cuvs::distance::DistanceType::InnerProduct &&
+      metric != cuvs::distance::DistanceType::L2Expanded &&
+      metric != cuvs::distance::DistanceType::L2SqrtExpanded &&
+      metric != cuvs::distance::DistanceType::CosineExpanded) {
+    return false;
+  }
+  if (metric != cuvs::distance::DistanceType::InnerProduct && (xn == nullptr || yn == nullptr)) {
+    return false;
+  }
+
+  // Both exported ABIs promise 16-byte base alignment for every array parameter.
+  if (!is_16_byte_aligned(nearest_dist) || !is_16_byte_aligned(x) || !is_16_byte_aligned(y) ||
+      !is_16_byte_aligned(xn) || !is_16_byte_aligned(yn)) {
+    return false;
+  }
+  if constexpr (std::is_same_v<IdxT, int>) {
+    if (!is_16_byte_aligned(nearest_idx)) { return false; }
+  } else {
+    constexpr int64_t max_i32 = std::numeric_limits<int>::max();
+    if (n > max_i32 || k > max_i32) { return false; }
+  }
+
+  constexpr int strict_pitch_elements = 16 / sizeof(DataT);
+  return k % strict_pitch_elements == 0 ? has_fused_1nn_tile_launcher<DataT, cutile_abi_strict>()
+                                        : has_fused_1nn_tile_launcher<DataT, cutile_abi_relaxed>();
+}
+
+template <typename DataT, typename IdxT>
+  requires is_fused_1nn_cutile_data_v<DataT>
 bool try_fused_1nn_tile(IdxT* nearest_idx,
                         DataT* nearest_dist,
                         const DataT* x,
@@ -196,8 +256,9 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
                         void* index_workspace,
                         cudaStream_t stream)
 {
-  if (!cuvs::detail::jit_lto::cutile_launch_available_on_current_device()) { return false; }
-  static_assert(std::is_same_v<IdxT, int> || std::is_same_v<IdxT, int64_t>);
+  if (!can_launch_fused_1nn_tile(nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric)) {
+    return false;
+  }
 
   constexpr int strict_pitch_elements = 16 / sizeof(DataT);
   const bool use_strict_abi           = k % strict_pitch_elements == 0;
@@ -210,13 +271,16 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
     return try_fused_1nn_tile_dispatch<cutile_abi_relaxed, DataT, int>(
       nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, is_sqrt, stream);
   } else {
-    constexpr int64_t max_i32 = std::numeric_limits<int>::max();
-    if (n > max_i32 || k > max_i32) { return false; }
     if (nearest_idx != nullptr && index_workspace == nullptr) { return false; }
+    if (!is_16_byte_aligned(index_workspace)) { return false; }
 
-    auto* tmp_idx = static_cast<int*>(index_workspace);
-    for (int64_t offset = 0; offset < m; offset += max_i32) {
-      const int batch_m    = static_cast<int>(std::min<int64_t>(max_i32, m - offset));
+    // Keep every chunk offset 16-byte aligned for x, xn, and nearest_dist.
+    constexpr int64_t max_i32         = std::numeric_limits<int>::max();
+    constexpr int64_t batch_alignment = 16 / sizeof(DataT);
+    constexpr int64_t max_batch_m     = max_i32 - max_i32 % batch_alignment;
+    auto* tmp_idx                     = static_cast<int*>(index_workspace);
+    for (int64_t offset = 0; offset < m; offset += max_batch_m) {
+      const int batch_m    = static_cast<int>(std::min<int64_t>(max_batch_m, m - offset));
       const auto* batch_x  = x + static_cast<size_t>(offset) * static_cast<size_t>(k);
       const auto* batch_xn = xn == nullptr ? nullptr : xn + offset;
       auto* batch_dist     = nearest_dist == nullptr ? nullptr : nearest_dist + offset;
@@ -257,6 +321,25 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
     return true;
   }
 }
+
+#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(DataT, IdxT)                         \
+  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>(IdxT*,        \
+                                                                   DataT*,       \
+                                                                   const DataT*, \
+                                                                   const DataT*, \
+                                                                   const DataT*, \
+                                                                   const DataT*, \
+                                                                   IdxT,         \
+                                                                   IdxT,         \
+                                                                   IdxT,         \
+                                                                   cuvs::distance::DistanceType)
+
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(float, int);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(float, int64_t);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(half, int);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(half, int64_t);
+
+#undef CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE
 
 #define CUVS_INST_TRY_FUSED_1NN_TILE(DataT, IdxT)                                         \
   template CUVS_EXPORT bool try_fused_1nn_tile<DataT, IdxT>(IdxT*,                        \

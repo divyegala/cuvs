@@ -63,6 +63,12 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
     }
   }
 
+  // InnerProduct is a cuTile-only specialization of this fused primitive. Callers that cannot
+  // launch cuTile must select their unfused InnerProduct path instead of returning an untouched
+  // sentinel from the legacy L2/cosine implementation below.
+  RAFT_EXPECTS(metric != cuvs::distance::DistanceType::InnerProduct,
+               "Fused InnerProduct 1-NN requires a compatible cuTile launcher");
+
   RAFT_EXPECTS(cutlass_kvp_scratch != nullptr, "CUTLASS fused 1-NN requires a scratch KVP buffer");
 
   if (initOutBuffer) {
@@ -113,7 +119,6 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
                                                                            cutlass_kvp_scratch,
                                                                            stream);
       break;
-    case cuvs::distance::DistanceType::InnerProduct: break;
     default: assert("only cosine/l2 metric is supported with fusedDistanceNN\n"); break;
   }
 

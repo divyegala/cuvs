@@ -225,21 +225,22 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
  *
  * @tparam MathT type of the centroids and mapped data
  * @tparam IdxT  index type
+ * @tparam LabelT label type
  *
  * @param[in] n_clusters number of clusters in kmeans clustering
  * @param[in] n_rows Number of samples in the dataset
  * @param[in] dim Number of features in the dataset
  * @param[in] metric Distance metric
- * @param[in] needs_conversion Whether the data needs to be converted to MathT
+ * @param[in] data_is_math_type Whether the input data already uses MathT
  * @return A suggested minibatch size and the expected memory cost per-row (in bytes)
  */
-template <typename MathT, typename IdxT>
+template <typename MathT, typename IdxT, typename LabelT = IdxT>
 auto calc_minibatch_size(const raft::resources& handle,
                          IdxT n_clusters,
                          IdxT n_rows,
                          IdxT dim,
                          cuvs::distance::DistanceType metric,
-                         bool needs_conversion) -> std::tuple<IdxT, size_t>
+                         bool data_is_math_type) -> std::tuple<IdxT, size_t>
 {
   n_clusters = std::max<IdxT>(1, n_clusters);
 
@@ -248,12 +249,31 @@ auto calc_minibatch_size(const raft::resources& handle,
   switch (metric) {
     case distance::DistanceType::L2Expanded:
     case distance::DistanceType::L2SqrtExpanded:
+    case distance::DistanceType::CosineExpanded:
     case distance::DistanceType::InnerProduct: {
-      switch (use_fused<MathT, IdxT, IdxT>(handle, n_rows, n_clusters, dim, metric)) {
+      const auto fused_path = use_fused<MathT, IdxT, IdxT>(handle, n_rows, n_clusters, dim, metric);
+
+      // min_cluster_and_distance always materializes the nearest distance for fused/L2 paths.
+      if (metric != distance::DistanceType::InnerProduct ||
+          fused_path != FusedDistancePath::Unfused) {
+        mem_per_row += sizeof(MathT);
+        if constexpr (!std::is_same_v<LabelT, IdxT>) { mem_per_row += sizeof(IdxT); }
+      }
+      if (metric != distance::DistanceType::InnerProduct) {
+        // predict may need a minibatch-sized input-norm buffer before entering predict_core.
+        mem_per_row += sizeof(MathT);
+      }
+
+      switch (fused_path) {
         case FusedDistancePath::FusedCutile:
-          if constexpr (std::is_same_v<IdxT, int64_t>) {
-            // cuTile computes labels with i32 and widens them after each launch.
-            mem_per_row += sizeof(int);
+          // Conservatively budget the fallback in case the eventual pointer-aware probe fails.
+          mem_per_row += sizeof(int);
+          mem_per_row += sizeof(raft::KeyValuePair<IdxT, MathT>);
+          if constexpr (std::is_same_v<MathT, float>) {
+            if (metric != distance::DistanceType::InnerProduct) {
+              // TF32-compatible row norms are materialized for cuTile L2/cosine.
+              mem_per_row += sizeof(MathT);
+            }
           }
           break;
         case FusedDistancePath::FusedCutlass:
@@ -264,6 +284,9 @@ auto calc_minibatch_size(const raft::resources& handle,
         case FusedDistancePath::Unfused:
           // unfused / GEMM+argmin path needs a full distance matrix row.
           mem_per_row += sizeof(MathT) * n_clusters;
+          if (metric != distance::DistanceType::InnerProduct) {
+            mem_per_row += sizeof(raft::KeyValuePair<IdxT, MathT>);
+          }
           break;
       }
     } break;
@@ -274,7 +297,7 @@ auto calc_minibatch_size(const raft::resources& handle,
   }
 
   // If we need to convert to MathT, space required for the converted batch.
-  if (!needs_conversion) { mem_per_row += sizeof(MathT) * dim; }
+  if (!data_is_math_type) { mem_per_row += sizeof(MathT) * dim; }
 
   // Heuristic: calculate the minibatch size in order to use at most 80% or 512MB workspace memory.
   // We go below 1GB here as the allocation is mostly done in a single chunk which
@@ -282,10 +305,6 @@ auto calc_minibatch_size(const raft::resources& handle,
   const auto free_ws_size = raft::resource::get_workspace_free_bytes(handle);
   const auto available_ws_size =
     std::min<size_t>((free_ws_size * size_t{8}) / size_t{10}, size_t{1} << 29);
-
-  // A fused implementation may require no per-row temporary workspace. In that case,
-  // process the complete input rather than dividing the available workspace by zero.
-  if (mem_per_row == 0) { return std::make_tuple(n_rows, mem_per_row); }
 
   IdxT minibatch_size = std::max<IdxT>(IdxT{1}, static_cast<IdxT>(available_ws_size / mem_per_row));
 
@@ -467,7 +486,7 @@ void predict(const raft::resources& handle,
   raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
     "predict(%zu, %u)", static_cast<size_t>(n_rows), n_clusters);
   auto mem_res = mr.value_or(raft::resource::get_workspace_resource_ref(handle));
-  auto [max_minibatch_size, _mem_per_row] = calc_minibatch_size<MathT>(
+  auto [max_minibatch_size, _mem_per_row] = calc_minibatch_size<MathT, IdxT, LabelT>(
     handle, n_clusters, n_rows, dim, params.metric, std::is_same_v<T, MathT>);
   rmm::device_uvector<MathT> cur_dataset(
     std::is_same_v<T, MathT> ? 0 : max_minibatch_size * dim, stream, mem_res);
@@ -1221,7 +1240,7 @@ void build_hierarchical(const raft::resources& handle,
   // TODO: Remove the explicit managed memory- we shouldn't be creating this on the user's behalf.
   rmm::mr::managed_memory_resource managed_memory;
   rmm::device_async_resource_ref device_memory = raft::resource::get_workspace_resource_ref(handle);
-  auto [max_minibatch_size, mem_per_row]       = calc_minibatch_size<MathT>(
+  auto [max_minibatch_size, mem_per_row]       = calc_minibatch_size<MathT, IdxT, LabelT>(
     handle, n_clusters, n_rows, dim, params.metric, std::is_same_v<T, MathT>);
 
   // Precompute the L2 norm of the dataset if relevant and not yet computed.

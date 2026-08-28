@@ -213,7 +213,8 @@ void fusedDistanceNN(IdxT* nearest_idx,
  * @param[out] nearest_idx   Nearest neighbor index per row, length `m` (required).
  * @param[out] nearest_dist  Minimum distance per row, length `m` (optional, may be null).
  * @param[in]  cutlass_kvp_scratch  Temp KVP buffer, length `m`; required when CUTLASS/SIMT runs.
- *                                    Unused when cuTile handles the launch.
+ *                                    It may be omitted only after
+ *                                    detail::can_launch_fused_1nn_tile succeeds.
  */
 template <typename DataT, typename IdxT>
 void fusedDistanceNNMinReduce(IdxT* nearest_idx,

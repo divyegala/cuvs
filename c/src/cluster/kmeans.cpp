@@ -71,7 +71,7 @@ bool kmeans_fit_uses_int64_index(DLManagedTensor* X,
   return kmeans_tensor_shapes_use_int64_index(X, centroids);
 }
 
-bool kmeans_labels_use_int64_index(const DLTensor& labels)
+bool kmeans_labels_are_int64(const DLTensor& labels)
 {
   return labels.dtype.code == kDLInt && labels.dtype.bits == 64;
 }
@@ -84,16 +84,6 @@ void validate_kmeans_labels_dtype(const DLTensor& labels)
   RAFT_FAIL("Unsupported labels DLtensor dtype: %d and bits: %d",
             labels.dtype.code,
             labels.dtype.bits);
-}
-
-bool kmeans_predict_uses_int64_index(DLManagedTensor* X,
-                                     DLManagedTensor* centroids,
-                                     DLManagedTensor* labels,
-                                     int n_clusters)
-{
-  validate_kmeans_labels_dtype(labels->dl_tensor);
-  if (kmeans_labels_use_int64_index(labels->dl_tensor)) { return true; }
-  return kmeans_fit_uses_int64_index(X, centroids, n_clusters);
 }
 
 template <typename T, typename IdxT = int64_t>
@@ -372,23 +362,44 @@ extern "C" cuvsError_t cuvsKMeansPredict(cuvsResources_t res,
 {
   return cuvs::core::translate_exceptions([=] {
     auto dataset = X->dl_tensor;
-    const bool use_int64_index =
-      kmeans_predict_uses_int64_index(X, centroids, labels, params->n_clusters);
+    validate_kmeans_labels_dtype(labels->dl_tensor);
+    const bool use_int64_index  = kmeans_fit_uses_int64_index(X, centroids, params->n_clusters);
+    const bool use_int64_labels = kmeans_labels_are_int64(labels->dl_tensor);
     if (dataset.dtype.code == kDLFloat && dataset.dtype.bits == 32) {
       if (use_int64_index) {
-        _predict<float, int64_t, int64_t>(
-          res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        if (use_int64_labels) {
+          _predict<float, int64_t, int64_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        } else {
+          _predict<float, int64_t, int32_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        }
       } else {
-        _predict<float, int32_t, int32_t>(
-          res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        if (use_int64_labels) {
+          _predict<float, int32_t, int64_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        } else {
+          _predict<float, int32_t, int32_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        }
       }
     } else if (dataset.dtype.code == kDLFloat && dataset.dtype.bits == 64) {
       if (use_int64_index) {
-        _predict<double, int64_t, int64_t>(
-          res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        if (use_int64_labels) {
+          _predict<double, int64_t, int64_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        } else {
+          _predict<double, int64_t, int32_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        }
       } else {
-        _predict<double, int32_t, int32_t>(
-          res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        if (use_int64_labels) {
+          _predict<double, int32_t, int64_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        } else {
+          _predict<double, int32_t, int32_t>(
+            res, *params, X, sample_weight, centroids, labels, normalize_weight, inertia);
+        }
       }
     } else {
       RAFT_FAIL("Unsupported dataset DLtensor dtype: %d and bits: %d",

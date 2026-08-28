@@ -65,6 +65,7 @@ using KeyValueIndexOp = cuvs::cluster::kmeans::detail::KeyValueIndexOp<IndexT, D
  *
  * @tparam DataT the type of data used for weights, distances.
  * @tparam IndexT the type of data used for indexing.
+ * @tparam LabelT the output label type.
  * @param[in]     handle        The raft handle.
  * @param[in]     params        Parameters for KMeans model.
  * @param[in]     X             Training instances to cluster. The data must
@@ -159,31 +160,35 @@ EXTERN_TEMPLATE_FIT(float, int64_t)
  * @param[out]    inertia          Sum of squared distances of samples to
  *                                 their closest cluster center.
  */
-template <typename DataT, typename IndexT>
+template <typename DataT, typename IndexT, typename LabelT>
 void predict(raft::resources const& handle,
              const kmeans::params& params,
              raft::device_matrix_view<const DataT, IndexT> X,
              std::optional<raft::device_vector_view<const DataT, IndexT>> sample_weight,
              raft::device_matrix_view<const DataT, IndexT> centroids,
-             raft::device_vector_view<IndexT, IndexT> labels,
+             raft::device_vector_view<LabelT, IndexT> labels,
              bool normalize_weight,
              raft::host_scalar_view<DataT> inertia);
 
-#define EXTERN_TEMPLATE_PREDICT(DataT, IndexT)                                  \
-  extern template void predict<DataT, IndexT>(                                  \
+#define EXTERN_TEMPLATE_PREDICT(DataT, IndexT, LabelT)                          \
+  extern template void predict<DataT, IndexT, LabelT>(                          \
     raft::resources const& handle,                                              \
     const kmeans::params& params,                                               \
     raft::device_matrix_view<const DataT, IndexT> X,                            \
     std::optional<raft::device_vector_view<const DataT, IndexT>> sample_weight, \
     raft::device_matrix_view<const DataT, IndexT> centroids,                    \
-    raft::device_vector_view<IndexT, IndexT> labels,                            \
+    raft::device_vector_view<LabelT, IndexT> labels,                            \
     bool normalize_weight,                                                      \
     raft::host_scalar_view<DataT> inertia);
 
-EXTERN_TEMPLATE_PREDICT(double, int)
-EXTERN_TEMPLATE_PREDICT(double, int64_t)
-EXTERN_TEMPLATE_PREDICT(float, int)
-EXTERN_TEMPLATE_PREDICT(float, int64_t)
+EXTERN_TEMPLATE_PREDICT(double, int, int)
+EXTERN_TEMPLATE_PREDICT(double, int, int64_t)
+EXTERN_TEMPLATE_PREDICT(double, int64_t, int)
+EXTERN_TEMPLATE_PREDICT(double, int64_t, int64_t)
+EXTERN_TEMPLATE_PREDICT(float, int, int)
+EXTERN_TEMPLATE_PREDICT(float, int, int64_t)
+EXTERN_TEMPLATE_PREDICT(float, int64_t, int)
+EXTERN_TEMPLATE_PREDICT(float, int64_t, int64_t)
 
 #undef EXTERN_TEMPLATE_PREDICT
 

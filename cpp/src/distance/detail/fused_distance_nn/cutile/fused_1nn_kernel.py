@@ -53,6 +53,7 @@ def make_kernel(
     acc_dtype = ct.float32
     idx_dtype = _idx_dtype(index_type)
     out_dist_dtype = ct.float16 if data_type == "half" else ct.float32
+    l2_clamp_precision = 1e-3 if data_type == "half" else 1e-6
     core_shape = (tile_m, tile_n)
     best_shape = (tile_m, 1)
     kernel_options = {}
@@ -83,6 +84,11 @@ def make_kernel(
         num_tiles_k = ct.num_tiles(A, axis=1, shape=(tm, tk))
         num_tiles_n = ct.num_tiles(B, axis=0, shape=(tn, tk))
         zero_pad = ct.PaddingMode.ZERO
+        a_norm = ct.zeros(best_shape, acc_dtype)
+        if metric_code != METRIC_INNER_PRODUCT:
+            a_norm = ct.load(
+                A_norm, index=(bidm,), shape=(tm,), padding_mode=zero_pad
+            )[:, None]
 
         def reduce_scores(dists, indices):
             def red_op(a_score, a_idx, b_score, b_idx):
@@ -126,10 +132,14 @@ def make_kernel(
                     B_norm, index=(n,), shape=(tn,), padding_mode=zero_pad
                 )
                 if metric_code == METRIC_L2_EXPANDED:
-                    # L2 receives squared row norms; cosine receives L2 magnitudes.
-                    # The A norm is constant across centroids. Reduce
-                    # 0.5 * ||y||^2 - dot(x, y), then recover full L2 once.
-                    score = (0.5 * b_norm)[None, :] - accumulator
+                    # Match the existing expanded-L2 epilogue: clamp negative
+                    # distances and tiny self-neighbor roundoff before argmin.
+                    score = a_norm + b_norm[None, :] - 2.0 * accumulator
+                    self_roundoff = (score * score < l2_clamp_precision) & (
+                        a_norm == b_norm[None, :]
+                    )
+                    score = ct.where(score > 0.0, score, 0.0)
+                    score = ct.where(self_roundoff, 0.0, score)
                 else:
                     # Defer the A-norm division until after selecting the
                     # winning centroid.
@@ -149,11 +159,8 @@ def make_kernel(
         if metric_code == METRIC_INNER_PRODUCT:
             out_dist = -best_dist
         else:
-            a_norm = ct.load(
-                A_norm, index=(bidm,), shape=(tm,), padding_mode=zero_pad
-            )[:, None]
             if metric_code == METRIC_L2_EXPANDED:
-                out_dist = a_norm + 2.0 * best_dist
+                out_dist = best_dist
                 out_dist = ct.where(
                     apply_sqrt != 0, ct.sqrt(out_dist), out_dist
                 )

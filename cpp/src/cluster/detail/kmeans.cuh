@@ -51,6 +51,7 @@
 #include <limits>
 #include <optional>
 #include <random>
+#include <type_traits>
 
 namespace cuvs::cluster::kmeans::detail {
 
@@ -1022,13 +1023,13 @@ void fit(raft::resources const& handle,
   kmeans_fit(handle, params, X, sample_weight, centroids, inertia, n_iter);
 }
 
-template <typename DataT, typename IndexT>
+template <typename DataT, typename IndexT, typename LabelT>
 void kmeans_predict(raft::resources const& handle,
                     const cuvs::cluster::kmeans::params& pams,
                     raft::device_matrix_view<const DataT, IndexT> X,
                     std::optional<raft::device_vector_view<const DataT, IndexT>> sample_weight,
                     raft::device_matrix_view<const DataT, IndexT> centroids,
-                    raft::device_vector_view<IndexT, IndexT> labels,
+                    raft::device_vector_view<LabelT, IndexT> labels,
                     bool normalize_weight,
                     raft::host_scalar_view<DataT> inertia)
 {
@@ -1088,17 +1089,34 @@ void kmeans_predict(raft::resources const& handle,
 
   auto l2normx_view =
     raft::make_device_vector_view<const DataT, IndexT>(L2NormX.data_handle(), n_samples);
-  cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<DataT, IndexT>(handle,
-                                                                             X,
-                                                                             centroids,
-                                                                             labels,
-                                                                             nearest_dist.view(),
-                                                                             l2normx_view,
-                                                                             L2NormBuf_OR_DistBuf,
-                                                                             pams.metric,
-                                                                             pams.batch_samples,
-                                                                             pams.batch_centroids,
-                                                                             workspace);
+  if constexpr (std::is_same_v<LabelT, IndexT>) {
+    cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<DataT, IndexT>(handle,
+                                                                               X,
+                                                                               centroids,
+                                                                               labels,
+                                                                               nearest_dist.view(),
+                                                                               l2normx_view,
+                                                                               L2NormBuf_OR_DistBuf,
+                                                                               pams.metric,
+                                                                               pams.batch_samples,
+                                                                               pams.batch_centroids,
+                                                                               workspace);
+  } else {
+    auto index_labels = raft::make_device_vector<IndexT, IndexT>(handle, n_samples);
+    cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<DataT, IndexT>(handle,
+                                                                               X,
+                                                                               centroids,
+                                                                               index_labels.view(),
+                                                                               nearest_dist.view(),
+                                                                               l2normx_view,
+                                                                               L2NormBuf_OR_DistBuf,
+                                                                               pams.metric,
+                                                                               pams.batch_samples,
+                                                                               pams.batch_centroids,
+                                                                               workspace);
+    raft::linalg::map(
+      handle, labels, raft::cast_op<LabelT>{}, raft::make_const_mdspan(index_labels.view()));
+  }
 
   rmm::device_scalar<DataT> clusterCostD(stream);
   raft::linalg::map(handle,
