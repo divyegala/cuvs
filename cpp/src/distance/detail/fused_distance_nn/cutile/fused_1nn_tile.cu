@@ -200,8 +200,6 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
                                DataT* nearest_dist,
                                const DataT* x,
                                const DataT* y,
-                               const fused_1nn_cutile_norm_t<DataT>* xn,
-                               const fused_1nn_cutile_norm_t<DataT>* yn,
                                IdxT m,
                                IdxT n,
                                IdxT k,
@@ -219,13 +217,8 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
       metric != cuvs::distance::DistanceType::CosineExpanded) {
     return false;
   }
-  if (metric != cuvs::distance::DistanceType::InnerProduct && (xn == nullptr || yn == nullptr)) {
-    return false;
-  }
 
-  // Both exported ABIs promise 16-byte base alignment for every array parameter.
-  if (!is_16_byte_aligned(nearest_dist) || !is_16_byte_aligned(x) || !is_16_byte_aligned(y) ||
-      !is_16_byte_aligned(xn) || !is_16_byte_aligned(yn)) {
+  if (!is_16_byte_aligned(nearest_dist) || !is_16_byte_aligned(x) || !is_16_byte_aligned(y)) {
     return false;
   }
   if constexpr (std::is_same_v<IdxT, int>) {
@@ -238,6 +231,28 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
   constexpr int strict_pitch_elements = 16 / sizeof(DataT);
   return k % strict_pitch_elements == 0 ? has_fused_1nn_tile_launcher<DataT, cutile_abi_strict>()
                                         : has_fused_1nn_tile_launcher<DataT, cutile_abi_relaxed>();
+}
+
+template <typename DataT, typename IdxT>
+  requires is_fused_1nn_cutile_data_v<DataT>
+bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
+                               DataT* nearest_dist,
+                               const DataT* x,
+                               const DataT* y,
+                               const fused_1nn_cutile_norm_t<DataT>* xn,
+                               const fused_1nn_cutile_norm_t<DataT>* yn,
+                               IdxT m,
+                               IdxT n,
+                               IdxT k,
+                               cuvs::distance::DistanceType metric)
+{
+  if (!can_launch_fused_1nn_tile(nearest_idx, nearest_dist, x, y, m, n, k, metric)) {
+    return false;
+  }
+  if (metric != cuvs::distance::DistanceType::InnerProduct && (xn == nullptr || yn == nullptr)) {
+    return false;
+  }
+  return is_16_byte_aligned(xn) && is_16_byte_aligned(yn);
 }
 
 template <typename DataT, typename IdxT>
@@ -321,6 +336,17 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
     return true;
   }
 }
+
+#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(DataT, IdxT)  \
+  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \
+    IdxT*, DataT*, const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
+
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(float, int);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(float, int64_t);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(half, int);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(half, int64_t);
+
+#undef CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT
 
 #define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(DataT, IdxT)            \
   template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \

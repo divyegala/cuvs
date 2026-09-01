@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -291,6 +291,28 @@ void search_impl(raft::resources const& handle,
       false,
       cuvs::selection::SelectAlgo::kAuto,
       num_samples_vector);
+  }
+  if (manage_local_topk && grid_dim_x > 1) {
+    // The merge select initializes unused output slots with (kDummy, idx=0), even when the
+    // corresponding local inputs carried an out-of-range sentinel. Restore the sentinel before
+    // neighbor postprocessing so an underfilled result cannot turn idx=0 into a duplicate DB ID.
+    AccT dummy_out = effective_metric == cuvs::distance::DistanceType::CosineExpanded
+                       ? raft::lower_bound<AccT>()
+                       : (select_min ? raft::upper_bound<AccT>() : raft::lower_bound<AccT>());
+    if (effective_metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
+        effective_metric == cuvs::distance::DistanceType::L2SqrtUnexpanded) {
+      dummy_out = raft::sqrt_op{}(dummy_out);
+    } else if (effective_metric == cuvs::distance::DistanceType::CosineExpanded) {
+      dummy_out = AccT{1} - dummy_out;
+    }
+    raft::linalg::map_offset(handle,
+                             raft::make_device_vector_view<uint32_t>(
+                               neighbors_uint32, std::size_t(n_queries) * std::size_t(k)),
+                             [neighbors_uint32, distances, dummy_out] __device__(std::size_t i) {
+                               return distances[i] == dummy_out
+                                        ? std::numeric_limits<uint32_t>::max()
+                                        : neighbors_uint32[i];
+                             });
   }
   if (!manage_local_topk) {
     // post process distances && neighbor IDs

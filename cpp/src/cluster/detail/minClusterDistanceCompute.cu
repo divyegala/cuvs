@@ -118,76 +118,68 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
                          metric == cuvs::distance::DistanceType::CosineExpanded;
   FusedDistancePath fused_path =
     use_fused<DataT, IndexT, IndexT>(handle, n_samples, n_clusters, n_features, metric);
+  bool cutile_ready = false;
   if constexpr (is_cutile_fused_data_type_v<DataT>) {
-    if (fused_path == FusedDistancePath::FusedCutile &&
-        metric == cuvs::distance::DistanceType::InnerProduct &&
-        !cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
-                                                           nearest_dist.data_handle(),
-                                                           X.data_handle(),
-                                                           centroids.data_handle(),
-                                                           static_cast<const DataT*>(nullptr),
-                                                           static_cast<const DataT*>(nullptr),
-                                                           n_samples,
-                                                           n_clusters,
-                                                           n_features,
-                                                           metric)) {
-      fused_path = FusedDistancePath::Unfused;
+    if (fused_path == FusedDistancePath::FusedCutile) {
+      cutile_ready = cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
+                                                                       nearest_dist.data_handle(),
+                                                                       X.data_handle(),
+                                                                       centroids.data_handle(),
+                                                                       n_samples,
+                                                                       n_clusters,
+                                                                       n_features,
+                                                                       metric);
+      if (!cutile_ready) {
+        fused_path = metric == cuvs::distance::DistanceType::InnerProduct
+                       ? FusedDistancePath::Unfused
+                       : FusedDistancePath::FusedCutlass;
+      }
     }
   }
 
   if (uses_fused_distance_nn(fused_path)) {
-    const DataT* x_norm_ptr = L2NormX.data_handle();
-    const DataT* centroids_norm_ptr;
-    if constexpr (std::is_same_v<DataT, float>) {
-      if (fused_path == FusedDistancePath::FusedCutile && is_l2_cos) {
-        constexpr size_t norm_alignment = 16 / sizeof(float);
-        const size_t x_norm_storage = raft::alignTo(static_cast<size_t>(n_samples), norm_alignment);
-        L2NormBuf_OR_DistBuf.resize(x_norm_storage + static_cast<size_t>(n_clusters), stream);
-        auto* tf32_x_norms        = L2NormBuf_OR_DistBuf.data();
-        auto* tf32_centroid_norms = tf32_x_norms + x_norm_storage;
-        const bool take_sqrt      = metric == cuvs::distance::DistanceType::CosineExpanded;
-        compute_tf32_row_norms(
-          handle, X.data_handle(), tf32_x_norms, n_samples, n_features, take_sqrt);
-        compute_tf32_row_norms(
-          handle, centroids.data_handle(), tf32_centroid_norms, n_clusters, n_features, take_sqrt);
-        x_norm_ptr         = tf32_x_norms;
-        centroids_norm_ptr = tf32_centroid_norms;
+    const DataT* x_norm_ptr         = nullptr;
+    const DataT* centroids_norm_ptr = nullptr;
+    if (is_l2_cos) {
+      x_norm_ptr = L2NormX.data_handle();
+      if constexpr (std::is_same_v<DataT, float>) {
+        if (cutile_ready) {
+          constexpr size_t norm_alignment = 16 / sizeof(float);
+          const size_t x_norm_storage =
+            raft::alignTo(static_cast<size_t>(n_samples), norm_alignment);
+          L2NormBuf_OR_DistBuf.resize(x_norm_storage + static_cast<size_t>(n_clusters), stream);
+          auto* tf32_x_norms        = L2NormBuf_OR_DistBuf.data();
+          auto* tf32_centroid_norms = tf32_x_norms + x_norm_storage;
+          const bool take_sqrt      = metric == cuvs::distance::DistanceType::CosineExpanded;
+          compute_tf32_row_norms(
+            handle, X.data_handle(), tf32_x_norms, n_samples, n_features, take_sqrt);
+          compute_tf32_row_norms(handle,
+                                 centroids.data_handle(),
+                                 tf32_centroid_norms,
+                                 n_clusters,
+                                 n_features,
+                                 take_sqrt);
+          x_norm_ptr         = tf32_x_norms;
+          centroids_norm_ptr = tf32_centroid_norms;
+        } else {
+          L2NormBuf_OR_DistBuf.resize(n_clusters, stream);
+          centroids_norm_ptr = L2NormBuf_OR_DistBuf.data();
+        }
       } else {
         L2NormBuf_OR_DistBuf.resize(n_clusters, stream);
         centroids_norm_ptr = L2NormBuf_OR_DistBuf.data();
       }
-    } else {
-      L2NormBuf_OR_DistBuf.resize(n_clusters, stream);
-      centroids_norm_ptr = L2NormBuf_OR_DistBuf.data();
-    }
 
-    if (!(fused_path == FusedDistancePath::FusedCutile && is_l2_cos &&
-          std::is_same_v<DataT, float>) &&
-        is_l2_cos) {
-      auto centroids_norm =
-        raft::make_device_vector_view<DataT, IndexT>(L2NormBuf_OR_DistBuf.data(), n_clusters);
-      if (metric == cuvs::distance::DistanceType::CosineExpanded) {
-        raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(
-          handle, centroids, centroids_norm, raft::sqrt_op{});
-      } else {
-        raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(
-          handle, centroids, centroids_norm);
-      }
-    }
-
-    bool cutile_ready = false;
-    if constexpr (is_cutile_fused_data_type_v<DataT>) {
-      if (fused_path == FusedDistancePath::FusedCutile) {
-        cutile_ready = cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
-                                                                         nearest_dist.data_handle(),
-                                                                         X.data_handle(),
-                                                                         centroids.data_handle(),
-                                                                         x_norm_ptr,
-                                                                         centroids_norm_ptr,
-                                                                         n_samples,
-                                                                         n_clusters,
-                                                                         n_features,
-                                                                         metric);
+      if (!cutile_ready) {
+        auto centroids_norm =
+          raft::make_device_vector_view<DataT, IndexT>(L2NormBuf_OR_DistBuf.data(), n_clusters);
+        if (metric == cuvs::distance::DistanceType::CosineExpanded) {
+          raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(
+            handle, centroids, centroids_norm, raft::sqrt_op{});
+        } else {
+          raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(
+            handle, centroids, centroids_norm);
+        }
       }
     }
 
@@ -402,15 +394,30 @@ void minClusterDistanceCompute(raft::resources const& handle,
 
   raft::matrix::fill(handle, minClusterDistance, std::numeric_limits<DataT>::max());
 
-  const FusedDistancePath fused_path =
+  FusedDistancePath fused_path =
     is_l2_cos ? use_fused<DataT, IndexT, IndexT>(handle, n_samples, n_clusters, n_features, metric)
               : FusedDistancePath::Unfused;
+  bool cutile_ready = false;
+  if constexpr (is_cutile_fused_data_type_v<DataT>) {
+    if (fused_path == FusedDistancePath::FusedCutile) {
+      cutile_ready =
+        cuvs::distance::detail::can_launch_fused_1nn_tile(static_cast<IndexT*>(nullptr),
+                                                          minClusterDistance.data_handle(),
+                                                          X.data_handle(),
+                                                          centroids.data_handle(),
+                                                          n_samples,
+                                                          n_clusters,
+                                                          n_features,
+                                                          metric);
+      if (!cutile_ready) { fused_path = FusedDistancePath::FusedCutlass; }
+    }
+  }
 
   if (uses_fused_distance_nn(fused_path)) {
     const DataT* x_norm_ptr = L2NormX.data_handle();
     const DataT* centroids_norm_ptr;
     if constexpr (std::is_same_v<DataT, float>) {
-      if (fused_path == FusedDistancePath::FusedCutile && is_l2_cos) {
+      if (cutile_ready) {
         constexpr size_t norm_alignment = 16 / sizeof(float);
         const size_t x_norm_storage = raft::alignTo(static_cast<size_t>(n_samples), norm_alignment);
         L2NormBuf_OR_DistBuf.resize(x_norm_storage + static_cast<size_t>(n_clusters), stream);
@@ -432,8 +439,7 @@ void minClusterDistanceCompute(raft::resources const& handle,
       centroids_norm_ptr = L2NormBuf_OR_DistBuf.data();
     }
 
-    if (!(fused_path == FusedDistancePath::FusedCutile && is_l2_cos &&
-          std::is_same_v<DataT, float>)) {
+    if (!cutile_ready) {
       auto centroids_norm =
         raft::make_device_vector_view<DataT, IndexT>(L2NormBuf_OR_DistBuf.data(), n_clusters);
       if (metric == cuvs::distance::DistanceType::CosineExpanded) {
@@ -449,23 +455,6 @@ void minClusterDistanceCompute(raft::resources const& handle,
           raft::make_device_matrix_view<const DataT, IndexT>(
             centroids.data_handle(), centroids.extent(0), centroids.extent(1)),
           centroids_norm);
-      }
-    }
-
-    bool cutile_ready = false;
-    if constexpr (is_cutile_fused_data_type_v<DataT>) {
-      if (fused_path == FusedDistancePath::FusedCutile) {
-        cutile_ready =
-          cuvs::distance::detail::can_launch_fused_1nn_tile(static_cast<IndexT*>(nullptr),
-                                                            minClusterDistance.data_handle(),
-                                                            X.data_handle(),
-                                                            centroids.data_handle(),
-                                                            x_norm_ptr,
-                                                            centroids_norm_ptr,
-                                                            n_samples,
-                                                            n_clusters,
-                                                            n_features,
-                                                            metric);
       }
     }
 

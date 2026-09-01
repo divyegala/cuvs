@@ -42,6 +42,23 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
                                DataT* nearest_dist,
                                const DataT* x,
                                const DataT* y,
+                               IdxT m,
+                               IdxT n,
+                               IdxT k,
+                               cuvs::distance::DistanceType metric);
+
+/**
+ * Return whether the supplied problem and existing norm buffers can use cuTile.
+ *
+ * The overload without norm pointers is a preflight probe for callers that allocate aligned norm
+ * buffers only after the remaining launch requirements have been validated.
+ */
+template <typename DataT, typename IdxT>
+  requires is_fused_1nn_cutile_data_v<DataT>
+bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
+                               DataT* nearest_dist,
+                               const DataT* x,
+                               const DataT* y,
                                const fused_1nn_cutile_norm_t<DataT>* xn,
                                const fused_1nn_cutile_norm_t<DataT>* yn,
                                IdxT m,
@@ -65,6 +82,13 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
                         void* index_workspace,
                         cudaStream_t stream);
 #else
+template <typename DataT, typename IdxT>
+bool can_launch_fused_1nn_tile(
+  IdxT*, DataT*, const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
+{
+  return false;
+}
+
 template <typename DataT, typename IdxT>
 bool can_launch_fused_1nn_tile(IdxT*,
                                DataT*,
