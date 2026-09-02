@@ -210,11 +210,11 @@ void fusedDistanceNN(IdxT* nearest_idx,
 /**
  * @brief Fused GEMM + 1-NN minimum reduction.
  *
- * @param[out] nearest_idx   Nearest neighbor index per row, length `m` (required).
+ * @param[out] nearest_idx   Nearest neighbor index per row, length `m` (optional).
  * @param[out] nearest_dist  Minimum distance per row, length `m` (optional, may be null).
- * @param[in]  cutlass_kvp_scratch  Temp KVP buffer, length `m`; required when CUTLASS/SIMT runs.
- *                                    It may be omitted only after
- *                                    detail::can_launch_fused_1nn_tile succeeds.
+ * @param[in]  cutlass_kvp_scratch Temp KVP buffer, length `m`, for index-bearing CUTLASS/SIMT
+ *                                  output. Distance-only output may pass null and write directly
+ *                                  to `nearest_dist`.
  */
 template <typename DataT, typename IdxT>
 void fusedDistanceNNMinReduce(IdxT* nearest_idx,

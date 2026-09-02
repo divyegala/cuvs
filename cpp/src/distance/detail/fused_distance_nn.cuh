@@ -71,60 +71,66 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
   RAFT_EXPECTS(metric != cuvs::distance::DistanceType::InnerProduct,
                "Fused InnerProduct 1-NN requires a compatible cuTile launcher");
 
-  RAFT_EXPECTS(cutlass_kvp_scratch != nullptr, "CUTLASS fused 1-NN requires a scratch KVP buffer");
-
-  if (initOutBuffer) {
-    initFused1nnOutput(nearest_idx, nearest_dist, m, std::numeric_limits<DataT>::max(), stream);
-  }
-
-  MinAndDistanceReduceOpImpl<IdxT, DataT> cutlass_redOp;
-  cutlass_redOp.out_kvp = cutlass_kvp_scratch;
-  initialize<DataT, KVP, IdxT, decltype(cutlass_redOp)>(
-    cutlass_kvp_scratch, m, maxVal, cutlass_redOp, stream);
-
   RAFT_CUDA_TRY(cudaMemsetAsync(workspace, 0, sizeof(int) * m, stream));
 
-  switch (metric) {
-    case cuvs::distance::DistanceType::CosineExpanded:
-      fusedCosineNN<DataT, IdxT, P, decltype(cutlass_redOp), KVPReduceOpT>(nearest_idx,
-                                                                           nearest_dist,
-                                                                           x,
-                                                                           y,
-                                                                           xn,
-                                                                           yn,
-                                                                           m,
-                                                                           n,
-                                                                           k,
-                                                                           workspace,
-                                                                           cutlass_redOp,
-                                                                           pairRedOp,
-                                                                           sqrt,
-                                                                           cutlass_kvp_scratch,
-                                                                           stream);
-      break;
-    case cuvs::distance::DistanceType::L2SqrtExpanded:
-    case cuvs::distance::DistanceType::L2Expanded:
-      fusedL2NNImpl<DataT, IdxT, P, decltype(cutlass_redOp), KVPReduceOpT>(nearest_idx,
-                                                                           nearest_dist,
-                                                                           x,
-                                                                           y,
-                                                                           xn,
-                                                                           yn,
-                                                                           m,
-                                                                           n,
-                                                                           k,
-                                                                           workspace,
-                                                                           cutlass_redOp,
-                                                                           pairRedOp,
-                                                                           sqrt,
-                                                                           false,
-                                                                           cutlass_kvp_scratch,
-                                                                           stream);
-      break;
-    default: assert("only cosine/l2 metric is supported with fusedDistanceNN\n"); break;
-  }
+  auto launch_legacy = [&]<typename OutT>(OutT* out, auto cutlass_red_op) {
+    switch (metric) {
+      case cuvs::distance::DistanceType::CosineExpanded:
+        fusedCosineNN<DataT, OutT, IdxT, P, decltype(cutlass_red_op), KVPReduceOpT>(nearest_idx,
+                                                                                    nearest_dist,
+                                                                                    x,
+                                                                                    y,
+                                                                                    xn,
+                                                                                    yn,
+                                                                                    m,
+                                                                                    n,
+                                                                                    k,
+                                                                                    workspace,
+                                                                                    cutlass_red_op,
+                                                                                    pairRedOp,
+                                                                                    sqrt,
+                                                                                    out,
+                                                                                    stream);
+        break;
+      case cuvs::distance::DistanceType::L2SqrtExpanded:
+      case cuvs::distance::DistanceType::L2Expanded:
+        fusedL2NNImpl<DataT, OutT, IdxT, P, decltype(cutlass_red_op), KVPReduceOpT>(nearest_idx,
+                                                                                    nearest_dist,
+                                                                                    x,
+                                                                                    y,
+                                                                                    xn,
+                                                                                    yn,
+                                                                                    m,
+                                                                                    n,
+                                                                                    k,
+                                                                                    workspace,
+                                                                                    cutlass_red_op,
+                                                                                    pairRedOp,
+                                                                                    sqrt,
+                                                                                    false,
+                                                                                    out,
+                                                                                    stream);
+        break;
+      default: assert("only cosine/l2 metric is supported with fusedDistanceNN\n"); break;
+    }
+  };
 
-  unpackFused1nnKvpToSoa(nearest_idx, nearest_dist, cutlass_kvp_scratch, m, stream);
+  MinAndDistanceReduceOpImpl<IdxT, DataT> cutlass_red_op;
+  if (cutlass_kvp_scratch != nullptr) {
+    if (initOutBuffer) { initFused1nnOutput(nearest_idx, nearest_dist, m, maxVal, stream); }
+    cutlass_red_op.out_kvp = cutlass_kvp_scratch;
+    initialize<DataT, KVP, IdxT, decltype(cutlass_red_op)>(
+      cutlass_kvp_scratch, m, maxVal, cutlass_red_op, stream);
+    launch_legacy(cutlass_kvp_scratch, cutlass_red_op);
+    unpackFused1nnKvpToSoa(nearest_idx, nearest_dist, cutlass_kvp_scratch, m, stream);
+  } else {
+    RAFT_EXPECTS(nearest_idx == nullptr && nearest_dist != nullptr,
+                 "Direct CUTLASS output supports distance-only results");
+    cutlass_red_op.out_dist = nearest_dist;
+    initialize<DataT, DataT, IdxT, decltype(cutlass_red_op)>(
+      nearest_dist, m, maxVal, cutlass_red_op, stream);
+    launch_legacy(nearest_dist, cutlass_red_op);
+  }
 }
 
 }  // namespace detail

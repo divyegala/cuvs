@@ -49,6 +49,16 @@ constexpr size_t fused_1nn_cutile_index_workspace_rows(IdxT m)
 
 #if CUVS_CUTILE_ENABLED
 /**
+ * Return whether the input problem has a compatible cuTile launcher.
+ *
+ * This output-independent probe lets callers select native result storage before allocating it.
+ */
+template <typename DataT, typename IdxT>
+  requires is_fused_1nn_cutile_data_v<DataT>
+bool can_launch_fused_1nn_tile(
+  const DataT* x, const DataT* y, IdxT m, IdxT n, IdxT k, cuvs::distance::DistanceType metric);
+
+/**
  * Return whether the supplied problem can use cuTile without fallback scratch.
  *
  * The result includes runtime/device support, exported ABI constraints, and launcher construction.
@@ -101,6 +111,13 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
                         void* index_workspace,
                         cudaStream_t stream);
 #else
+template <typename DataT, typename IdxT>
+bool can_launch_fused_1nn_tile(
+  const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
+{
+  return false;
+}
+
 template <typename DataT, typename IdxT>
 bool can_launch_fused_1nn_tile(
   IdxT*, DataT*, const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)

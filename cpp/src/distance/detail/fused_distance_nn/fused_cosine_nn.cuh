@@ -24,7 +24,12 @@ namespace distance {
 
 namespace detail {
 
-template <typename DataT, typename IdxT, typename Policy, typename ReduceOpT, typename KVPReduceOpT>
+template <typename DataT,
+          typename OutT,
+          typename IdxT,
+          typename Policy,
+          typename ReduceOpT,
+          typename KVPReduceOpT>
 void fusedCosineNN(IdxT* nearest_idx,
                    DataT* nearest_dist,
                    const DataT* x,
@@ -38,14 +43,13 @@ void fusedCosineNN(IdxT* nearest_idx,
                    ReduceOpT redOp,
                    KVPReduceOpT pairRedOp,
                    bool sqrt,
-                   raft::KeyValuePair<IdxT, DataT>* cutlass_out,
+                   OutT* cutlass_out,
                    cudaStream_t stream)
 {
   typedef Policy P;
 
   dim3 blk(P::Nthreads);
   constexpr auto maxVal = std::numeric_limits<DataT>::max();
-  typedef raft::KeyValuePair<IdxT, DataT> KVPair;
 
   if (cutlass_out == nullptr) {
     initFused1nnOutput(nearest_idx, nearest_dist, m, maxVal, stream);
@@ -59,7 +63,7 @@ void fusedCosineNN(IdxT* nearest_idx,
   raft::identity_op fin_op{};
 
   auto kernel = fusedDistanceNNkernel<DataT,
-                                      KVPair,
+                                      OutT,
                                       IdxT,
                                       P,
                                       ReduceOpT,
@@ -82,7 +86,7 @@ void fusedCosineNN(IdxT* nearest_idx,
 
     cutlassFusedDistanceNN<DataT,
                            DataT,
-                           KVPair,
+                           OutT,
                            IdxT,
                            P::Veclen,
                            decltype(cg_reduce_op),

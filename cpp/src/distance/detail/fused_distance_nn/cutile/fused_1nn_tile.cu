@@ -196,6 +196,33 @@ bool try_fused_1nn_tile_dispatch(IdxT* nearest_idx,
 
 template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
+bool can_launch_fused_1nn_tile(
+  const DataT* x, const DataT* y, IdxT m, IdxT n, IdxT k, cuvs::distance::DistanceType metric)
+{
+  if (!cuvs::detail::jit_lto::cutile_launch_available_on_current_device()) { return false; }
+  static_assert(std::is_same_v<IdxT, int> || std::is_same_v<IdxT, int64_t>);
+
+  if (x == nullptr || y == nullptr || m <= 0 || n <= 0 || k <= 0) { return false; }
+  if (metric != cuvs::distance::DistanceType::InnerProduct &&
+      metric != cuvs::distance::DistanceType::L2Expanded &&
+      metric != cuvs::distance::DistanceType::L2SqrtExpanded &&
+      metric != cuvs::distance::DistanceType::CosineExpanded) {
+    return false;
+  }
+
+  if (!is_16_byte_aligned(x) || !is_16_byte_aligned(y)) { return false; }
+  if constexpr (std::is_same_v<IdxT, int64_t>) {
+    constexpr int64_t max_i32 = std::numeric_limits<int>::max();
+    if (n > max_i32 || k > max_i32) { return false; }
+  }
+
+  constexpr int strict_pitch_elements = 16 / sizeof(DataT);
+  return k % strict_pitch_elements == 0 ? has_fused_1nn_tile_launcher<DataT, cutile_abi_strict>()
+                                        : has_fused_1nn_tile_launcher<DataT, cutile_abi_relaxed>();
+}
+
+template <typename DataT, typename IdxT>
+  requires is_fused_1nn_cutile_data_v<DataT>
 bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
                                DataT* nearest_dist,
                                const DataT* x,
@@ -205,32 +232,12 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
                                IdxT k,
                                cuvs::distance::DistanceType metric)
 {
-  if (!cuvs::detail::jit_lto::cutile_launch_available_on_current_device()) { return false; }
-  static_assert(std::is_same_v<IdxT, int> || std::is_same_v<IdxT, int64_t>);
-
-  if (nearest_dist == nullptr || x == nullptr || y == nullptr || m <= 0 || n <= 0 || k <= 0) {
-    return false;
-  }
-  if (metric != cuvs::distance::DistanceType::InnerProduct &&
-      metric != cuvs::distance::DistanceType::L2Expanded &&
-      metric != cuvs::distance::DistanceType::L2SqrtExpanded &&
-      metric != cuvs::distance::DistanceType::CosineExpanded) {
-    return false;
-  }
-
-  if (!is_16_byte_aligned(nearest_dist) || !is_16_byte_aligned(x) || !is_16_byte_aligned(y)) {
-    return false;
-  }
+  if (!can_launch_fused_1nn_tile(x, y, m, n, k, metric)) { return false; }
+  if (nearest_dist == nullptr || !is_16_byte_aligned(nearest_dist)) { return false; }
   if constexpr (std::is_same_v<IdxT, int>) {
     if (!is_16_byte_aligned(nearest_idx)) { return false; }
-  } else {
-    constexpr int64_t max_i32 = std::numeric_limits<int>::max();
-    if (n > max_i32 || k > max_i32) { return false; }
   }
-
-  constexpr int strict_pitch_elements = 16 / sizeof(DataT);
-  return k % strict_pitch_elements == 0 ? has_fused_1nn_tile_launcher<DataT, cutile_abi_strict>()
-                                        : has_fused_1nn_tile_launcher<DataT, cutile_abi_relaxed>();
+  return true;
 }
 
 template <typename DataT, typename IdxT>
@@ -336,6 +343,17 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
     return true;
   }
 }
+
+#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(DataT, IdxT)     \
+  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \
+    const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
+
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(float, int);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(float, int64_t);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(half, int);
+CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(half, int64_t);
+
+#undef CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS
 
 #define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(DataT, IdxT)  \
   template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \
