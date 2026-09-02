@@ -62,13 +62,18 @@ class CUVS_EXPORT roaring_allowlist_view {
  *
  * Logically, the owner is a sparse matrix with one allowlist row per query and one possible column
  * per dataset row. @ref from_ids accepts one contiguous ID vector plus an indptr vector that
- * delimits independently sized query rows. Every row is sorted and encoded independently. All
- * variable-length portable Roaring streams and their initialized
+ * delimits independently sized query rows. Every row is sorted and encoded independently. For
+ * multiple rows, all variable-length portable Roaring streams and their initialized
  * `cuco::experimental::roaring_bitmap_ref<uint32_t>` objects share one packed device allocation.
+ * The batch builder uses indptr directly for segmented device radix sort and schedules
+ * analysis/encoding over all containers in all rows.
  *
- * For multiple rows, the builder uses indptr directly for segmented device radix sort and
- * schedules analysis/encoding over all containers in all rows. A one-row input retains the tuned
- * single-allowlist builder. Final encoding and reference initialization remain stream ordered.
+ * A one-row input delegates raw-index construction to cuCollections. cuVS retains the cuco owner
+ * directly and materializes only its lightweight reference in cuVS device metadata; the serialized
+ * payload is not copied. cuco currently emits array and bitmap containers on this path. The cuVS
+ * multi-row builder emits the same array and bitmap container forms. Imported portable rows may
+ * still contain run containers. Final encoding and reference initialization remain stream ordered
+ * in both paths.
  *
  * IDs must be unique within each row. Setting @p pre_sorted skips sorting and promises that every
  * row is strictly increasing; ordering and uniqueness are not checked. Every ID must be smaller
@@ -76,7 +81,8 @@ class CUVS_EXPORT roaring_allowlist_view {
  *
  * @see https://github.com/RoaringBitmap/RoaringFormatSpec
  * @see
- * https://github.com/NVIDIA/cuCollections/blob/6001618aaa7f17ea2bbcd444650e9573c4f3d6c5/include/cuco/roaring_bitmap_ref.cuh
+ * https://github.com/NVIDIA/cuCollections/blob/9d7c9307395c3b8795d93ad65d0751c98471dde6/include/cuco/roaring_bitmap_ref.cuh
+ * @see https://github.com/NVIDIA/cuCollections/pull/839
  */
 class CUVS_EXPORT roaring_allowlist {
  private:

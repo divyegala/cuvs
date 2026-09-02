@@ -8,9 +8,6 @@
 
 #include <cuco/roaring_bitmap_ref.cuh>
 
-#include "../../bench/ann/src/cuvs/allowlist_benchmark_utils.hpp"
-#include "../../bench/ann/src/cuvs/cagra_filter_benchmark_utils.hpp"
-
 #include <raft/core/copy.cuh>
 #include <raft/core/device_mdarray.hpp>
 #include <raft/core/device_resources.hpp>
@@ -40,9 +37,9 @@ namespace {
 // These hand-built fixtures exercise import of the portable bytes themselves.
 // Keep their field order aligned with
 // https://github.com/RoaringBitmap/RoaringFormatSpec.
-constexpr std::uint32_t kCookieNoRun                  = 12346;
-constexpr std::uint32_t kCookieRun                    = 12347;
-constexpr std::uint32_t kSingleArrayPayloadByteOffset = 16;
+constexpr std::uint32_t kCookieNoRun                      = 12346;
+constexpr std::uint32_t kCookieRun                        = 12347;
+constexpr std::uint32_t kSingleContainerPayloadByteOffset = 16;
 
 void append_u16(std::vector<std::byte>& out, std::uint16_t value)
 {
@@ -57,6 +54,16 @@ void append_u32(std::vector<std::byte>& out, std::uint32_t value)
   }
 }
 
+std::uint32_t read_u32(std::vector<std::byte> const& bytes, std::size_t offset = 0)
+{
+  std::uint32_t value{};
+  for (int i = 0; i < 4; ++i) {
+    value |= static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[offset + i]))
+             << (8 * i);
+  }
+  return value;
+}
+
 // One no-run array container: cookie, N, {key, cardinality - 1}, payload
 // offset, values.
 std::vector<std::byte> array_row(std::vector<std::uint16_t> const& values)
@@ -66,7 +73,7 @@ std::vector<std::byte> array_row(std::vector<std::uint16_t> const& values)
   append_u32(out, 1);
   append_u16(out, 0);
   append_u16(out, static_cast<std::uint16_t>(values.size() - 1));
-  append_u32(out, kSingleArrayPayloadByteOffset);
+  append_u32(out, kSingleContainerPayloadByteOffset);
   for (auto value : values) {
     append_u16(out, value);
   }
@@ -86,6 +93,23 @@ std::vector<std::byte> run_row(std::uint16_t start, std::uint16_t length_minus_o
   append_u16(out, 1);
   append_u16(out, start);
   append_u16(out, length_minus_one);
+  return out;
+}
+
+// One no-run bitmap container containing the 5,000 even values below 10,000.
+std::vector<std::byte> bitmap_row()
+{
+  constexpr std::uint16_t cardinality = 5000;
+  std::vector<std::byte> out;
+  append_u32(out, kCookieNoRun);
+  append_u32(out, 1);
+  append_u16(out, 0);
+  append_u16(out, cardinality - 1);
+  append_u32(out, kSingleContainerPayloadByteOffset);
+  out.resize(kSingleContainerPayloadByteOffset + 8192, std::byte{0});
+  for (std::uint32_t value = 0; value < 10000; value += 2) {
+    out[kSingleContainerPayloadByteOffset + value / 8] |= static_cast<std::byte>(1u << (value % 8));
+  }
   return out;
 }
 
@@ -241,7 +265,7 @@ void expect_batch_membership(raft::resources const& res,
   EXPECT_EQ(actual, expected);
 }
 
-TEST(RoaringAllowlist, BuildsArrayRunBitmapAndMultiContainerRowsFromIds)
+TEST(RoaringAllowlist, BuildsArrayBitmapAndMultiContainerRowsFromIds)
 {
   raft::device_resources res;
 
@@ -256,9 +280,9 @@ TEST(RoaringAllowlist, BuildsArrayRunBitmapAndMultiContainerRowsFromIds)
   for (std::uint32_t id = 100; id < 300; ++id) {
     consecutive.push_back(id);
   }
-  auto run = from_ids(res, 1000, consecutive);
-  EXPECT_EQ(run.cardinality(0), 200);
-  expect_membership(res, run, {99, 100, 199, 299, 300}, {0, 1, 1, 1, 0});
+  auto contiguous = from_ids(res, 1000, consecutive);
+  EXPECT_EQ(contiguous.cardinality(0), 200);
+  expect_membership(res, contiguous, {99, 100, 199, 299, 300}, {0, 1, 1, 1, 0});
 
   std::vector<std::uint32_t> sparse;
   for (std::uint32_t id = 0; id < 10000; id += 2) {
@@ -307,6 +331,7 @@ TEST(RoaringAllowlist, BuildsRaggedRowsInOneGeneralBatch)
   EXPECT_NE(allowlists.view(0).device_reference(), allowlists.view(2).device_reference());
   EXPECT_EQ(device_allowlists.total_cardinality(), ids.size());
   EXPECT_EQ(device_allowlists.size_bytes(), allowlists.size_bytes());
+  EXPECT_EQ(read_u32(copy_serialized_bytes(res, allowlists)), kCookieNoRun);
 
   expect_batch_membership(res,
                           allowlists,
@@ -421,7 +446,7 @@ TEST(RoaringAllowlist, ImportsRaggedPortableRowsIntoOnePackedOwner)
                           {1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0});
 }
 
-TEST(RoaringAllowlist, ConstructionPathsEmitByteIdenticalPortableRows)
+TEST(RoaringAllowlist, CucoConstructionPathsEmitByteIdenticalPortableRows)
 {
   raft::device_resources res;
   constexpr std::uint32_t second_key = std::uint32_t{1} << 16;
@@ -439,51 +464,15 @@ TEST(RoaringAllowlist, ConstructionPathsEmitByteIdenticalPortableRows)
   auto sorted = ids;
   std::sort(sorted.begin(), sorted.end());
   auto const dataset_rows = static_cast<std::size_t>(third_key) + 10000;
-  auto const expected     = cuvs::bench::allowlist::make_portable_roaring_bytes(ids);
+  auto host_unsorted      = from_ids(res, dataset_rows, ids);
+  auto host_pre_sorted    = from_ids(res, dataset_rows, sorted, true);
+  auto device_unsorted    = from_device_ids(res, dataset_rows, ids);
+  auto device_sorted      = from_device_ids(res, dataset_rows, sorted, true);
 
-  auto host_unsorted   = from_ids(res, dataset_rows, ids);
-  auto host_pre_sorted = from_ids(res, dataset_rows, sorted, true);
-  auto device_unsorted = from_device_ids(res, dataset_rows, ids);
-  auto device_sorted   = from_device_ids(res, dataset_rows, sorted, true);
-
-  EXPECT_EQ(copy_serialized_bytes(res, host_unsorted), expected);
+  auto const expected = copy_serialized_bytes(res, host_unsorted);
   EXPECT_EQ(copy_serialized_bytes(res, host_pre_sorted), expected);
   EXPECT_EQ(copy_serialized_bytes(res, device_unsorted), expected);
   EXPECT_EQ(copy_serialized_bytes(res, device_sorted), expected);
-}
-
-TEST(RoaringAllowlist, BenchmarkPortableSerializerImportsMixedContainerKinds)
-{
-  raft::device_resources res;
-  constexpr std::uint32_t second_key = std::uint32_t{1} << 16;
-  constexpr std::uint32_t third_key  = std::uint32_t{2} << 16;
-
-  std::vector<std::uint32_t> ids;
-  for (std::uint32_t id = 100; id < 300; ++id) {
-    ids.push_back(id);  // run
-  }
-  ids.insert(ids.end(), {second_key + 1, second_key + 3, second_key + 5});  // array
-  for (std::uint32_t id = 0; id < 10000; id += 2) {
-    ids.push_back(third_key + id);  // bitmap
-  }
-  std::reverse(ids.begin(), ids.end());
-  auto const bytes = cuvs::bench::allowlist::make_portable_roaring_bytes(ids);
-  auto imported    = import_row(res, static_cast<std::size_t>(third_key) + 10000, bytes);
-
-  EXPECT_EQ(imported.cardinality(0), ids.size());
-  expect_membership(res,
-                    imported,
-                    {99,
-                     100,
-                     299,
-                     300,
-                     second_key + 1,
-                     second_key + 2,
-                     third_key,
-                     third_key + 1,
-                     third_key + 9998,
-                     third_key + 9999},
-                    {0, 1, 1, 0, 1, 0, 1, 0, 1, 0});
 }
 
 TEST(RoaringAllowlist, BuildsFromUnsortedUniqueDeviceIdsWithoutModifyingInput)
@@ -494,7 +483,7 @@ TEST(RoaringAllowlist, BuildsFromUnsortedUniqueDeviceIdsWithoutModifyingInput)
 
   std::vector<std::uint32_t> ids;
   for (std::uint32_t id = 100; id < 300; ++id) {
-    ids.push_back(id);  // run container
+    ids.push_back(id);  // contiguous array container
   }
   ids.insert(ids.end(), {second_key + 1, second_key + 3, second_key + 5});  // array container
   for (std::uint32_t id = 0; id < 10000; id += 2) {
@@ -581,7 +570,7 @@ TEST(RoaringAllowlist, SparseDeviceBuilderHandlesThresholdAndGeneralCrossover)
   std::vector<std::uint32_t> sorted;
   sorted.reserve(129);
   for (std::uint32_t id = 100; id < 164; ++id) {
-    sorted.push_back(id);  // one run container
+    sorted.push_back(id);  // one contiguous array container
   }
   for (std::uint32_t value = 1; value < 65; value += 2) {
     sorted.push_back(second_key + value);  // one array container
@@ -709,6 +698,11 @@ TEST(RoaringAllowlist, ImportsPortableArrayRunAndEmptyRows)
   EXPECT_EQ(run.cardinality(0), 100);
   expect_membership(res, run, {99, 100, 199, 200}, {0, 1, 1, 0}, true);
 
+  auto bitmap_bytes = bitmap_row();
+  auto bitmap       = import_row(res, 10000, bitmap_bytes);
+  EXPECT_EQ(bitmap.cardinality(0), 5000);
+  expect_membership(res, bitmap, {0, 1, 8192, 9998, 9999}, {1, 0, 1, 1, 0}, true);
+
   std::vector<std::byte> standard_empty;
   append_u32(standard_empty, kCookieNoRun);
   append_u32(standard_empty, 0);
@@ -829,115 +823,6 @@ TEST(RoaringFilter, RejectsSmallInvalidMappings)
   cuvs::neighbors::filtering::roaring_filter filter(res, one);
   EXPECT_THROW(filter.set_allowlist(res, 1, ten.view(0)), raft::logic_error);
   EXPECT_THROW(filter.set_allowlist(res, 0, eleven.view(0)), raft::logic_error);
-}
-
-TEST(CagraFilterBenchmarkUtils, GeneratesExactDeterministicAllowlistLayouts)
-{
-  using cuvs::bench::cagra_filter::allowlist_layout;
-  using cuvs::bench::cagra_filter::make_allowed_ids;
-
-  for (auto layout : {allowlist_layout::random, allowlist_layout::runs}) {
-    auto first  = make_allowed_ids(257, 73, layout, 12345);
-    auto second = make_allowed_ids(257, 73, layout, 12345);
-    EXPECT_EQ(first, second);
-    ASSERT_EQ(first.size(), 73);
-
-    std::sort(first.begin(), first.end());
-    EXPECT_EQ(std::adjacent_find(first.begin(), first.end()), first.end());
-    EXPECT_LT(first.back(), 257);
-  }
-
-  auto run = make_allowed_ids(257, 73, allowlist_layout::runs, 12345);
-  std::sort(run.begin(), run.end());
-  auto breaks = std::size_t{0};
-  for (std::size_t i = 1; i < run.size(); ++i) {
-    breaks += run[i] != run[i - 1] + 1 ? 1 : 0;
-  }
-  EXPECT_LE(breaks,
-            1);  // a circular interval is one range, or two when it wraps at row zero
-
-  auto random = make_allowed_ids(257, 73, allowlist_layout::random, 12345);
-  std::sort(random.begin(), random.end());
-  breaks = 0;
-  for (std::size_t i = 1; i < random.size(); ++i) {
-    breaks += random[i] != random[i - 1] + 1 ? 1 : 0;
-  }
-  EXPECT_GT(breaks, 1);
-
-  EXPECT_TRUE(make_allowed_ids(257, 0, allowlist_layout::random, 12345).empty());
-  EXPECT_THROW(make_allowed_ids(0, 0, allowlist_layout::random, 12345), std::invalid_argument);
-  EXPECT_THROW(make_allowed_ids(10, 11, allowlist_layout::runs, 12345), std::invalid_argument);
-}
-
-TEST(CagraFilterBenchmarkUtils, SummarizesLatencySamples)
-{
-  auto const stats = cuvs::bench::cagra_filter::summarize({1.0, 2.0, 3.0, 4.0, 5.0});
-  EXPECT_DOUBLE_EQ(stats.mean, 3.0);
-  EXPECT_DOUBLE_EQ(stats.p50, 3.0);
-  EXPECT_DOUBLE_EQ(stats.p95, 4.8);
-  EXPECT_DOUBLE_EQ(stats.p99, 4.96);
-
-  EXPECT_EQ(cuvs::bench::cagra_filter::cardinality_for_fraction(1'000'000, 0.001, 10), 1000);
-  EXPECT_EQ(cuvs::bench::cagra_filter::allowed_percent_label(0.001), "allowed_0.1pct");
-  EXPECT_EQ(cuvs::bench::cagra_filter::allowed_percent_label(0.015), "allowed_1.5pct");
-}
-
-TEST(AllowlistBenchmarkUtils, GeneratesControlledSmallLookupProfiles)
-{
-  using namespace cuvs::bench::allowlist;
-
-  constexpr std::uint32_t rows      = 64;
-  constexpr std::size_t cardinality = 16;
-  for (auto profile : {lookup_profile::best, lookup_profile::average, lookup_profile::worst}) {
-    auto first  = make_allowed_ids(rows, cardinality, profile, 12345);
-    auto second = make_allowed_ids(rows, cardinality, profile, 12345);
-    EXPECT_EQ(first, second);
-    ASSERT_EQ(first.size(), cardinality);
-    std::sort(first.begin(), first.end());
-    EXPECT_EQ(std::adjacent_find(first.begin(), first.end()), first.end());
-    EXPECT_LT(first.back(), rows);
-  }
-
-  auto best = make_allowed_ids(rows, cardinality, lookup_profile::best, 12345);
-  EXPECT_EQ(occupied_chunks(best), 1);
-  EXPECT_EQ(count_runs(best), 1);
-
-  auto worst = make_allowed_ids(rows, cardinality, lookup_profile::worst, 12345);
-  EXPECT_EQ(maximum_encoded_runs(cardinality, rows), 7);
-  EXPECT_EQ(count_runs(worst), 7);
-
-  EXPECT_THROW(make_allowed_ids(0, 0, lookup_profile::best, 12345), std::invalid_argument);
-  EXPECT_THROW(make_allowed_ids(10, 11, lookup_profile::worst, 12345), std::invalid_argument);
-}
-
-TEST(AllowlistBenchmarkUtils, GeneratesBestHitsAverageDomainAndWorstMisses)
-{
-  using namespace cuvs::bench::allowlist;
-  constexpr std::uint32_t rows      = 64;
-  constexpr std::size_t cardinality = 16;
-  for (auto profile : {lookup_profile::best, lookup_profile::average, lookup_profile::worst}) {
-    auto ids    = make_allowed_ids(rows, cardinality, profile, 12345);
-    auto probes = make_probes(rows, ids, profile, 257, 67890);
-    ASSERT_EQ(probes.size(), 257);
-    EXPECT_TRUE(std::all_of(probes.begin(), probes.end(), [](auto probe) { return probe < rows; }));
-    std::sort(ids.begin(), ids.end());
-    if (profile == lookup_profile::best) {
-      EXPECT_TRUE(std::all_of(probes.begin(), probes.end(), [&](auto probe) {
-        return std::binary_search(ids.begin(), ids.end(), probe);
-      }));
-    } else if (profile == lookup_profile::worst) {
-      EXPECT_TRUE(std::none_of(probes.begin(), probes.end(), [&](auto probe) {
-        return std::binary_search(ids.begin(), ids.end(), probe);
-      }));
-    }
-  }
-  EXPECT_THROW(make_probes(rows, {1}, lookup_profile::average, 0, 67890), std::invalid_argument);
-
-  auto full_domain = make_allowed_ids(std::uint64_t{1} << 32, 1024, lookup_profile::average, 12345);
-  auto repeated    = make_allowed_ids(std::uint64_t{1} << 32, 1024, lookup_profile::average, 12345);
-  EXPECT_EQ(full_domain, repeated);
-  std::sort(full_domain.begin(), full_domain.end());
-  EXPECT_EQ(std::adjacent_find(full_domain.begin(), full_domain.end()), full_domain.end());
 }
 
 }  // namespace

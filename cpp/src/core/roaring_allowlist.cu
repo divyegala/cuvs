@@ -9,9 +9,18 @@
 
 #include <cuco/roaring_bitmap_ref.cuh>
 
+// cuCollections PR #839 adds GPU construction from raw indices. Keep the
+// existing cuVS builder as a compatibility fallback until that API reaches the
+// pinned cuco revision, and keep using it for the segmented multi-row path.
+#if __has_include(<cuco/detail/roaring_bitmap/roaring_bitmap_builder.cuh>)
+#include <cuco/roaring_bitmap.cuh>
+#include <rmm/mr/polymorphic_allocator.hpp>
+#define CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER 1
+#else
+#define CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER 0
+#endif
+
 #include <cub/block/block_radix_sort.cuh>
-#include <cub/block/block_reduce.cuh>
-#include <cub/block/block_scan.cuh>
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_segmented_radix_sort.cuh>
@@ -78,7 +87,7 @@ namespace {
  * container payloads
  * @endcode
  *
- * With at least one run container, the row is laid out as:
+ * Imported rows with at least one run container are laid out as:
  *
  * @code{.unparsed}
  * uint32 cookie = 12347 | ((N - 1) << 16)
@@ -111,6 +120,9 @@ namespace {
  *   { uint16 start; uint16 length_minus_one; } runs[number_of_runs]
  * @endcode
  *
+ * ID-based construction emits only the array and bitmap forms above. The run
+ * form is accepted only when importing an existing standard-portable stream.
+ *
  * The portable format above describes exactly one bitmap. Query-to-allowlist
  * association is a separate concern: `filtering::roaring_filter` stores device
  * pointers to already initialized allowlist references. Consequently neither
@@ -125,6 +137,11 @@ constexpr std::size_t kBitmapBytes      = 8192;
 constexpr std::size_t kOffsetThreshold  = 4;
 
 using ref_type = cuco::experimental::roaring_bitmap_ref<std::uint32_t>;
+
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+using cuco_bitmap_allocator = rmm::mr::polymorphic_allocator<cuda::std::byte>;
+using cuco_bitmap_type = cuco::experimental::roaring_bitmap<std::uint32_t, cuco_bitmap_allocator>;
+#endif
 
 struct row_metadata {
   std::size_t cardinality{};
@@ -159,7 +176,7 @@ void validate_dataset_rows(std::size_t dataset_rows)
                "dataset_rows exceeds the uint32_t Roaring key domain.");
 }
 
-enum class container_kind : std::uint8_t { array, bitmap, run };
+enum class container_kind : std::uint8_t { array, bitmap };
 
 std::size_t align_up(std::size_t offset, std::size_t alignment)
 {
@@ -170,7 +187,6 @@ struct device_build_summary {
   std::int64_t cardinality{};
   std::uint64_t payload_bytes{};
   std::uint32_t num_containers{};
-  std::uint32_t has_run{};
   std::uint32_t invalid{};
 };
 
@@ -179,6 +195,9 @@ struct device_build_result {
   std::size_t serialized_bytes{};
   std::size_t cardinality{};
   bool reference_initialized{};
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+  std::unique_ptr<cuco_bitmap_type> cuco_owner{};
+#endif
 };
 
 std::size_t reference_offset(std::size_t serialized_bytes)
@@ -195,12 +214,11 @@ constexpr int kBuilderBlockSize = 256;
 
 // Small allowlists do not benefit from the general builder's device-wide sort,
 // two scans, and separate per-stage allocations. At this cardinality every
-// portable container is necessarily an array or a run (a bitmap requires more
-// than 4096 values in one high-16-bit partition), so one CTA can sort, analyze,
-// and later encode the complete row. For a single pre-sorted row the cutoff is lower because the
-// general path already avoids its most expensive stage, the device-wide sort. Batched rows use the
-// 128-ID capacity because the launch is amortized across the matrix; keep both rules tied to the
-// construction benchmark.
+// portable container is necessarily an array (a bitmap requires more than 4096 values in one
+// high-16-bit partition), so one CTA can sort, analyze, and later encode the complete row. For a
+// single pre-sorted row the cutoff is lower because the general path already avoids its most
+// expensive stage, the device-wide sort. Batched rows use the 128-ID capacity because the launch is
+// amortized across the matrix; keep both rules tied to the construction benchmark.
 constexpr int kSparseBuilderBlockSize               = 128;
 constexpr std::size_t kSparseBuilderMaxIds          = 128;
 constexpr std::size_t kSparseBuilderMaxPreSortedIds = 64;
@@ -211,12 +229,9 @@ static_assert(kSparseBuilderMaxIds % kSparseBuilderBlockSize == 0);
 struct sparse_container_metadata {
   std::uint32_t begin{};
   std::uint32_t payload_offset{};
-  std::uint16_t runs{};
-  container_kind kind{};
-  std::uint8_t padding{};
 };
 
-static_assert(sizeof(sparse_container_metadata) == 12);
+static_assert(sizeof(sparse_container_metadata) == 8);
 
 struct sparse_scratch_layout {
   explicit sparse_scratch_layout(std::size_t ids, std::size_t containers, bool store_sorted_ids)
@@ -262,7 +277,6 @@ struct general_scratch_layout {
     kinds_offset            = reserve(containers, sizeof(container_kind), alignof(container_kind));
     payload_sizes_offset    = reserve(containers, sizeof(std::uint64_t), alignof(std::uint64_t));
     payload_offsets_offset  = reserve(containers, sizeof(std::uint64_t), alignof(std::uint64_t));
-    has_run_offset          = reserve(1, sizeof(std::uint32_t), alignof(std::uint32_t));
     summary_offset   = reserve(1, sizeof(device_build_summary), alignof(device_build_summary));
     workspace_offset = reserve(workspace_bytes, sizeof(cuda::std::byte), alignof(std::max_align_t));
     bytes            = cursor;
@@ -277,7 +291,6 @@ struct general_scratch_layout {
   std::size_t kinds_offset{};
   std::size_t payload_sizes_offset{};
   std::size_t payload_offsets_offset{};
-  std::size_t has_run_offset{};
   std::size_t summary_offset{};
   std::size_t workspace_offset{};
   std::size_t bytes{};
@@ -353,55 +366,36 @@ __global__ void narrow_container_count_kernel(std::int64_t const* selected_count
 }
 
 /**
- * Count consecutive runs and select the smallest legal portable payload for
- * each container.
+ * Select the standard array or bitmap portable payload for each container.
  *
- * Each block owns one container. Threads independently identify run starts in
- * the sorted slice, then a block reduction produces the exact run count. This
- * uses O(number of input IDs) scratch for sorting and scans; it never
- * constructs a dense dataset-sized bitmap.
+ * ID construction intentionally does not emit run containers. Full and nearly
+ * full allowlists should normally bypass filtering, and limiting construction
+ * to the two cuco-native forms keeps the batch builder and lookup behavior
+ * predictable. This still uses O(number of input IDs) scratch for sorting and
+ * scans; it never constructs a dense dataset-sized temporary bitmap.
  */
-__global__ void analyze_containers_kernel(std::uint32_t const* ids,
-                                          std::int64_t const* id_count,
+__global__ void analyze_containers_kernel(std::int64_t const* id_count,
                                           std::int64_t const* container_starts,
                                           std::uint32_t const* num_containers,
                                           container_kind* kinds,
-                                          std::uint64_t* payload_sizes,
-                                          std::uint32_t* has_run)
+                                          std::uint64_t* payload_sizes)
 {
-  auto const container = static_cast<std::uint32_t>(blockIdx.x);
-  auto const count     = *num_containers;
-  if (container >= count) { return; }
-
-  auto const begin = container_starts[container];
-  auto const end   = container + 1 < count ? container_starts[container + 1] : *id_count;
-  std::uint32_t local_runs{};
-  for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
-    local_runs +=
-      i == begin || static_cast<std::uint64_t>(ids[i]) != static_cast<std::uint64_t>(ids[i - 1]) + 1
-        ? 1u
-        : 0u;
-  }
-
-  using block_reduce = cub::BlockReduce<std::uint32_t, kBuilderBlockSize>;
-  __shared__ typename block_reduce::TempStorage reduction_storage;
-  auto const runs = block_reduce(reduction_storage).Sum(local_runs);
-  if (threadIdx.x != 0) { return; }
-
-  auto const cardinality = static_cast<std::uint64_t>(end - begin);
-  auto const normal_size =
-    cardinality <= kArrayCardinality ? cardinality * sizeof(std::uint16_t) : kBitmapBytes;
-  auto const run_size = sizeof(std::uint16_t) + runs * 2 * sizeof(std::uint16_t);
-  if (run_size < normal_size) {
-    kinds[container]         = container_kind::run;
-    payload_sizes[container] = run_size;
-    atomicExch(has_run, 1u);
-  } else if (cardinality <= kArrayCardinality) {
-    kinds[container]         = container_kind::array;
-    payload_sizes[container] = normal_size;
-  } else {
-    kinds[container]         = container_kind::bitmap;
-    payload_sizes[container] = normal_size;
+  auto container =
+    static_cast<std::uint32_t>(static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x);
+  auto const stride = static_cast<std::uint32_t>(static_cast<std::size_t>(gridDim.x) *
+                                                 static_cast<std::size_t>(blockDim.x));
+  auto const count  = *num_containers;
+  for (; container < count; container += stride) {
+    auto const begin       = container_starts[container];
+    auto const end         = container + 1 < count ? container_starts[container + 1] : *id_count;
+    auto const cardinality = static_cast<std::uint64_t>(end - begin);
+    if (cardinality <= kArrayCardinality) {
+      kinds[container]         = container_kind::array;
+      payload_sizes[container] = cardinality * sizeof(std::uint16_t);
+    } else {
+      kinds[container]         = container_kind::bitmap;
+      payload_sizes[container] = kBitmapBytes;
+    }
   }
 }
 
@@ -410,7 +404,6 @@ __global__ void analyze_containers_kernel(std::uint32_t const* ids,
 __global__ void finish_device_analysis_kernel(std::int64_t const* id_count,
                                               std::int64_t const* valid_count,
                                               std::uint32_t const* num_containers,
-                                              std::uint32_t const* has_run,
                                               std::uint64_t const* payload_sizes,
                                               std::uint64_t const* payload_offsets,
                                               device_build_summary* summary)
@@ -420,64 +413,34 @@ __global__ void finish_device_analysis_kernel(std::int64_t const* id_count,
   auto const containers   = *num_containers;
   summary->cardinality    = cardinality;
   summary->num_containers = containers;
-  summary->has_run        = *has_run;
   summary->payload_bytes =
     containers == 0 ? 0 : payload_offsets[containers - 1] + payload_sizes[containers - 1];
   summary->invalid = cardinality != *valid_count;
 }
 
-__host__ __device__ std::size_t portable_header_size(std::uint32_t num_containers, bool has_run)
+__host__ __device__ std::size_t portable_header_size(std::uint32_t num_containers)
 {
-  if (!has_run) {
-    return 2 * sizeof(std::uint32_t) +
-           num_containers * (2 * sizeof(std::uint16_t) + sizeof(std::uint32_t));
-  }
-  auto const run_bitmap_bytes = (num_containers + 7) / 8;
-  return sizeof(std::uint32_t) + run_bitmap_bytes + num_containers * 2 * sizeof(std::uint16_t) +
-         (num_containers >= kOffsetThreshold ? num_containers * sizeof(std::uint32_t) : 0);
+  return 2 * sizeof(std::uint32_t) +
+         num_containers * (2 * sizeof(std::uint16_t) + sizeof(std::uint32_t));
 }
 
-/** Write the cookie, run bitmap, descriptors, and portable container-offset
- * table. */
+/** Write the cookie, descriptors, and portable container-offset table. */
 __global__ void encode_header_kernel(std::uint32_t const* ids,
                                      std::int64_t const* id_count,
                                      std::int64_t const* container_starts,
                                      std::uint32_t num_containers,
-                                     container_kind const* kinds,
                                      std::uint64_t const* payload_offsets,
                                      std::size_t header_size,
-                                     bool has_run,
                                      cuda::std::byte* output)
 {
-  auto const thread           = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  auto const stride           = static_cast<std::size_t>(gridDim.x) * blockDim.x;
-  auto const run_bitmap_bytes = has_run ? (num_containers + 7) / 8 : 0;
-  auto const descriptor_offset =
-    has_run ? sizeof(std::uint32_t) + run_bitmap_bytes : 2 * sizeof(std::uint32_t);
-  auto const offsets_offset = descriptor_offset + num_containers * 2 * sizeof(std::uint16_t);
-  bool const store_offsets  = !has_run || num_containers >= kOffsetThreshold;
+  auto const thread = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  auto const stride = static_cast<std::size_t>(gridDim.x) * blockDim.x;
+  constexpr auto descriptor_offset = 2 * sizeof(std::uint32_t);
+  auto const offsets_offset        = descriptor_offset + num_containers * 2 * sizeof(std::uint16_t);
 
   if (thread == 0) {
-    if (has_run) {
-      write_u32(output, 0, kCookieRun | ((num_containers - 1) << 16));
-    } else {
-      write_u32(output, 0, kCookieNoRun);
-      write_u32(output, sizeof(std::uint32_t), num_containers);
-    }
-  }
-
-  // Write every run-bitmap byte directly. This initializes unused high bits to zero and avoids a
-  // memset of the complete serialized allocation.
-  auto* output_bytes = reinterpret_cast<std::uint8_t*>(output);
-  for (auto byte = thread; byte < run_bitmap_bytes; byte += stride) {
-    std::uint8_t value{};
-    for (std::uint32_t bit = 0; bit < 8; ++bit) {
-      auto const container = static_cast<std::uint32_t>(byte * 8 + bit);
-      if (container < num_containers && kinds[container] == container_kind::run) {
-        value |= static_cast<std::uint8_t>(1u << bit);
-      }
-    }
-    output_bytes[sizeof(std::uint32_t) + byte] = value;
+    write_u32(output, 0, kCookieNoRun);
+    write_u32(output, sizeof(std::uint32_t), num_containers);
   }
 
   for (auto container = thread; container < num_containers; container += stride) {
@@ -487,21 +450,18 @@ __global__ void encode_header_kernel(std::uint32_t const* ids,
     write_u16(output, descriptor, static_cast<std::uint16_t>(ids[begin] >> 16));
     write_u16(
       output, descriptor + sizeof(std::uint16_t), static_cast<std::uint16_t>(end - begin - 1));
-    if (store_offsets) {
-      write_u32(output,
-                offsets_offset + container * sizeof(std::uint32_t),
-                static_cast<std::uint32_t>(header_size + payload_offsets[container]));
-    }
+    write_u32(output,
+              offsets_offset + container * sizeof(std::uint32_t),
+              static_cast<std::uint32_t>(header_size + payload_offsets[container]));
   }
 }
 
-/** Encode array, bitmap, and run payloads directly into their final device offsets. */
+/** Encode array and bitmap payloads directly into their final device offsets. */
 __global__ void encode_payloads_kernel(std::uint32_t const* ids,
                                        std::int64_t const* id_count,
                                        std::int64_t const* container_starts,
                                        std::uint32_t num_containers,
                                        container_kind const* kinds,
-                                       std::uint64_t const* payload_sizes,
                                        std::uint64_t const* payload_offsets,
                                        std::size_t header_size,
                                        cuda::std::byte* output)
@@ -521,75 +481,20 @@ __global__ void encode_payloads_kernel(std::uint32_t const* ids,
     return;
   }
 
-  using run_scan = cub::BlockScan<std::uint32_t, kBuilderBlockSize>;
-  union payload_scratch {
-    std::uint64_t bitmap_words[kBitmapBytes / sizeof(std::uint64_t)];
-    typename run_scan::TempStorage run_scan_storage;
-  };
-  __shared__ payload_scratch scratch;
-  __shared__ std::uint32_t run_base;
-  __shared__ std::uint32_t tile_runs;
-
-  if (kinds[container] == container_kind::bitmap) {
-    constexpr std::uint32_t words = kBitmapBytes / sizeof(std::uint64_t);
-    for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
-      scratch.bitmap_words[word] = 0;
-    }
-    __syncthreads();
-    for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
-      auto const lower = ids[i] & 0xffffu;
-      atomicOr(reinterpret_cast<unsigned long long*>(&scratch.bitmap_words[lower / 64]),
-               static_cast<unsigned long long>(std::uint64_t{1} << (lower % 64)));
-    }
-    __syncthreads();
-    for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
-      write_u64(output, payload + word * sizeof(std::uint64_t), scratch.bitmap_words[word]);
-    }
-    return;
-  }
-
-  auto const num_runs = static_cast<std::uint16_t>(
-    (payload_sizes[container] - sizeof(std::uint16_t)) / (2 * sizeof(std::uint16_t)));
-  if (threadIdx.x == 0) {
-    write_u16(output, payload, num_runs);
-    run_base = 0;
+  __shared__ std::uint64_t bitmap_words[kBitmapBytes / sizeof(std::uint64_t)];
+  constexpr std::uint32_t words = kBitmapBytes / sizeof(std::uint64_t);
+  for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
+    bitmap_words[word] = 0;
   }
   __syncthreads();
-
-  // A block scan assigns stable output positions to run starts in each tile. Each run-start thread
-  // walks only its own run, so total work remains O(container cardinality) while high-run-count
-  // containers use the complete CTA instead of one serial thread.
-  for (auto tile = begin; tile < end; tile += blockDim.x) {
-    auto const i = tile + threadIdx.x;
-    std::uint32_t const is_run_start =
-      i < end && (i == begin ||
-                  static_cast<std::uint64_t>(ids[i]) != static_cast<std::uint64_t>(ids[i - 1]) + 1)
-        ? 1u
-        : 0u;
-    std::uint32_t run_rank{};
-    std::uint32_t block_runs{};
-    run_scan(scratch.run_scan_storage).ExclusiveSum(is_run_start, run_rank, block_runs);
-    if (threadIdx.x == 0) { tile_runs = block_runs; }
-    __syncthreads();
-
-    if (is_run_start != 0) {
-      auto j = i + 1;
-      while (j < end &&
-             static_cast<std::uint64_t>(ids[j]) == static_cast<std::uint64_t>(ids[j - 1]) + 1) {
-        ++j;
-      }
-      auto const start = static_cast<std::uint16_t>(ids[i] & 0xffffu);
-      auto const last  = static_cast<std::uint16_t>(ids[j - 1] & 0xffffu);
-      auto const run_offset =
-        payload + sizeof(std::uint16_t) +
-        static_cast<std::size_t>(run_base + run_rank) * 2 * sizeof(std::uint16_t);
-      write_u16(output, run_offset, start);
-      write_u16(
-        output, run_offset + sizeof(std::uint16_t), static_cast<std::uint16_t>(last - start));
-    }
-    __syncthreads();
-    if (threadIdx.x == 0) { run_base += tile_runs; }
-    __syncthreads();
+  for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
+    auto const lower = ids[i] & 0xffffu;
+    atomicOr(reinterpret_cast<unsigned long long*>(&bitmap_words[lower / 64]),
+             static_cast<unsigned long long>(std::uint64_t{1} << (lower % 64)));
+  }
+  __syncthreads();
+  for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
+    write_u64(output, payload + word * sizeof(std::uint64_t), bitmap_words[word]);
   }
 }
 
@@ -639,7 +544,6 @@ __global__ void analyze_sparse_ids_kernel(std::uint32_t const* ids,
   summary->cardinality    = size;
   summary->payload_bytes  = 0;
   summary->num_containers = 0;
-  summary->has_run        = 0;
   summary->invalid        = 0;
 
   // Validate before writing container metadata. For a valid row, the logical
@@ -657,27 +561,14 @@ __global__ void analyze_sparse_ids_kernel(std::uint32_t const* ids,
   while (begin < size) {
     auto const key = normalized_ids[begin] >> 16;
     auto end       = begin + 1;
-    std::uint32_t runs{1};
     while (end < size && (normalized_ids[end] >> 16) == key) {
-      runs += static_cast<std::uint64_t>(normalized_ids[end]) !=
-                  static_cast<std::uint64_t>(normalized_ids[end - 1]) + 1
-                ? 1u
-                : 0u;
       ++end;
     }
 
     auto const cardinality = end - begin;
     auto const array_size  = cardinality * sizeof(std::uint16_t);
-    auto const run_size    = sizeof(std::uint16_t) + runs * 2 * sizeof(std::uint16_t);
-    auto const use_run     = run_size < array_size;
-    metadata[container] =
-      sparse_container_metadata{begin,
-                                payload_offset,
-                                static_cast<std::uint16_t>(runs),
-                                use_run ? container_kind::run : container_kind::array,
-                                0};
-    payload_offset += use_run ? run_size : array_size;
-    summary->has_run |= use_run ? 1u : 0u;
+    metadata[container]    = sparse_container_metadata{begin, payload_offset};
+    payload_offset += array_size;
     ++container;
     begin = end;
   }
@@ -687,50 +578,26 @@ __global__ void analyze_sparse_ids_kernel(std::uint32_t const* ids,
 }
 
 /**
- * Encode a sparse row in one CTA after the host has allocated the exact byte
- * count reported by `analyze_sparse_ids_kernel`.
+ * Encode a sparse row in one CTA after exact output allocation.
  *
- * Thread zero writes every header byte, including the run bitmap, so this path
- * needs no output memset. Array values are striped across the CTA; thread zero
- * writes the comparatively small run payloads. Bitmap payloads cannot occur
- * below the sparse cardinality threshold.
+ * Thread zero writes every header byte, so this path needs no output memset.
+ * Array values are striped across the CTA. Bitmap payloads cannot occur below
+ * the sparse cardinality threshold.
  */
 __global__ void encode_sparse_row_kernel(std::uint32_t const* ids,
                                          std::uint32_t cardinality,
                                          sparse_container_metadata const* metadata,
                                          std::uint32_t num_containers,
                                          std::size_t header_size,
-                                         bool has_run,
                                          cuda::std::byte* output,
                                          ref_type* reference)
 {
-  bool const store_offsets = !has_run || num_containers >= kOffsetThreshold;
-  std::size_t descriptor_offset{};
-  std::size_t offsets_offset{};
+  constexpr auto descriptor_offset = 2 * sizeof(std::uint32_t);
+  auto const offsets_offset        = descriptor_offset + num_containers * 2 * sizeof(std::uint16_t);
 
   if (threadIdx.x == 0) {
-    if (has_run) {
-      write_u32(output, 0, kCookieRun | ((num_containers - 1) << 16));
-      auto const run_bitmap_bytes = (num_containers + 7) / 8;
-      for (std::uint32_t byte = 0; byte < run_bitmap_bytes; ++byte) {
-        std::uint8_t value{};
-        for (std::uint32_t bit = 0; bit < 8; ++bit) {
-          auto const container = byte * 8 + bit;
-          if (container < num_containers && metadata[container].kind == container_kind::run) {
-            value |= static_cast<std::uint8_t>(1u << bit);
-          }
-        }
-        reinterpret_cast<std::uint8_t*>(output)[sizeof(std::uint32_t) + byte] = value;
-      }
-      descriptor_offset = sizeof(std::uint32_t) + run_bitmap_bytes;
-      offsets_offset    = descriptor_offset + num_containers * 2 * sizeof(std::uint16_t);
-    } else {
-      write_u32(output, 0, kCookieNoRun);
-      write_u32(output, sizeof(std::uint32_t), num_containers);
-      descriptor_offset = 2 * sizeof(std::uint32_t);
-      offsets_offset    = descriptor_offset + num_containers * 2 * sizeof(std::uint16_t);
-    }
-
+    write_u32(output, 0, kCookieNoRun);
+    write_u32(output, sizeof(std::uint32_t), num_containers);
     for (std::uint32_t container = 0; container < num_containers; ++container) {
       auto const begin = metadata[container].begin;
       auto const end = container + 1 < num_containers ? metadata[container + 1].begin : cardinality;
@@ -738,11 +605,9 @@ __global__ void encode_sparse_row_kernel(std::uint32_t const* ids,
       write_u16(output, descriptor, static_cast<std::uint16_t>(ids[begin] >> 16));
       write_u16(
         output, descriptor + sizeof(std::uint16_t), static_cast<std::uint16_t>(end - begin - 1));
-      if (store_offsets) {
-        write_u32(output,
-                  offsets_offset + container * sizeof(std::uint32_t),
-                  static_cast<std::uint32_t>(header_size + metadata[container].payload_offset));
-      }
+      write_u32(output,
+                offsets_offset + container * sizeof(std::uint32_t),
+                static_cast<std::uint32_t>(header_size + metadata[container].payload_offset));
     }
   }
 
@@ -750,34 +615,10 @@ __global__ void encode_sparse_row_kernel(std::uint32_t const* ids,
     auto const begin = metadata[container].begin;
     auto const end   = container + 1 < num_containers ? metadata[container + 1].begin : cardinality;
     auto const payload = header_size + metadata[container].payload_offset;
-    if (metadata[container].kind == container_kind::array) {
-      for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
-        write_u16(output,
-                  payload + static_cast<std::size_t>(i - begin) * sizeof(std::uint16_t),
-                  static_cast<std::uint16_t>(ids[i] & 0xffffu));
-      }
-      continue;
-    }
-
-    if (threadIdx.x == 0) {
-      write_u16(output, payload, metadata[container].runs);
-      std::uint16_t run_index{};
-      for (auto i = begin; i < end;) {
-        auto const start = static_cast<std::uint16_t>(ids[i] & 0xffffu);
-        auto j           = i + 1;
-        while (j < end &&
-               static_cast<std::uint64_t>(ids[j]) == static_cast<std::uint64_t>(ids[j - 1]) + 1) {
-          ++j;
-        }
-        auto const last       = static_cast<std::uint16_t>(ids[j - 1] & 0xffffu);
-        auto const run_offset = payload + sizeof(std::uint16_t) +
-                                static_cast<std::size_t>(run_index) * 2 * sizeof(std::uint16_t);
-        write_u16(output, run_offset, start);
-        write_u16(
-          output, run_offset + sizeof(std::uint16_t), static_cast<std::uint16_t>(last - start));
-        ++run_index;
-        i = j;
-      }
+    for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
+      write_u16(output,
+                payload + static_cast<std::size_t>(i - begin) * sizeof(std::uint16_t),
+                static_cast<std::uint16_t>(ids[i] & 0xffffu));
     }
   }
   __syncthreads();
@@ -841,8 +682,7 @@ device_build_result build_sparse_from_device_ids(
   RAFT_EXPECTS(host_summary.cardinality > 0 && host_summary.num_containers > 0,
                "Internal error: nonempty sparse Roaring input produced an empty device build.");
 
-  auto const header_size =
-    portable_header_size(host_summary.num_containers, host_summary.has_run != 0);
+  auto const header_size      = portable_header_size(host_summary.num_containers);
   auto const serialized_bytes = header_size + static_cast<std::size_t>(host_summary.payload_bytes);
   rmm::device_uvector<cuda::std::byte> output(0, stream);
   {
@@ -859,22 +699,37 @@ device_build_result build_sparse_from_device_ids(
     metadata,
     host_summary.num_containers,
     header_size,
-    host_summary.has_run != 0,
     output.data(),
     reinterpret_cast<ref_type*>(output.data() + reference_offset(serialized_bytes)));
   RAFT_CUDA_TRY(cudaPeekAtLastError());
   return {std::move(output), serialized_bytes, size, true};
 }
 
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+__global__ void validate_cuco_input_kernel(std::uint32_t const* ids,
+                                           std::size_t size,
+                                           std::uint64_t dataset_rows,
+                                           std::uint32_t* invalid)
+{
+  auto const i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i < size && static_cast<std::uint64_t>(ids[i]) >= dataset_rows) { atomicExch(invalid, 1u); }
+}
+
+__global__ void store_cuco_ref_kernel(ref_type ref, ref_type* output)
+{
+  if (threadIdx.x == 0) { ::new (static_cast<void*>(output)) ref_type{ref}; }
+}
+#endif
+
 /**
  * Build a standard portable Roaring row from device IDs.
  *
- * Very sparse rows use the single-CTA builder above. Larger rows use one ID
- * array for device-wide radix sorting. Both pre-sorted paths
- * use the caller's strictly increasing IDs directly and allocate no normalization ID array.
- * Boundary scan data, CUB workspace, and O(min(input IDs, 65536)) container metadata remain
- * cardinality-scaled. In particular, the builder never allocates storage proportional to
- * `dataset_rows` bits.
+ * When cuCollections provides its raw-index factories, the one-row path delegates construction to
+ * `roaring_bitmap::from_indices` or `from_sorted_unique_indices`, retains that owner without
+ * copying its serialized payload, and initializes the cuVS device reference once. The code below
+ * those factories remains the compatibility implementation for the currently pinned cuco revision.
+ * Multi-row inputs never enter this function; they use the segmented cuVS builder. Neither path
+ * allocates storage proportional to `dataset_rows` bits.
  *
  * Pre-sorted ordering and uniqueness are unchecked caller promises.
  */
@@ -888,6 +743,41 @@ device_build_result build_from_device_ids(
   auto const stream = raft::resource::get_cuda_stream(res);
   auto const size   = static_cast<std::size_t>(ids.extent(0));
   if (size == 0) { return {rmm::device_uvector<cuda::std::byte>(0, stream), 0, 0, false}; }
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+  {
+    // PR #839 owns the serialized bytes and already caches parsed metadata in
+    // its host-side ref. Keep that allocation alive and materialize only the
+    // lightweight ref in cuVS device storage; the payload is never recopied.
+    rmm::device_uvector<std::uint32_t> invalid(1, stream);
+    RAFT_CUDA_TRY(cudaMemsetAsync(invalid.data(), 0, sizeof(std::uint32_t), stream));
+    validate_cuco_input_kernel<<<grid_size_for(size), kBuilderBlockSize, 0, stream>>>(
+      ids.data_handle(), size, dataset_rows, invalid.data());
+    RAFT_CUDA_TRY(cudaPeekAtLastError());
+    std::uint32_t host_invalid{};
+    RAFT_CUDA_TRY(cudaMemcpyAsync(
+      &host_invalid, invalid.data(), sizeof(host_invalid), cudaMemcpyDeviceToHost, stream));
+
+    cuco_bitmap_allocator allocator{};
+    cuda::stream_ref cuco_stream{stream.value()};
+    auto bitmap = pre_sorted
+                    ? cuco_bitmap_type::from_sorted_unique_indices(
+                        ids.data_handle(), ids.data_handle() + size, allocator, cuco_stream)
+                    : cuco_bitmap_type::from_indices(
+                        ids.data_handle(), ids.data_handle() + size, allocator, cuco_stream);
+    // Both PR #839 factories perform their exact-size readback after all prior
+    // stream work, so the validation result is ready without another sync.
+    RAFT_EXPECTS(host_invalid == 0, "Roaring allowlist ID must be smaller than dataset_rows.");
+
+    auto owner                  = std::make_unique<cuco_bitmap_type>(std::move(bitmap));
+    auto const serialized_bytes = static_cast<std::size_t>(owner->size_bytes());
+    auto const cardinality      = static_cast<std::size_t>(owner->size());
+    rmm::device_uvector<cuda::std::byte> output(sizeof(ref_type), stream);
+    store_cuco_ref_kernel<<<1, 1, 0, stream>>>(owner->ref(),
+                                               reinterpret_cast<ref_type*>(output.data()));
+    RAFT_CUDA_TRY(cudaPeekAtLastError());
+    return {std::move(output), serialized_bytes, cardinality, true, std::move(owner)};
+  }
+#endif
   auto const sparse_cutoff = pre_sorted ? kSparseBuilderMaxPreSortedIds : kSparseBuilderMaxIds;
   if (size <= sparse_cutoff) {
     return build_sparse_from_device_ids(res, dataset_rows, ids, pre_sorted);
@@ -949,7 +839,6 @@ device_build_result build_from_device_ids(
     reinterpret_cast<std::uint64_t*>(scratch.data() + layout.payload_sizes_offset);
   auto* payload_offsets =
     reinterpret_cast<std::uint64_t*>(scratch.data() + layout.payload_offsets_offset);
-  auto* has_run = reinterpret_cast<std::uint32_t*>(scratch.data() + layout.has_run_offset);
   auto* device_summary =
     reinterpret_cast<device_build_summary*>(scratch.data() + layout.summary_offset);
   auto* workspace = scratch.data() + layout.workspace_offset;
@@ -992,12 +881,8 @@ device_build_result build_from_device_ids(
       "roaring_allowlist::container_analysis");
     RAFT_CUDA_TRY(
       cudaMemsetAsync(payload_sizes, 0, max_containers * sizeof(std::uint64_t), stream));
-    RAFT_CUDA_TRY(cudaMemsetAsync(has_run, 0, sizeof(std::uint32_t), stream));
-    analyze_containers_kernel<<<static_cast<unsigned int>(max_containers),
-                                kBuilderBlockSize,
-                                0,
-                                stream>>>(
-      normalized_ids, valid_count, container_starts, num_containers, kinds, payload_sizes, has_run);
+    analyze_containers_kernel<<<grid_size_for(max_containers), kBuilderBlockSize, 0, stream>>>(
+      valid_count, container_starts, num_containers, kinds, payload_sizes);
     RAFT_CUDA_TRY(cudaPeekAtLastError());
     RAFT_CUDA_TRY(cub::DeviceScan::ExclusiveSum(workspace,
                                                 payload_scan_workspace_bytes,
@@ -1005,13 +890,8 @@ device_build_result build_from_device_ids(
                                                 payload_offsets,
                                                 container_slots,
                                                 stream));
-    finish_device_analysis_kernel<<<1, 1, 0, stream>>>(id_count,
-                                                       valid_count,
-                                                       num_containers,
-                                                       has_run,
-                                                       payload_sizes,
-                                                       payload_offsets,
-                                                       device_summary);
+    finish_device_analysis_kernel<<<1, 1, 0, stream>>>(
+      id_count, valid_count, num_containers, payload_sizes, payload_offsets, device_summary);
     RAFT_CUDA_TRY(cudaPeekAtLastError());
   }
 
@@ -1026,7 +906,7 @@ device_build_result build_from_device_ids(
   RAFT_EXPECTS(summary.cardinality > 0 && summary.num_containers > 0,
                "Internal error: nonempty Roaring input produced an empty device build.");
 
-  auto const header_size = portable_header_size(summary.num_containers, summary.has_run != 0);
+  auto const header_size = portable_header_size(summary.num_containers);
   RAFT_EXPECTS(summary.payload_bytes <= std::numeric_limits<std::uint32_t>::max() - header_size,
                "Portable Roaring row exceeds the 32-bit offset range.");
   auto const serialized_bytes = header_size + static_cast<std::size_t>(summary.payload_bytes);
@@ -1036,8 +916,7 @@ device_build_result build_from_device_ids(
       "roaring_allowlist::final_allocation");
     output.resize(owned_storage_bytes(serialized_bytes), stream);
   }
-  auto const header_items =
-    std::max<std::size_t>(summary.num_containers, (summary.num_containers + 7) / 8);
+  auto const header_items = static_cast<std::size_t>(summary.num_containers);
   {
     common::nvtx::range<common::nvtx::domain::cuvs> stage_scope("roaring_allowlist::header_encode");
     encode_header_kernel<<<grid_size_for(header_items), kBuilderBlockSize, 0, stream>>>(
@@ -1045,10 +924,8 @@ device_build_result build_from_device_ids(
       valid_count,
       container_starts,
       summary.num_containers,
-      kinds,
       payload_offsets,
       header_size,
-      summary.has_run != 0,
       output.data());
     RAFT_CUDA_TRY(cudaPeekAtLastError());
   }
@@ -1060,7 +937,6 @@ device_build_result build_from_device_ids(
     container_starts,
     summary.num_containers,
     kinds,
-    payload_sizes,
     payload_offsets,
     header_size,
     output.data());
@@ -1076,6 +952,9 @@ struct batched_device_build_result {
   std::vector<std::size_t> serialized_bytes;
   std::vector<std::size_t> cardinalities;
   bool references_initialized{};
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+  std::unique_ptr<cuco_bitmap_type> cuco_owner{};
+#endif
 };
 
 struct packed_rows_layout {
@@ -1133,7 +1012,6 @@ struct batch_general_scratch_layout {
     kinds_offset         = reserve(max_containers, sizeof(container_kind), alignof(container_kind));
     payload_sizes_offset = reserve(max_containers, sizeof(std::uint64_t), alignof(std::uint64_t));
     payload_offsets_offset = reserve(max_containers, sizeof(std::uint64_t), alignof(std::uint64_t));
-    has_run_offset         = reserve(rows, sizeof(std::uint32_t), alignof(std::uint32_t));
     summaries_offset = reserve(rows, sizeof(device_build_summary), alignof(device_build_summary));
     output_offsets_offset = reserve(rows, sizeof(std::uint64_t), alignof(std::uint64_t));
     workspace_offset = reserve(workspace_bytes, sizeof(cuda::std::byte), alignof(std::max_align_t));
@@ -1150,7 +1028,6 @@ struct batch_general_scratch_layout {
   std::size_t kinds_offset{};
   std::size_t payload_sizes_offset{};
   std::size_t payload_offsets_offset{};
-  std::size_t has_run_offset{};
   std::size_t summaries_offset{};
   std::size_t output_offsets_offset{};
   std::size_t workspace_offset{};
@@ -1233,50 +1110,32 @@ __global__ void fill_container_rows_kernel(std::int64_t const* row_container_off
   }
 }
 
-__global__ void analyze_batch_containers_kernel(std::uint32_t const* ids,
-                                                std::int64_t const* indptr,
+__global__ void analyze_batch_containers_kernel(std::int64_t const* indptr,
                                                 std::int64_t const* valid_counts,
                                                 std::int64_t const* container_starts,
                                                 std::int64_t const* selected_count,
                                                 std::uint32_t const* container_rows,
                                                 container_kind* kinds,
-                                                std::uint64_t* payload_sizes,
-                                                std::uint32_t* has_run)
+                                                std::uint64_t* payload_sizes)
 {
-  auto const container = static_cast<std::int64_t>(blockIdx.x);
-  auto const count     = *selected_count;
-  if (container >= count) { return; }
-  auto const row     = static_cast<std::int64_t>(container_rows[container]);
-  auto const begin   = container_starts[container];
-  auto const row_end = indptr[row] + valid_counts[row];
-  auto const end     = container + 1 < count && container_rows[container + 1] == row
-                         ? container_starts[container + 1]
-                         : row_end;
-  std::uint32_t local_runs{};
-  for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
-    local_runs +=
-      i == begin || static_cast<std::uint64_t>(ids[i]) != static_cast<std::uint64_t>(ids[i - 1]) + 1
-        ? 1u
-        : 0u;
-  }
-  using block_reduce = cub::BlockReduce<std::uint32_t, kBuilderBlockSize>;
-  __shared__ typename block_reduce::TempStorage reduction_storage;
-  auto const runs = block_reduce(reduction_storage).Sum(local_runs);
-  if (threadIdx.x != 0) { return; }
-  auto const cardinality = static_cast<std::uint64_t>(end - begin);
-  auto const normal_size =
-    cardinality <= kArrayCardinality ? cardinality * sizeof(std::uint16_t) : kBitmapBytes;
-  auto const run_size = sizeof(std::uint16_t) + runs * 2 * sizeof(std::uint16_t);
-  if (run_size < normal_size) {
-    kinds[container]         = container_kind::run;
-    payload_sizes[container] = run_size;
-    atomicExch(has_run + row, 1u);
-  } else if (cardinality <= kArrayCardinality) {
-    kinds[container]         = container_kind::array;
-    payload_sizes[container] = normal_size;
-  } else {
-    kinds[container]         = container_kind::bitmap;
-    payload_sizes[container] = normal_size;
+  auto container    = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  auto const stride = static_cast<std::int64_t>(gridDim.x) * blockDim.x;
+  auto const count  = *selected_count;
+  for (; container < count; container += stride) {
+    auto const row         = static_cast<std::int64_t>(container_rows[container]);
+    auto const begin       = container_starts[container];
+    auto const row_end     = indptr[row] + valid_counts[row];
+    auto const end         = container + 1 < count && container_rows[container + 1] == row
+                               ? container_starts[container + 1]
+                               : row_end;
+    auto const cardinality = static_cast<std::uint64_t>(end - begin);
+    if (cardinality <= kArrayCardinality) {
+      kinds[container]         = container_kind::array;
+      payload_sizes[container] = cardinality * sizeof(std::uint16_t);
+    } else {
+      kinds[container]         = container_kind::bitmap;
+      payload_sizes[container] = kBitmapBytes;
+    }
   }
 }
 
@@ -1284,7 +1143,6 @@ __global__ void finish_batch_rows_kernel(std::int64_t rows,
                                          std::int64_t const* indptr,
                                          std::int64_t const* valid_counts,
                                          std::int64_t const* row_container_offsets,
-                                         std::uint32_t const* has_run,
                                          std::uint64_t const* payload_sizes,
                                          std::uint64_t const* payload_offsets,
                                          device_build_summary* summaries)
@@ -1297,7 +1155,6 @@ __global__ void finish_batch_rows_kernel(std::int64_t rows,
   auto& summary          = summaries[row];
   summary.cardinality    = cardinality;
   summary.num_containers = static_cast<std::uint32_t>(end - begin);
-  summary.has_run        = has_run[row];
   summary.payload_bytes =
     begin == end ? 0 : payload_offsets[end - 1] + payload_sizes[end - 1] - payload_offsets[begin];
   summary.invalid = valid_counts[row] != cardinality;
@@ -1308,7 +1165,6 @@ __global__ void encode_batch_headers_kernel(std::uint32_t const* ids,
                                             std::int64_t const* valid_counts,
                                             std::int64_t const* container_starts,
                                             std::int64_t const* row_container_offsets,
-                                            container_kind const* kinds,
                                             std::uint64_t const* payload_offsets,
                                             device_build_summary const* summaries,
                                             std::uint64_t const* output_offsets,
@@ -1317,34 +1173,15 @@ __global__ void encode_batch_headers_kernel(std::uint32_t const* ids,
   auto const row     = static_cast<std::int64_t>(blockIdx.x);
   auto const summary = summaries[row];
   if (summary.num_containers == 0) { return; }
-  auto const first_container  = row_container_offsets[row];
-  auto* output                = storage + output_offsets[row];
-  auto const has_run          = summary.has_run != 0;
-  auto const run_bitmap_bytes = has_run ? (summary.num_containers + 7) / 8 : 0;
-  auto const descriptor_offset =
-    has_run ? sizeof(std::uint32_t) + run_bitmap_bytes : 2 * sizeof(std::uint32_t);
+  auto const first_container       = row_container_offsets[row];
+  auto* output                     = storage + output_offsets[row];
+  constexpr auto descriptor_offset = 2 * sizeof(std::uint32_t);
   auto const offsets_offset =
     descriptor_offset + summary.num_containers * 2 * sizeof(std::uint16_t);
-  auto const header_size   = portable_header_size(summary.num_containers, has_run);
-  bool const store_offsets = !has_run || summary.num_containers >= kOffsetThreshold;
+  auto const header_size = portable_header_size(summary.num_containers);
   if (threadIdx.x == 0) {
-    if (has_run) {
-      write_u32(output, 0, kCookieRun | ((summary.num_containers - 1) << 16));
-    } else {
-      write_u32(output, 0, kCookieNoRun);
-      write_u32(output, sizeof(std::uint32_t), summary.num_containers);
-    }
-  }
-  auto* output_bytes = reinterpret_cast<std::uint8_t*>(output);
-  for (std::uint32_t byte = threadIdx.x; byte < run_bitmap_bytes; byte += blockDim.x) {
-    std::uint8_t value{};
-    for (std::uint32_t bit = 0; bit < 8; ++bit) {
-      auto const local = byte * 8 + bit;
-      if (local < summary.num_containers && kinds[first_container + local] == container_kind::run) {
-        value |= static_cast<std::uint8_t>(1u << bit);
-      }
-    }
-    output_bytes[sizeof(std::uint32_t) + byte] = value;
+    write_u32(output, 0, kCookieNoRun);
+    write_u32(output, sizeof(std::uint32_t), summary.num_containers);
   }
   auto const row_end = indptr[row] + valid_counts[row];
   for (std::uint32_t local = threadIdx.x; local < summary.num_containers; local += blockDim.x) {
@@ -1355,12 +1192,10 @@ __global__ void encode_batch_headers_kernel(std::uint32_t const* ids,
     write_u16(output, descriptor, static_cast<std::uint16_t>(ids[begin] >> 16));
     write_u16(
       output, descriptor + sizeof(std::uint16_t), static_cast<std::uint16_t>(end - begin - 1));
-    if (store_offsets) {
-      auto const local_payload = payload_offsets[container] - payload_offsets[first_container];
-      write_u32(output,
-                offsets_offset + local * sizeof(std::uint32_t),
-                static_cast<std::uint32_t>(header_size + local_payload));
-    }
+    auto const local_payload = payload_offsets[container] - payload_offsets[first_container];
+    write_u32(output,
+              offsets_offset + local * sizeof(std::uint32_t),
+              static_cast<std::uint32_t>(header_size + local_payload));
   }
 }
 
@@ -1372,7 +1207,6 @@ __global__ void encode_batch_payloads_kernel(std::uint32_t const* ids,
                                              std::uint32_t const* container_rows,
                                              std::int64_t num_containers,
                                              container_kind const* kinds,
-                                             std::uint64_t const* payload_sizes,
                                              std::uint64_t const* payload_offsets,
                                              device_build_summary const* summaries,
                                              std::uint64_t const* output_offsets,
@@ -1388,8 +1222,8 @@ __global__ void encode_batch_payloads_kernel(std::uint32_t const* ids,
   auto const row_end         = indptr[row] + valid_counts[row];
   auto const end = local + 1 < summary.num_containers ? container_starts[container + 1] : row_end;
   auto* output   = storage + output_offsets[row];
-  auto const payload = portable_header_size(summary.num_containers, summary.has_run != 0) +
-                       payload_offsets[container] - payload_offsets[first_container];
+  auto const payload = portable_header_size(summary.num_containers) + payload_offsets[container] -
+                       payload_offsets[first_container];
 
   if (kinds[container] == container_kind::array) {
     for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
@@ -1399,68 +1233,21 @@ __global__ void encode_batch_payloads_kernel(std::uint32_t const* ids,
     }
     return;
   }
-  using run_scan = cub::BlockScan<std::uint32_t, kBuilderBlockSize>;
-  union payload_scratch {
-    std::uint64_t bitmap_words[kBitmapBytes / sizeof(std::uint64_t)];
-    typename run_scan::TempStorage run_scan_storage;
-  };
-  __shared__ payload_scratch scratch;
-  __shared__ std::uint32_t run_base;
-  __shared__ std::uint32_t tile_runs;
-  if (kinds[container] == container_kind::bitmap) {
-    constexpr std::uint32_t words = kBitmapBytes / sizeof(std::uint64_t);
-    for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
-      scratch.bitmap_words[word] = 0;
-    }
-    __syncthreads();
-    for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
-      auto const lower = ids[i] & 0xffffu;
-      atomicOr(reinterpret_cast<unsigned long long*>(&scratch.bitmap_words[lower / 64]),
-               static_cast<unsigned long long>(std::uint64_t{1} << (lower % 64)));
-    }
-    __syncthreads();
-    for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
-      write_u64(output, payload + word * sizeof(std::uint64_t), scratch.bitmap_words[word]);
-    }
-    return;
-  }
-  auto const num_runs = static_cast<std::uint16_t>(
-    (payload_sizes[container] - sizeof(std::uint16_t)) / (2 * sizeof(std::uint16_t)));
-  if (threadIdx.x == 0) {
-    write_u16(output, payload, num_runs);
-    run_base = 0;
+
+  __shared__ std::uint64_t bitmap_words[kBitmapBytes / sizeof(std::uint64_t)];
+  constexpr std::uint32_t words = kBitmapBytes / sizeof(std::uint64_t);
+  for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
+    bitmap_words[word] = 0;
   }
   __syncthreads();
-  for (auto tile = begin; tile < end; tile += blockDim.x) {
-    auto const i = tile + threadIdx.x;
-    std::uint32_t const is_run_start =
-      i < end && (i == begin ||
-                  static_cast<std::uint64_t>(ids[i]) != static_cast<std::uint64_t>(ids[i - 1]) + 1)
-        ? 1u
-        : 0u;
-    std::uint32_t run_rank{};
-    std::uint32_t block_runs{};
-    run_scan(scratch.run_scan_storage).ExclusiveSum(is_run_start, run_rank, block_runs);
-    if (threadIdx.x == 0) { tile_runs = block_runs; }
-    __syncthreads();
-    if (is_run_start != 0) {
-      auto j = i + 1;
-      while (j < end &&
-             static_cast<std::uint64_t>(ids[j]) == static_cast<std::uint64_t>(ids[j - 1]) + 1) {
-        ++j;
-      }
-      auto const start = static_cast<std::uint16_t>(ids[i] & 0xffffu);
-      auto const last  = static_cast<std::uint16_t>(ids[j - 1] & 0xffffu);
-      auto const run_offset =
-        payload + sizeof(std::uint16_t) +
-        static_cast<std::size_t>(run_base + run_rank) * 2 * sizeof(std::uint16_t);
-      write_u16(output, run_offset, start);
-      write_u16(
-        output, run_offset + sizeof(std::uint16_t), static_cast<std::uint16_t>(last - start));
-    }
-    __syncthreads();
-    if (threadIdx.x == 0) { run_base += tile_runs; }
-    __syncthreads();
+  for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
+    auto const lower = ids[i] & 0xffffu;
+    atomicOr(reinterpret_cast<unsigned long long*>(&bitmap_words[lower / 64]),
+             static_cast<unsigned long long>(std::uint64_t{1} << (lower % 64)));
+  }
+  __syncthreads();
+  for (std::uint32_t word = threadIdx.x; word < words; word += blockDim.x) {
+    write_u64(output, payload + word * sizeof(std::uint64_t), bitmap_words[word]);
   }
 }
 
@@ -1558,7 +1345,6 @@ batched_device_build_result build_general_rows(
     reinterpret_cast<std::uint64_t*>(scratch.data() + layout.payload_sizes_offset);
   auto* payload_offsets =
     reinterpret_cast<std::uint64_t*>(scratch.data() + layout.payload_offsets_offset);
-  auto* has_run = reinterpret_cast<std::uint32_t*>(scratch.data() + layout.has_run_offset);
   auto* summaries =
     reinterpret_cast<device_build_summary*>(scratch.data() + layout.summaries_offset);
   auto* output_offsets =
@@ -1603,19 +1389,14 @@ batched_device_build_result build_general_rows(
     row_container_offsets, row_count, container_rows);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
   RAFT_CUDA_TRY(cudaMemsetAsync(payload_sizes, 0, max_containers * sizeof(std::uint64_t), stream));
-  RAFT_CUDA_TRY(cudaMemsetAsync(has_run, 0, rows * sizeof(std::uint32_t), stream));
-  analyze_batch_containers_kernel<<<static_cast<unsigned int>(max_containers),
-                                    kBuilderBlockSize,
-                                    0,
-                                    stream>>>(normalized,
-                                              indptr.data_handle(),
-                                              valid_counts,
-                                              container_starts,
-                                              selected_count,
-                                              container_rows,
-                                              kinds,
-                                              payload_sizes,
-                                              has_run);
+  analyze_batch_containers_kernel<<<grid_size_for(max_containers), kBuilderBlockSize, 0, stream>>>(
+    indptr.data_handle(),
+    valid_counts,
+    container_starts,
+    selected_count,
+    container_rows,
+    kinds,
+    payload_sizes);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
   RAFT_CUDA_TRY(cub::DeviceScan::ExclusiveSum(workspace,
                                               scan_workspace_bytes,
@@ -1628,7 +1409,6 @@ batched_device_build_result build_general_rows(
     indptr.data_handle(),
     valid_counts,
     row_container_offsets,
-    has_run,
     payload_sizes,
     payload_offsets,
     summaries);
@@ -1653,7 +1433,7 @@ batched_device_build_result build_general_rows(
                  "Internal error: general batched row analysis failed.");
     cardinalities[row] = cardinality;
     if (cardinality == 0) { continue; }
-    auto const header = portable_header_size(summary.num_containers, summary.has_run != 0);
+    auto const header = portable_header_size(summary.num_containers);
     RAFT_EXPECTS(summary.payload_bytes <= std::numeric_limits<std::uint32_t>::max() - header,
                  "Portable Roaring row exceeds the 32-bit offset range.");
     serialized[row] = header + static_cast<std::size_t>(summary.payload_bytes);
@@ -1673,7 +1453,6 @@ batched_device_build_result build_general_rows(
     valid_counts,
     container_starts,
     row_container_offsets,
-    kinds,
     payload_offsets,
     summaries,
     output_offsets,
@@ -1690,7 +1469,6 @@ batched_device_build_result build_general_rows(
                                            container_rows,
                                            static_cast<std::int64_t>(actual_containers),
                                            kinds,
-                                           payload_sizes,
                                            payload_offsets,
                                            summaries,
                                            output_offsets,
@@ -1748,12 +1526,22 @@ batched_device_build_result build_batched_from_device_ids(
     auto row_view = raft::make_device_vector_view<const std::uint32_t, std::int64_t>(
       ids.data_handle(), static_cast<std::int64_t>(size));
     auto built = build_from_device_ids(res, dataset_rows, row_view, pre_sorted);
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+    return {std::move(built.storage),
+            {0},
+            {0},
+            {built.serialized_bytes},
+            {built.cardinality},
+            built.reference_initialized,
+            std::move(built.cuco_owner)};
+#else
     return {std::move(built.storage),
             {0},
             {built.cardinality == 0 ? 0 : reference_offset(built.serialized_bytes)},
             {built.serialized_bytes},
             {built.cardinality},
             built.reference_initialized};
+#endif
   }
   return build_general_rows(res, dataset_rows, ids, indptr, host_indptr, pre_sorted);
 }
@@ -1972,6 +1760,9 @@ __global__ void contains_kernel(ref_type const* const* references,
 }  // namespace
 
 struct roaring_allowlist::impl {
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+  std::unique_ptr<cuco_bitmap_type> cuco_owner;
+#endif
   rmm::device_uvector<cuda::std::byte> storage;
   std::vector<std::size_t> row_offsets_;
   std::vector<std::size_t> reference_offsets_;
@@ -1984,7 +1775,12 @@ struct roaring_allowlist::impl {
   bool references_initialized_{};
 
   impl(raft::resources const& res, std::size_t dataset_rows, batched_device_build_result&& built)
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+    : cuco_owner(std::move(built.cuco_owner)),
+      storage(std::move(built.storage)),
+#else
     : storage(std::move(built.storage)),
+#endif
       row_offsets_(std::move(built.row_offsets)),
       reference_offsets_(std::move(built.reference_offsets)),
       serialized_bytes_(std::move(built.serialized_bytes)),
@@ -2198,9 +1994,13 @@ std::size_t roaring_allowlist::total_cardinality() const noexcept
 
 std::size_t roaring_allowlist::size_bytes() const noexcept
 {
-  return impl_->storage.size() * sizeof(cuda::std::byte) +
-         impl_->references.size() * sizeof(ref_type const*) +
-         impl_->empty_rows.size() * sizeof(std::uint8_t);
+  auto bytes = impl_->storage.size() * sizeof(cuda::std::byte) +
+               impl_->references.size() * sizeof(ref_type const*) +
+               impl_->empty_rows.size() * sizeof(std::uint8_t);
+#if CUVS_HAS_CUCO_ROARING_BITMAP_BUILDER
+  if (impl_->cuco_owner) { bytes += static_cast<std::size_t>(impl_->cuco_owner->size_bytes()); }
+#endif
+  return bytes;
 }
 
 roaring_allowlist_view roaring_allowlist::view(std::size_t allowlist_id) const
