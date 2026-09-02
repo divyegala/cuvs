@@ -5,6 +5,9 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <type_traits>
 
 #include <cuda_runtime.h>
@@ -28,13 +31,29 @@ inline constexpr bool is_fused_1nn_cutile_data_v =
 template <typename DataT>
 using fused_1nn_cutile_norm_t = std::conditional_t<std::is_same_v<DataT, half>, float, DataT>;
 
+template <typename DataT>
+inline constexpr int64_t fused_1nn_cutile_max_batch_m = [] {
+  constexpr int64_t max_i32         = std::numeric_limits<int>::max();
+  constexpr int64_t batch_alignment = 16 / sizeof(DataT);
+  return max_i32 - max_i32 % batch_alignment;
+}();
+
+template <typename DataT, typename IdxT>
+constexpr size_t fused_1nn_cutile_index_workspace_rows(IdxT m)
+{
+  const auto rows = static_cast<int64_t>(m);
+  if (rows <= 0) { return 0; }
+  return static_cast<size_t>(
+    rows < fused_1nn_cutile_max_batch_m<DataT> ? rows : fused_1nn_cutile_max_batch_m<DataT>);
+}
+
 #if CUVS_CUTILE_ENABLED
 /**
  * Return whether the supplied problem can use cuTile without fallback scratch.
  *
  * The result includes runtime/device support, exported ABI constraints, and launcher construction.
  * A successful probe populates the shared launcher cache used by try_fused_1nn_tile.
- * An int64 output index still requires an int32 workspace with `m` elements.
+ * An int64 output index still requires an int32 workspace sized to the largest launch chunk.
  */
 template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>

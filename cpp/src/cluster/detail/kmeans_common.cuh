@@ -78,6 +78,34 @@ inline constexpr bool uses_fused_distance_nn(FusedDistancePath path)
 }
 
 /**
+ * @brief Select the pre-cuTile assignment path.
+ *
+ * This is also the fallback after a pointer-aware cuTile launch probe fails.
+ */
+template <typename IdxT>
+constexpr FusedDistancePath use_legacy_fused(int cc_major,
+                                             IdxT m,
+                                             IdxT n,
+                                             cuvs::distance::DistanceType metric)
+{
+  if (metric == cuvs::distance::DistanceType::InnerProduct) { return FusedDistancePath::Unfused; }
+
+  if (cc_major <= 8) { return FusedDistancePath::FusedCutlass; }
+  if (cc_major == 9 && (m >= 4096 || n >= 4096)) { return FusedDistancePath::FusedCutlass; }
+  return FusedDistancePath::Unfused;
+}
+
+template <typename IdxT>
+FusedDistancePath use_legacy_fused(const raft::resources& handle,
+                                   IdxT m,
+                                   IdxT n,
+                                   cuvs::distance::DistanceType metric)
+{
+  const auto prop = raft::resource::get_device_properties(handle);
+  return use_legacy_fused(prop.major, m, n, metric);
+}
+
+/**
  * @brief Selects the fused-distance assignment path for KMeans.
  *
  * Float/half: cuTile when the build and device support it. Otherwise L2/L2Sqrt/Cosine may use
@@ -90,8 +118,6 @@ FusedDistancePath use_fused(
   const raft::resources& handle, IdxT m, IdxT n, IdxT k, cuvs::distance::DistanceType metric)
 {
   (void)k;
-  cudaDeviceProp prop;
-  prop = raft::resource::get_device_properties(handle);
 
   if constexpr (is_cutile_fused_data_type_v<MathT>) {
     if constexpr (cuvs::detail::jit_lto::library_built_with_cutile()) {
@@ -102,16 +128,10 @@ FusedDistancePath use_fused(
         return FusedDistancePath::FusedCutile;
       }
     }
-    if (metric == cuvs::distance::DistanceType::InnerProduct) { return FusedDistancePath::Unfused; }
-    if (prop.major <= 8) { return FusedDistancePath::FusedCutlass; }
-    if (prop.major == 9 && (m >= 4096 || n >= 4096)) { return FusedDistancePath::FusedCutlass; }
-    return FusedDistancePath::Unfused;
+    return use_legacy_fused(handle, m, n, metric);
   }
 
-  if (prop.major >= 10) { return FusedDistancePath::Unfused; }
-  if (prop.major <= 8) { return FusedDistancePath::FusedCutlass; }
-  if (prop.major == 9 && (m >= 4096 || n >= 4096)) { return FusedDistancePath::FusedCutlass; }
-  return FusedDistancePath::Unfused;
+  return use_legacy_fused(handle, m, n, metric);
 }
 
 template <typename DataT, typename IndexT>

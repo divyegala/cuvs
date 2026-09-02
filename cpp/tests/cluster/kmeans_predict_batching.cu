@@ -157,4 +157,18 @@ TEST(KMeansPredict, BatchParametersPreserveResultsAndReduceUnfusedAllocations)
   }
 }
 
+TEST(KMeansPredict, ProbeFailureUsesLegacyArchitectureFallback)
+{
+  using cuvs::distance::DistanceType;
+  using detail::FusedDistancePath;
+
+  for (auto metric : {DistanceType::L2Expanded, DistanceType::CosineExpanded}) {
+    EXPECT_EQ(detail::use_legacy_fused(8, 1024, 1024, metric), FusedDistancePath::FusedCutlass);
+    EXPECT_EQ(detail::use_legacy_fused(9, 4096, 1024, metric), FusedDistancePath::FusedCutlass);
+    EXPECT_EQ(detail::use_legacy_fused(9, 1024, 1024, metric), FusedDistancePath::Unfused);
+    EXPECT_EQ(detail::use_legacy_fused(10, 16384, 16384, metric), FusedDistancePath::Unfused);
+    EXPECT_EQ(detail::use_legacy_fused(12, 16384, 16384, metric), FusedDistancePath::Unfused);
+  }
+}
+
 }  // namespace cuvs::cluster::kmeans

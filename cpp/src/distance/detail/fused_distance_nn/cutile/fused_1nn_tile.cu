@@ -290,15 +290,14 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
     if (!is_16_byte_aligned(index_workspace)) { return false; }
 
     // Keep every chunk offset 16-byte aligned for x, xn, and nearest_dist.
-    constexpr int64_t max_i32         = std::numeric_limits<int>::max();
-    constexpr int64_t batch_alignment = 16 / sizeof(DataT);
-    constexpr int64_t max_batch_m     = max_i32 - max_i32 % batch_alignment;
-    auto* tmp_idx                     = static_cast<int*>(index_workspace);
-    for (int64_t offset = 0; offset < m; offset += max_batch_m) {
-      const int batch_m    = static_cast<int>(std::min<int64_t>(max_batch_m, m - offset));
-      const auto* batch_x  = x + static_cast<size_t>(offset) * static_cast<size_t>(k);
-      const auto* batch_xn = xn == nullptr ? nullptr : xn + offset;
-      auto* batch_dist     = nearest_dist == nullptr ? nullptr : nearest_dist + offset;
+    constexpr int64_t max_batch_m = fused_1nn_cutile_max_batch_m<DataT>;
+    auto* tmp_idx                 = static_cast<int*>(index_workspace);
+    for (int64_t offset = 0; offset < m;) {
+      const int64_t batch_m64 = std::min<int64_t>(max_batch_m, m - offset);
+      const int batch_m       = static_cast<int>(batch_m64);
+      const auto* batch_x     = x + static_cast<size_t>(offset) * static_cast<size_t>(k);
+      const auto* batch_xn    = xn == nullptr ? nullptr : xn + offset;
+      auto* batch_dist        = nearest_dist == nullptr ? nullptr : nearest_dist + offset;
 
       const bool launched =
         use_strict_abi
@@ -332,6 +331,7 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
         raft::linalg::unaryOp(
           nearest_idx + offset, tmp_idx, batch_m, raft::cast_op<int64_t>{}, stream);
       }
+      offset += batch_m64;
     }
     return true;
   }

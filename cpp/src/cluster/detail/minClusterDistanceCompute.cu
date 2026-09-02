@@ -129,11 +129,7 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
                                                                        n_clusters,
                                                                        n_features,
                                                                        metric);
-      if (!cutile_ready) {
-        fused_path = metric == cuvs::distance::DistanceType::InnerProduct
-                       ? FusedDistancePath::Unfused
-                       : FusedDistancePath::FusedCutlass;
-      }
+      if (!cutile_ready) { fused_path = use_legacy_fused(handle, n_samples, n_clusters, metric); }
     }
   }
 
@@ -189,9 +185,11 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
     if (!cutile_ready) {
       temp_kvp.resize(n_samples, stream);
       cutlass_kvp_scratch = temp_kvp.data();
-    }
-    if (!cutile_ready || needs_index_workspace) {
       workspace.resize(sizeof(int) * static_cast<size_t>(n_samples), stream);
+    } else if (needs_index_workspace) {
+      const auto workspace_rows =
+        cuvs::distance::detail::fused_1nn_cutile_index_workspace_rows<DataT>(n_samples);
+      workspace.resize(sizeof(int) * workspace_rows, stream);
     }
 
     cuvs::distance::fusedDistanceNNMinReduce<DataT, IndexT>(
@@ -206,7 +204,7 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
       n_features,
       !cutile_ready || needs_index_workspace ? (void*)workspace.data() : nullptr,
       metric != cuvs::distance::DistanceType::L2Expanded,
-      true,
+      false,
       true,
       metric,
       0.0f,
@@ -409,7 +407,7 @@ void minClusterDistanceCompute(raft::resources const& handle,
                                                           n_clusters,
                                                           n_features,
                                                           metric);
-      if (!cutile_ready) { fused_path = FusedDistancePath::FusedCutlass; }
+      if (!cutile_ready) { fused_path = use_legacy_fused(handle, n_samples, n_clusters, metric); }
     }
   }
 
@@ -478,7 +476,7 @@ void minClusterDistanceCompute(raft::resources const& handle,
       n_features,
       cutile_ready ? nullptr : (void*)workspace.data(),
       metric != cuvs::distance::DistanceType::L2Expanded,
-      true,
+      false,
       true,
       metric,
       0.0f,

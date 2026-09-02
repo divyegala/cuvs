@@ -125,7 +125,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
                                                               k,
                                                               (void*)workspace.data_handle(),
                                                               sqrt,
-                                                              true,
+                                                              false,
                                                               true,
                                                               metric,
                                                               0.0,
@@ -311,6 +311,69 @@ TEST(Fused1nn, ExpandedL2ClampsNegativeRoundoff)
   EXPECT_EQ(actual_idx, 0);
   EXPECT_EQ(actual_dist, 0.0f);
 }
+
+TEST(Fused1nn, Int64IndexWorkspaceUsesLargestChunk)
+{
+  constexpr int64_t max_batch_m_float = cuvs::distance::detail::fused_1nn_cutile_max_batch_m<float>;
+  constexpr int64_t max_batch_m_half  = cuvs::distance::detail::fused_1nn_cutile_max_batch_m<half>;
+  EXPECT_EQ(max_batch_m_float, 2147483644);
+  EXPECT_EQ(max_batch_m_half, 2147483640);
+  EXPECT_EQ(cuvs::distance::detail::fused_1nn_cutile_index_workspace_rows<float>(1024), 1024);
+  EXPECT_EQ(cuvs::distance::detail::fused_1nn_cutile_index_workspace_rows<float>(
+              std::numeric_limits<int64_t>::max()),
+            static_cast<size_t>(max_batch_m_float));
+  EXPECT_EQ(cuvs::distance::detail::fused_1nn_cutile_index_workspace_rows<half>(
+              std::numeric_limits<int64_t>::max()),
+            static_cast<size_t>(max_batch_m_half));
+}
+
+#if CUVS_CUTILE_ENABLED
+TEST(Fused1nn, PointerAwareProbeRejectsMisalignedArrays)
+{
+  raft::resources handle;
+  constexpr int m = 32;
+  constexpr int n = 32;
+  constexpr int k = 64;
+
+  auto x        = raft::make_device_vector<float, int>(handle, m * k + 1);
+  auto y        = raft::make_device_vector<float, int>(handle, n * k);
+  auto x_norm   = raft::make_device_vector<float, int>(handle, m + 1);
+  auto y_norm   = raft::make_device_vector<float, int>(handle, n);
+  auto out_idx  = raft::make_device_vector<int, int>(handle, m);
+  auto out_dist = raft::make_device_vector<float, int>(handle, m);
+
+  for (auto metric : {DistanceType::L2Expanded, DistanceType::CosineExpanded}) {
+    EXPECT_FALSE(cuvs::distance::detail::can_launch_fused_1nn_tile(out_idx.data_handle(),
+                                                                   out_dist.data_handle(),
+                                                                   x.data_handle() + 1,
+                                                                   y.data_handle(),
+                                                                   m,
+                                                                   n,
+                                                                   k,
+                                                                   metric));
+
+    if (cuvs::distance::detail::can_launch_fused_1nn_tile(out_idx.data_handle(),
+                                                          out_dist.data_handle(),
+                                                          x.data_handle(),
+                                                          y.data_handle(),
+                                                          m,
+                                                          n,
+                                                          k,
+                                                          metric)) {
+      EXPECT_FALSE(cuvs::distance::detail::can_launch_fused_1nn_tile(out_idx.data_handle(),
+                                                                     out_dist.data_handle(),
+                                                                     x.data_handle(),
+                                                                     y.data_handle(),
+                                                                     x_norm.data_handle() + 1,
+                                                                     y_norm.data_handle(),
+                                                                     m,
+                                                                     n,
+                                                                     k,
+                                                                     metric));
+    }
+  }
+}
+#endif
 
 template <typename IdxT>
 const std::vector<NNInputs<IdxT>> input_int8 = {
