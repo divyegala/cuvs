@@ -1505,33 +1505,29 @@ struct bloom_filter : public base_filter {
 };
 
 /**
- * @brief Reusable per-query mapping to an immutable batch of exact Roaring allowlists.
+ * @brief Reusable per-query mapping to immutable exact Roaring allowlists.
  *
- * Entry @c q selects row @c q of the owner. CAGRA retains candidate dataset row @c r when that
- * allowlist contains @c r. Constructing from a @c cuvs::core::roaring_allowlist copies only its
- * already initialized device-reference pointers and empty flags into the filter payload; encoded
- * bytes are neither copied nor parsed. Search therefore performs no Roaring allocation, parsing,
- * initialization, synchronization, or per-query preprocessing.
+ * Entry @c q selects view @c q. CAGRA retains candidate dataset row @c r when the selected
+ * allowlist contains @c r. Construction copies only already initialized device-reference pointers
+ * and empty flags into the filter payload; encoded bytes are neither copied nor parsed. Search
+ * therefore performs no Roaring allocation, initialization, synchronization, or preprocessing.
  *
  * @code{.cpp}
- * // Flat IDs plus num_queries + 1 row offsets.
- * auto allowlists = cuvs::core::roaring_allowlist::from_ids(
+ * auto first = cuvs::core::roaring_allowlist::from_ids(
  *   res, dataset_rows,
- *   raft::make_host_vector_view<const std::uint32_t, std::int64_t>(allowed_ids.data(),
- *                                                                    allowed_ids.size()),
- *   raft::make_host_vector_view<const std::int64_t, std::int64_t>(indptr.data(),
- *                                                                   indptr.size()));
- * std::vector<cuvs::core::roaring_allowlist_view> views;
- * for (std::size_t q = 0; q < allowlists.num_allowlists(); ++q) {
- *   views.push_back(allowlists.view(q));
- * }
+ *   raft::make_host_vector_view<const std::uint32_t, std::int64_t>(first_ids.data(),
+ *                                                                    first_ids.size()));
+ * auto second = cuvs::core::roaring_allowlist::from_ids(
+ *   res, dataset_rows,
+ *   raft::make_host_vector_view<const std::uint32_t, std::int64_t>(second_ids.data(),
+ *                                                                    second_ids.size()));
+ * std::array views{first.view(), second.view()};
  * auto filter = cuvs::neighbors::filtering::roaring_filter(res, views);
  * @endcode
  *
- * The span overload remains useful when queries reuse rows from several owners or when one query's
- * mapping must be replaced without rebuilding encoded allowlists. This filter owns its mapping
- * tables and device payload, but not the referenced owner(s), which must outlive the filter and all
- * searches using it. Copies are cheap shared handles required by CAGRA query-offset wrappers.
+ * Owners and views can be reused across filters and queries. This filter owns its mapping tables
+ * and device payload, but not the referenced owners, which must outlive the filter and all searches
+ * using it. Copies are cheap shared handles required by CAGRA query-offset wrappers.
  *
  * @see cuvs::core::roaring_allowlist
  * @see https://github.com/RoaringBitmap/RoaringFormatSpec
