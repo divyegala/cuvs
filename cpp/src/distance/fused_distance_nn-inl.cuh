@@ -29,13 +29,13 @@ namespace distance {
  * @{
  */
 
-template <typename DataT, typename IdxT, typename ReduceOpT, typename KVPReduceOpT>
+template <typename DataT, typename IdxT, typename NormT, typename ReduceOpT, typename KVPReduceOpT>
 void fusedDistanceNN(IdxT* nearest_idx,
                      DataT* nearest_dist,
                      const DataT* x,
                      const DataT* y,
-                     const DataT* xn,
-                     const DataT* yn,
+                     const NormT* xn,
+                     const NormT* yn,
                      IdxT m,
                      IdxT n,
                      IdxT k,
@@ -60,6 +60,7 @@ void fusedDistanceNN(IdxT* nearest_idx,
     if (is_skinny) {
       detail::fusedDistanceNNImpl<
         DataT,
+        NormT,
         IdxT,
         typename raft::linalg::Policy4x4Skinny<DataT, 16 / sizeof(DataT)>::Policy,
         ReduceOpT>(nearest_idx,
@@ -84,6 +85,7 @@ void fusedDistanceNN(IdxT* nearest_idx,
     } else {
       detail::fusedDistanceNNImpl<
         DataT,
+        NormT,
         IdxT,
         typename raft::linalg::Policy4x4<DataT, 16 / sizeof(DataT)>::Policy,
         ReduceOpT>(nearest_idx,
@@ -110,6 +112,7 @@ void fusedDistanceNN(IdxT* nearest_idx,
     if (is_skinny) {
       detail::fusedDistanceNNImpl<
         DataT,
+        NormT,
         IdxT,
         typename raft::linalg::Policy4x4Skinny<DataT, 8 / sizeof(DataT)>::Policy,
         ReduceOpT>(nearest_idx,
@@ -134,6 +137,7 @@ void fusedDistanceNN(IdxT* nearest_idx,
     } else {
       detail::fusedDistanceNNImpl<
         DataT,
+        NormT,
         IdxT,
         typename raft::linalg::Policy4x4<DataT, 8 / sizeof(DataT)>::Policy,
         ReduceOpT>(nearest_idx,
@@ -159,6 +163,7 @@ void fusedDistanceNN(IdxT* nearest_idx,
   } else {
     if (is_skinny) {
       detail::fusedDistanceNNImpl<DataT,
+                                  NormT,
                                   IdxT,
                                   typename raft::linalg::Policy4x4Skinny<DataT, 1>::Policy,
                                   ReduceOpT>(nearest_idx,
@@ -182,6 +187,7 @@ void fusedDistanceNN(IdxT* nearest_idx,
                                              stream);
     } else {
       detail::fusedDistanceNNImpl<DataT,
+                                  NormT,
                                   IdxT,
                                   typename raft::linalg::Policy4x4<DataT, 1>::Policy,
                                   ReduceOpT>(nearest_idx,
@@ -216,13 +222,13 @@ void fusedDistanceNN(IdxT* nearest_idx,
  *                                  output. Distance-only output may pass null and write directly
  *                                  to `nearest_dist`.
  */
-template <typename DataT, typename IdxT>
+template <typename DataT, typename IdxT, typename NormT = DataT>
 void fusedDistanceNNMinReduce(IdxT* nearest_idx,
                               DataT* nearest_dist,
                               const DataT* x,
                               const DataT* y,
-                              const DataT* xn,
-                              const DataT* yn,
+                              const NormT* xn,
+                              const NormT* yn,
                               IdxT m,
                               IdxT n,
                               IdxT k,

@@ -68,7 +68,7 @@ enum class FusedDistancePath : std::uint8_t {
   Unfused = 0,
   /** fusedDistanceNNMinReduce via cuTile; scratch depends on the launchability probe. */
   FusedCutile,
-  /** fusedDistanceNNMinReduce via legacy CUTLASS; needs mutex workspace + KVP scratch. */
+  /** Legacy CUTLASS fused 1-NN, with native KVP assignment output and mutex workspace. */
   FusedCutlass,
 };
 
@@ -471,7 +471,8 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
                                   cuvs::distance::DistanceType metric,
                                   int batch_samples,
                                   int batch_centroids,
-                                  rmm::device_uvector<char>& workspace);
+                                  rmm::device_uvector<char>& workspace,
+                                  const DataT* cutile_x_norm = nullptr);
 
 template <typename DataT, typename IndexT>
 void minClusterAndDistanceComputeKvp(
@@ -499,7 +500,8 @@ void minClusterAndDistanceComputeKvp(
     cuvs::distance::DistanceType metric,                            \
     int batch_samples,                                              \
     int batch_centroids,                                            \
-    rmm::device_uvector<char>& workspace);
+    rmm::device_uvector<char>& workspace,                           \
+    const DataT* cutile_x_norm);
 
 EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(float, int64_t)
 EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(float, int)
@@ -507,6 +509,14 @@ EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(double, int64_t)
 EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(double, int)
 
 #undef EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE
+
+template <typename IndexT>
+void computeCutileRowNorms(raft::resources const& handle,
+                           const float* matrix,
+                           float* norms,
+                           IndexT n_rows,
+                           IndexT n_cols,
+                           bool take_sqrt);
 
 template <typename DataT, typename IndexT>
 void minClusterDistanceCompute(raft::resources const& handle,
@@ -837,18 +847,14 @@ void process_batch(raft::resources const& handle,
                                  weight_per_cluster,
                                  batch_workspace,
                                  /*reset_sums=*/false);
-    auto weighted_dist = raft::make_device_vector<DataT, IndexT>(handle, n_samples);
-    raft::linalg::map(handle,
-                      weighted_dist.view(),
-                      raft::mul_op{},
-                      raft::make_const_mdspan(nearest_dist_view),
-                      raft::make_const_mdspan(batch_weights));
-    computeClusterCost(handle,
-                       weighted_dist.view(),
-                       workspace,
-                       batch_cost.view(),
-                       raft::identity_op{},
-                       raft::add_op{});
+    auto* weights = batch_weights.data_handle();
+    cuda::counting_iterator indices(IndexT{0});
+    cuda::transform_iterator weighted_dist(indices,
+                                           [nearest_dist, weights] __device__(IndexT i) -> DataT {
+                                             return nearest_dist[i] * weights[i];
+                                           });
+    computeClusterCostFromIterator(
+      handle, weighted_dist, n_samples, workspace, batch_cost.view(), raft::add_op{});
   } else {
     using KvpT = raft::KeyValuePair<IndexT, DataT>;
     assignment_storage.resize(sizeof(KvpT) * static_cast<size_t>(n_samples), stream);

@@ -65,6 +65,9 @@ inline bool tileir_fallback_available(int driver_version)
 inline bool cutile_launch_available_for_arch(int cc_major, int cc_minor, int driver_version)
 {
   if (!runtime_cuda13_or_newer()) { return false; }
+  // The exported fused-1NN kernels require Ampere-or-newer tensor-core semantics, and the current
+  // integration is validated only through the SM12 family.
+  if (cc_major < 8 || cc_major > 12) { return false; }
   if (has_embedded_cubin_for_arch(cc_major, cc_minor)) { return true; }
   return tileir_fallback_available(driver_version);
 }

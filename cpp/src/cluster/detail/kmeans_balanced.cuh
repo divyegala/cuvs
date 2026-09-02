@@ -44,6 +44,7 @@
 #include <thrust/transform.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <tuple>
@@ -52,6 +53,93 @@
 #include <vector>
 
 namespace cuvs::cluster::kmeans::detail {
+
+template <typename MathT, typename IdxT, typename LabelT>
+bool predict_core_min_cluster(const raft::resources& handle,
+                              raft::device_matrix_view<const MathT, IdxT> X,
+                              raft::device_matrix_view<const MathT, IdxT> centroids,
+                              raft::device_vector_view<const MathT, IdxT> X_norm,
+                              cuvs::distance::DistanceType metric,
+                              LabelT* labels,
+                              rmm::device_uvector<MathT>& L2NormBuf_OR_DistBuf,
+                              rmm::device_uvector<char>& workspace,
+                              rmm::device_async_resource_ref mr,
+                              const MathT* cutile_x_norm)
+{
+  auto n_rows = X.extent(0);
+  auto path   = select_min_cluster_distance_path(handle, X, centroids, metric);
+
+  if constexpr (std::is_same_v<LabelT, IdxT> && std::is_same_v<IdxT, int>) {
+    if (path == FusedDistancePath::FusedCutile &&
+        reinterpret_cast<std::uintptr_t>(labels) % 16 != 0) {
+      path = use_legacy_fused(handle, n_rows, centroids.extent(0), metric);
+    }
+  }
+
+  if (path == FusedDistancePath::FusedCutile) {
+    auto nearest_dist =
+      raft::make_device_mdarray<MathT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
+
+    if constexpr (std::is_same_v<LabelT, IdxT>) {
+      auto labels_view = raft::make_device_vector_view<IdxT, IdxT>(labels, n_rows);
+      minClusterAndDistanceCompute<MathT, IdxT>(handle,
+                                                X,
+                                                centroids,
+                                                labels_view,
+                                                nearest_dist.view(),
+                                                X_norm,
+                                                L2NormBuf_OR_DistBuf,
+                                                metric,
+                                                0,
+                                                0,
+                                                workspace,
+                                                cutile_x_norm);
+    } else {
+      auto nearest_idx =
+        raft::make_device_mdarray<IdxT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
+      minClusterAndDistanceCompute<MathT, IdxT>(handle,
+                                                X,
+                                                centroids,
+                                                nearest_idx.view(),
+                                                nearest_dist.view(),
+                                                X_norm,
+                                                L2NormBuf_OR_DistBuf,
+                                                metric,
+                                                0,
+                                                0,
+                                                workspace,
+                                                cutile_x_norm);
+      raft::copy(
+        handle, raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows), nearest_idx.view());
+    }
+    return true;
+  }
+
+  // The generic pairwise-distance assignment path does not implement InnerProduct. Preserve the
+  // historical GEMM-plus-argmin fallback in predict_core after any final cuTile rejection.
+  if (metric == cuvs::distance::DistanceType::InnerProduct) { return false; }
+
+  using KvpT = raft::KeyValuePair<IdxT, MathT>;
+  auto nearest =
+    raft::make_device_mdarray<KvpT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
+  minClusterAndDistanceComputeKvp(handle,
+                                  X,
+                                  centroids,
+                                  nearest.view(),
+                                  X_norm,
+                                  L2NormBuf_OR_DistBuf,
+                                  metric,
+                                  0,
+                                  0,
+                                  workspace,
+                                  path);
+  auto* nearest_ptr = nearest.data_handle();
+  raft::linalg::map_offset(
+    handle,
+    raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows),
+    [nearest_ptr] __device__(IdxT i) -> LabelT { return static_cast<LabelT>(nearest_ptr[i].key); });
+  return true;
+}
 
 /**
  * @brief Predict labels for the dataset; floating-point types only.
@@ -83,6 +171,7 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
   IdxT dim,
   const MathT* dataset,
   const MathT* dataset_norm,
+  const MathT* dataset_cutile_norm,
   IdxT n_rows,
   LabelT* labels,
   rmm::device_async_resource_ref mr)
@@ -100,89 +189,39 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
         raft::make_device_matrix_view<const MathT, IdxT>(centers, n_clusters, dim);
       auto X_norm_view = raft::make_device_vector_view<const MathT, IdxT>(dataset_norm, n_rows);
 
-      auto nearest_dist =
-        raft::make_device_mdarray<MathT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
-
-      if constexpr (std::is_same_v<LabelT, IdxT>) {
-        auto labels_view = raft::make_device_vector_view<IdxT, IdxT>(labels, n_rows);
-        cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(
-          handle,
-          X_view,
-          centroids_view,
-          labels_view,
-          nearest_dist.view(),
-          X_norm_view,
-          L2NormBuf_OR_DistBuf,
-          params.metric,
-          0,  // batch_samples (unused for fused reduction)
-          0,  // batch_centroids (unused for fused reduction)
-          workspace);
-      } else {
-        auto nearest_idx =
-          raft::make_device_mdarray<IdxT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
-        cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(handle,
-                                                                     X_view,
-                                                                     centroids_view,
-                                                                     nearest_idx.view(),
-                                                                     nearest_dist.view(),
-                                                                     X_norm_view,
-                                                                     L2NormBuf_OR_DistBuf,
-                                                                     params.metric,
-                                                                     0,
-                                                                     0,
-                                                                     workspace);
-        raft::copy(
-          handle, raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows), nearest_idx.view());
-      }
+      predict_core_min_cluster(handle,
+                               X_view,
+                               centroids_view,
+                               X_norm_view,
+                               params.metric,
+                               labels,
+                               L2NormBuf_OR_DistBuf,
+                               workspace,
+                               mr,
+                               dataset_cutile_norm);
       break;
     }
     case cuvs::distance::DistanceType::InnerProduct: {
-      if (uses_fused_distance_nn(
-            use_fused<MathT, IdxT, IdxT>(handle, n_rows, n_clusters, dim, params.metric))) {
-        rmm::device_uvector<MathT> L2NormBuf_OR_DistBuf(0, stream, mr);
-        rmm::device_uvector<char> workspace(0, stream, mr);
+      rmm::device_uvector<MathT> L2NormBuf_OR_DistBuf(0, stream, mr);
+      rmm::device_uvector<char> workspace(0, stream, mr);
 
-        auto X_view = raft::make_device_matrix_view<const MathT, IdxT>(dataset, n_rows, dim);
-        auto centroids_view =
-          raft::make_device_matrix_view<const MathT, IdxT>(centers, n_clusters, dim);
-        auto X_norm_view = raft::make_device_vector_view<const MathT, IdxT>(dataset_norm, n_rows);
+      auto X_view = raft::make_device_matrix_view<const MathT, IdxT>(dataset, n_rows, dim);
+      auto centroids_view =
+        raft::make_device_matrix_view<const MathT, IdxT>(centers, n_clusters, dim);
+      auto X_norm_view = raft::make_device_vector_view<const MathT, IdxT>(dataset_norm, n_rows);
 
-        auto nearest_dist =
-          raft::make_device_mdarray<MathT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
-
-        if constexpr (std::is_same_v<LabelT, IdxT>) {
-          auto labels_view = raft::make_device_vector_view<IdxT, IdxT>(labels, n_rows);
-          cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(handle,
-                                                                       X_view,
-                                                                       centroids_view,
-                                                                       labels_view,
-                                                                       nearest_dist.view(),
-                                                                       X_norm_view,
-                                                                       L2NormBuf_OR_DistBuf,
-                                                                       params.metric,
-                                                                       0,
-                                                                       0,
-                                                                       workspace);
-        } else {
-          auto nearest_idx =
-            raft::make_device_mdarray<IdxT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
-          cuvs::cluster::kmeans::min_cluster_and_distance<MathT, IdxT>(handle,
-                                                                       X_view,
-                                                                       centroids_view,
-                                                                       nearest_idx.view(),
-                                                                       nearest_dist.view(),
-                                                                       X_norm_view,
-                                                                       L2NormBuf_OR_DistBuf,
-                                                                       params.metric,
-                                                                       0,
-                                                                       0,
-                                                                       workspace);
-          raft::copy(handle,
-                     raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows),
-                     nearest_idx.view());
-        }
-      } else {
-        rmm::device_uvector<MathT> distances(n_rows * n_clusters, stream, mr);
+      if (!predict_core_min_cluster(handle,
+                                    X_view,
+                                    centroids_view,
+                                    X_norm_view,
+                                    params.metric,
+                                    labels,
+                                    L2NormBuf_OR_DistBuf,
+                                    workspace,
+                                    mr,
+                                    dataset_cutile_norm)) {
+        rmm::device_uvector<MathT> distances(
+          static_cast<size_t>(n_rows) * static_cast<size_t>(n_clusters), stream, mr);
 
         MathT alpha = -1.0;
         MathT beta  = 0.0;
@@ -245,7 +284,16 @@ auto calc_minibatch_size(const raft::resources& handle,
   n_clusters = std::max<IdxT>(1, n_clusters);
 
   // Estimate memory needs per row (i.e element of the batch).
-  size_t mem_per_row = 0;
+  auto saturating_add = [](size_t a, size_t b) {
+    return b > std::numeric_limits<size_t>::max() - a ? std::numeric_limits<size_t>::max() : a + b;
+  };
+  auto saturating_multiply = [](size_t a, size_t b) {
+    return b != 0 && a > std::numeric_limits<size_t>::max() / b ? std::numeric_limits<size_t>::max()
+                                                                : a * b;
+  };
+  size_t common_mem_per_row = 0;
+  size_t path_mem_per_row   = 0;
+  size_t fixed_bytes        = 0;
   switch (metric) {
     case distance::DistanceType::L2Expanded:
     case distance::DistanceType::L2SqrtExpanded:
@@ -253,62 +301,88 @@ auto calc_minibatch_size(const raft::resources& handle,
     case distance::DistanceType::InnerProduct: {
       const auto fused_path = use_fused<MathT, IdxT, IdxT>(handle, n_rows, n_clusters, dim, metric);
 
-      // min_cluster_and_distance always materializes the nearest distance for fused/L2 paths.
-      if (metric != distance::DistanceType::InnerProduct ||
-          fused_path != FusedDistancePath::Unfused) {
-        mem_per_row += sizeof(MathT);
-        if constexpr (!std::is_same_v<LabelT, IdxT>) { mem_per_row += sizeof(IdxT); }
-      }
       if (metric != distance::DistanceType::InnerProduct) {
         // predict may need a minibatch-sized input-norm buffer before entering predict_core.
-        mem_per_row += sizeof(MathT);
+        common_mem_per_row += sizeof(MathT);
+        fixed_bytes = saturating_multiply(sizeof(MathT), static_cast<size_t>(n_clusters));
       }
 
-      switch (fused_path) {
-        case FusedDistancePath::FusedCutile:
-          // Conservatively budget the fallback in case the eventual pointer-aware probe fails.
-          mem_per_row += sizeof(int);
-          mem_per_row += sizeof(raft::KeyValuePair<IdxT, MathT>);
-          if constexpr (std::is_same_v<MathT, float>) {
-            if (metric != distance::DistanceType::InnerProduct) {
-              // TF32-compatible row norms are materialized for cuTile L2/cosine.
-              mem_per_row += sizeof(MathT);
+      auto path_bytes_per_row = [&](FusedDistancePath path) {
+        size_t bytes = 0;
+        switch (path) {
+          case FusedDistancePath::FusedCutile:
+            // cuTile writes separate distance and index arrays.
+            bytes += sizeof(MathT);
+            if constexpr (!std::is_same_v<LabelT, IdxT>) { bytes += sizeof(IdxT); }
+            if constexpr (std::is_same_v<IdxT, int64_t>) {
+              // cuTile converts chunk-local int32 indices to int64 output indices.
+              bytes += sizeof(int);
             }
-          }
-          break;
-        case FusedDistancePath::FusedCutlass:
-          // fusedDistanceNNMinReduce CUTLASS fallback: mutex workspace + scratch KVP per row.
-          mem_per_row += sizeof(int);
-          mem_per_row += sizeof(raft::KeyValuePair<IdxT, MathT>);
-          break;
-        case FusedDistancePath::Unfused:
-          // unfused / GEMM+argmin path needs a full distance matrix row.
-          mem_per_row += sizeof(MathT) * n_clusters;
-          if (metric != distance::DistanceType::InnerProduct) {
-            mem_per_row += sizeof(raft::KeyValuePair<IdxT, MathT>);
-          }
-          break;
+            if constexpr (std::is_same_v<MathT, float>) {
+              if (metric != distance::DistanceType::InnerProduct) {
+                // TF32-compatible row norms are materialized for cuTile L2/cosine.
+                bytes += sizeof(MathT);
+              }
+            }
+            break;
+          case FusedDistancePath::FusedCutlass:
+            // CUTLASS writes native KVP assignments and uses one mutex per row.
+            bytes += sizeof(int);
+            bytes += sizeof(raft::KeyValuePair<IdxT, MathT>);
+            break;
+          case FusedDistancePath::Unfused:
+            // Unfused assignment needs a full distance matrix row.
+            bytes = saturating_add(
+              bytes, saturating_multiply(sizeof(MathT), static_cast<size_t>(n_clusters)));
+            if (metric != distance::DistanceType::InnerProduct) {
+              bytes += sizeof(raft::KeyValuePair<IdxT, MathT>);
+            }
+            break;
+        }
+        return bytes;
+      };
+
+      path_mem_per_row = path_bytes_per_row(fused_path);
+      if (fused_path == FusedDistancePath::FusedCutile) {
+        const auto prop     = raft::resource::get_device_properties(handle);
+        const auto fallback = use_legacy_fused(prop.major, n_rows, n_clusters, metric);
+        path_mem_per_row    = std::max(path_mem_per_row, path_bytes_per_row(fallback));
+
+        // Hopper changes from unfused to CUTLASS at 4096 rows. A final minibatch can fall below
+        // that threshold even when full batches use CUTLASS, so reserve for both real outcomes.
+        if (prop.major == 9 && n_clusters < IdxT{4096} && n_rows >= IdxT{4096}) {
+          path_mem_per_row =
+            std::max(path_mem_per_row, path_bytes_per_row(FusedDistancePath::Unfused));
+        }
       }
     } break;
     // Other metrics require storing a distance matrix.
     default: {
-      mem_per_row += sizeof(MathT) * n_clusters;
+      path_mem_per_row = saturating_multiply(sizeof(MathT), static_cast<size_t>(n_clusters));
     }
   }
 
   // If we need to convert to MathT, space required for the converted batch.
-  if (!data_is_math_type) { mem_per_row += sizeof(MathT) * dim; }
+  if (!data_is_math_type) {
+    common_mem_per_row = saturating_add(
+      common_mem_per_row, saturating_multiply(sizeof(MathT), static_cast<size_t>(dim)));
+  }
+  const size_t mem_per_row = saturating_add(common_mem_per_row, path_mem_per_row);
 
   // Heuristic: calculate the minibatch size in order to use at most 80% or 512MB workspace memory.
   // We go below 1GB here as the allocation is mostly done in a single chunk which
   // is problematic if e.g. a pool allocator manages its own chunks <= 1GB.
   const auto free_ws_size = raft::resource::get_workspace_free_bytes(handle);
-  const auto available_ws_size =
+  const auto workspace_limit =
     std::min<size_t>((free_ws_size * size_t{8}) / size_t{10}, size_t{1} << 29);
+  const auto available_ws_size =
+    workspace_limit > fixed_bytes ? workspace_limit - fixed_bytes : size_t{1};
 
   IdxT minibatch_size = std::max<IdxT>(IdxT{1}, static_cast<IdxT>(available_ws_size / mem_per_row));
 
-  minibatch_size = raft::round_down_safe<IdxT>(minibatch_size, IdxT{64});
+  if (minibatch_size >= IdxT{64}) {
+    minibatch_size = raft::round_down_safe<IdxT>(minibatch_size, IdxT{64});
+  }
   minibatch_size = std::min<IdxT>(minibatch_size, n_rows);
   return std::make_tuple(minibatch_size, mem_per_row);
 }
@@ -448,6 +522,34 @@ void compute_norm(const raft::resources& handle,
     norm_fin_op);
 }
 
+/** Computes TF32-compatible norms for cuTile, converting to float when necessary. */
+template <typename T, typename IdxT, typename MappingOpT>
+void compute_cutile_norm(const raft::resources& handle,
+                         float* dataset_norm,
+                         const T* dataset,
+                         IdxT dim,
+                         IdxT n_rows,
+                         MappingOpT mapping_op,
+                         bool take_sqrt,
+                         rmm::device_async_resource_ref mr)
+{
+  auto stream = raft::resource::get_cuda_stream(handle);
+  rmm::device_uvector<float> mapped_dataset(0, stream, mr);
+  const float* dataset_ptr = nullptr;
+  if constexpr (std::is_same_v<T, float>) {
+    dataset_ptr = dataset;
+  } else {
+    mapped_dataset.resize(static_cast<size_t>(n_rows) * static_cast<size_t>(dim), stream);
+    raft::linalg::map(
+      handle,
+      raft::make_device_vector_view<const T, IdxT>(dataset, n_rows * dim),
+      raft::make_device_vector_view<float, IdxT>(mapped_dataset.data(), n_rows * dim),
+      mapping_op);
+    dataset_ptr = mapped_dataset.data();
+  }
+  computeCutileRowNorms(handle, dataset_ptr, dataset_norm, n_rows, dim, take_sqrt);
+}
+
 /**
  * @brief Predict labels for the dataset.
  *
@@ -480,7 +582,8 @@ void predict(const raft::resources& handle,
              LabelT* labels,
              MappingOpT mapping_op,
              std::optional<rmm::device_async_resource_ref> mr = std::nullopt,
-             const MathT* dataset_norm                        = nullptr)
+             const MathT* dataset_norm                        = nullptr,
+             const MathT* dataset_cutile_norm                 = nullptr)
 {
   auto stream = raft::resource::get_cuda_stream(handle);
   raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
@@ -543,6 +646,7 @@ void predict(const raft::resources& handle,
                  dim,
                  cur_dataset_ptr,
                  dataset_norm_ptr,
+                 dataset_cutile_norm == nullptr ? nullptr : dataset_cutile_norm + offset,
                  minibatch_size,
                  labels + offset,
                  mem_res);
@@ -872,6 +976,7 @@ void balancing_em_iters(const raft::resources& handle,
                         IdxT dim,
                         const T* dataset,
                         const MathT* dataset_norm,
+                        const MathT* dataset_cutile_norm,
                         IdxT n_rows,
                         IdxT n_clusters,
                         MathT* cluster_centers,
@@ -940,7 +1045,8 @@ void balancing_em_iters(const raft::resources& handle,
             cluster_labels,
             mapping_op,
             device_memory,
-            dataset_norm);
+            dataset_norm,
+            dataset_cutile_norm);
     // M: Maximization step - calculate optimal cluster centers
     calc_centers_and_sizes(handle,
                            cluster_centers,
@@ -974,7 +1080,8 @@ void build_clusters(const raft::resources& handle,
                     CounterT* cluster_sizes,
                     MappingOpT mapping_op,
                     rmm::device_async_resource_ref device_memory,
-                    const MathT* dataset_norm = nullptr)
+                    const MathT* dataset_norm        = nullptr,
+                    const MathT* dataset_cutile_norm = nullptr)
 {
   auto stream = raft::resource::get_cuda_stream(handle);
   // "randomly" initialize labels
@@ -1004,6 +1111,7 @@ void build_clusters(const raft::resources& handle,
                      dim,
                      dataset,
                      dataset_norm,
+                     dataset_cutile_norm,
                      n_rows,
                      n_clusters,
                      cluster_centers,
@@ -1105,6 +1213,7 @@ auto build_fine_clusters(const raft::resources& handle,
                          IdxT dim,
                          const T* dataset_mptr,
                          const MathT* dataset_norm_mptr,
+                         const MathT* dataset_cutile_norm_mptr,
                          const LabelT* labels_mptr,
                          IdxT n_rows,
                          const IdxT* fine_clusters_nums,
@@ -1125,9 +1234,12 @@ auto build_fine_clusters(const raft::resources& handle,
   auto large_ws = raft::resource::get_large_workspace_resource_ref(handle);
   rmm::device_uvector<MathT> mc_trainset_buf(mesocluster_size_max * dim, stream, large_ws);
   rmm::device_uvector<MathT> mc_trainset_norm_buf(mesocluster_size_max, stream, device_memory);
-  auto mc_trainset_ids  = mc_trainset_ids_buf.data();
-  auto mc_trainset      = mc_trainset_buf.data();
-  auto mc_trainset_norm = mc_trainset_norm_buf.data();
+  rmm::device_uvector<MathT> mc_trainset_cutile_norm_buf(
+    dataset_cutile_norm_mptr == nullptr ? 0 : mesocluster_size_max, stream, device_memory);
+  auto mc_trainset_ids         = mc_trainset_ids_buf.data();
+  auto mc_trainset             = mc_trainset_buf.data();
+  auto mc_trainset_norm        = mc_trainset_norm_buf.data();
+  auto mc_trainset_cutile_norm = mc_trainset_cutile_norm_buf.data();
 
   // label (cluster ID) of each vector
   rmm::device_uvector<LabelT> mc_trainset_labels(mesocluster_size_max, stream, device_memory);
@@ -1171,6 +1283,13 @@ auto build_fine_clusters(const raft::resources& handle,
                      mc_trainset_ids + k,
                      dataset_norm_mptr,
                      mc_trainset_norm);
+      if (dataset_cutile_norm_mptr != nullptr) {
+        thrust::gather(raft::resource::get_thrust_policy(handle),
+                       mc_trainset_ids,
+                       mc_trainset_ids + k,
+                       dataset_cutile_norm_mptr,
+                       mc_trainset_cutile_norm);
+      }
     }
 
     build_clusters(handle,
@@ -1184,7 +1303,8 @@ auto build_fine_clusters(const raft::resources& handle,
                    mc_trainset_csizes_tmp.data(),
                    mapping_op,
                    device_memory,
-                   mc_trainset_norm);
+                   mc_trainset_norm,
+                   dataset_cutile_norm_mptr == nullptr ? nullptr : mc_trainset_cutile_norm);
 
     raft::copy(handle,
                raft::make_device_vector_view(cluster_centers + (dim * fine_clusters_csum[i]),
@@ -1245,7 +1365,9 @@ void build_hierarchical(const raft::resources& handle,
 
   // Precompute the L2 norm of the dataset if relevant and not yet computed.
   rmm::device_uvector<MathT> dataset_norm_buf(0, stream, device_memory);
-  const MathT* dataset_norm = nullptr;
+  rmm::device_uvector<MathT> dataset_cutile_norm_buf(0, stream, device_memory);
+  const MathT* dataset_norm        = nullptr;
+  const MathT* dataset_cutile_norm = nullptr;
   if ((params.metric == cuvs::distance::DistanceType::L2Expanded ||
        params.metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
        params.metric == cuvs::distance::DistanceType::CosineExpanded)) {
@@ -1272,6 +1394,28 @@ void build_hierarchical(const raft::resources& handle,
                      device_memory);
     }
     dataset_norm = (const MathT*)dataset_norm_buf.data();
+
+    if constexpr (std::is_same_v<MathT, float>) {
+      if (use_fused<MathT, IdxT, IdxT>(handle, n_rows, n_clusters, dim, params.metric) ==
+          FusedDistancePath::FusedCutile) {
+        dataset_cutile_norm_buf.resize(n_rows, stream);
+        const bool take_sqrt = params.metric == cuvs::distance::DistanceType::CosineExpanded;
+        raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> cached_input_norm_scope(
+          "cutile_cached_input_norm");
+        for (IdxT offset = 0; offset < n_rows; offset += max_minibatch_size) {
+          const IdxT minibatch_size = std::min<IdxT>(max_minibatch_size, n_rows - offset);
+          compute_cutile_norm(handle,
+                              dataset_cutile_norm_buf.data() + offset,
+                              dataset + dim * offset,
+                              dim,
+                              minibatch_size,
+                              mapping_op,
+                              take_sqrt,
+                              device_memory);
+        }
+        dataset_cutile_norm = dataset_cutile_norm_buf.data();
+      }
+    }
   }
 
   /* Temporary workaround to cub::DeviceHistogram not supporting any type that isn't natively
@@ -1295,7 +1439,8 @@ void build_hierarchical(const raft::resources& handle,
                    mesocluster_sizes_buf.data(),
                    mapping_op,
                    device_memory,
-                   dataset_norm);
+                   dataset_norm,
+                   dataset_cutile_norm);
   }
 
   auto mesocluster_sizes  = mesocluster_sizes_buf.data();
@@ -1327,6 +1472,7 @@ void build_hierarchical(const raft::resources& handle,
                                              dim,
                                              dataset,
                                              dataset_norm,
+                                             dataset_cutile_norm,
                                              mesocluster_labels,
                                              n_rows,
                                              fine_clusters_nums.data(),
@@ -1365,6 +1511,7 @@ void build_hierarchical(const raft::resources& handle,
                      dim,
                      dataset,
                      dataset_norm,
+                     dataset_cutile_norm,
                      n_rows,
                      n_clusters,
                      cluster_centers,

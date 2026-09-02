@@ -30,6 +30,30 @@ bool is_16_byte_aligned(const void* ptr)
   return ptr == nullptr || reinterpret_cast<std::uintptr_t>(ptr) % 16 == 0;
 }
 
+bool byte_ranges_overlap(const void* lhs, size_t lhs_bytes, const void* rhs, size_t rhs_bytes)
+{
+  if (lhs == nullptr || rhs == nullptr || lhs_bytes == 0 || rhs_bytes == 0) { return false; }
+  const auto lhs_begin = reinterpret_cast<std::uintptr_t>(lhs);
+  const auto rhs_begin = reinterpret_cast<std::uintptr_t>(rhs);
+  if (lhs_bytes > std::numeric_limits<std::uintptr_t>::max() - lhs_begin ||
+      rhs_bytes > std::numeric_limits<std::uintptr_t>::max() - rhs_begin) {
+    return true;
+  }
+  return lhs_begin < rhs_begin + rhs_bytes && rhs_begin < lhs_begin + lhs_bytes;
+}
+
+template <typename IdxT>
+size_t checked_tensor_bytes(IdxT rows, IdxT cols, size_t element_size)
+{
+  const auto rows_u       = static_cast<uint64_t>(rows);
+  const auto cols_u       = static_cast<uint64_t>(cols);
+  constexpr auto max_size = std::numeric_limits<size_t>::max();
+  if (cols_u != 0 && rows_u > max_size / cols_u) { return max_size; }
+  const auto elements = rows_u * cols_u;
+  if (element_size != 0 && elements > max_size / element_size) { return max_size; }
+  return static_cast<size_t>(elements) * element_size;
+}
+
 template <typename DataT, typename AbiTag>
 bool has_fused_1nn_tile_launcher()
 {
@@ -237,6 +261,17 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
   if constexpr (std::is_same_v<IdxT, int>) {
     if (!is_16_byte_aligned(nearest_idx)) { return false; }
   }
+  const auto x_bytes    = checked_tensor_bytes(m, k, sizeof(DataT));
+  const auto y_bytes    = checked_tensor_bytes(n, k, sizeof(DataT));
+  const auto dist_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
+  const auto idx_bytes  = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
+  if (byte_ranges_overlap(nearest_dist, dist_bytes, x, x_bytes) ||
+      byte_ranges_overlap(nearest_dist, dist_bytes, y, y_bytes) ||
+      byte_ranges_overlap(nearest_idx, idx_bytes, x, x_bytes) ||
+      byte_ranges_overlap(nearest_idx, idx_bytes, y, y_bytes) ||
+      byte_ranges_overlap(nearest_idx, idx_bytes, nearest_dist, dist_bytes)) {
+    return false;
+  }
   return true;
 }
 
@@ -259,7 +294,15 @@ bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
   if (metric != cuvs::distance::DistanceType::InnerProduct && (xn == nullptr || yn == nullptr)) {
     return false;
   }
-  return is_16_byte_aligned(xn) && is_16_byte_aligned(yn);
+  if (!is_16_byte_aligned(xn) || !is_16_byte_aligned(yn)) { return false; }
+  const auto xn_bytes   = checked_tensor_bytes(m, IdxT{1}, sizeof(*xn));
+  const auto yn_bytes   = checked_tensor_bytes(n, IdxT{1}, sizeof(*yn));
+  const auto dist_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
+  const auto idx_bytes  = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
+  return !byte_ranges_overlap(nearest_dist, dist_bytes, xn, xn_bytes) &&
+         !byte_ranges_overlap(nearest_dist, dist_bytes, yn, yn_bytes) &&
+         !byte_ranges_overlap(nearest_idx, idx_bytes, xn, xn_bytes) &&
+         !byte_ranges_overlap(nearest_idx, idx_bytes, yn, yn_bytes);
 }
 
 template <typename DataT, typename IdxT>
@@ -295,6 +338,21 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
   } else {
     if (nearest_idx != nullptr && index_workspace == nullptr) { return false; }
     if (!is_16_byte_aligned(index_workspace)) { return false; }
+    const auto workspace_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(int));
+    const auto x_bytes         = checked_tensor_bytes(m, k, sizeof(DataT));
+    const auto y_bytes         = checked_tensor_bytes(n, k, sizeof(DataT));
+    const auto norm_x_bytes    = checked_tensor_bytes(m, IdxT{1}, sizeof(*xn));
+    const auto norm_y_bytes    = checked_tensor_bytes(n, IdxT{1}, sizeof(*yn));
+    const auto dist_bytes      = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
+    const auto idx_bytes       = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
+    if (byte_ranges_overlap(index_workspace, workspace_bytes, x, x_bytes) ||
+        byte_ranges_overlap(index_workspace, workspace_bytes, y, y_bytes) ||
+        byte_ranges_overlap(index_workspace, workspace_bytes, xn, norm_x_bytes) ||
+        byte_ranges_overlap(index_workspace, workspace_bytes, yn, norm_y_bytes) ||
+        byte_ranges_overlap(index_workspace, workspace_bytes, nearest_dist, dist_bytes) ||
+        byte_ranges_overlap(index_workspace, workspace_bytes, nearest_idx, idx_bytes)) {
+      return false;
+    }
 
     // Keep every chunk offset 16-byte aligned for x, xn, and nearest_dist.
     constexpr int64_t max_batch_m = fused_1nn_cutile_max_batch_m<DataT>;

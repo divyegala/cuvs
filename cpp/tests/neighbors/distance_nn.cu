@@ -9,6 +9,9 @@
 #include "../../src/distance/fused_distance_nn.cuh"
 #include "../../src/distance/unfused_distance_nn.cuh"
 
+#include <cuvs/detail/jit_lto/cutile_module.hpp>
+#include <cuvs/detail/jit_lto/tileir_compat.hpp>
+
 #include <raft/core/resource/cuda_stream.hpp>
 #include <raft/linalg/norm.cuh>
 #include <raft/linalg/unary_op.cuh>
@@ -312,6 +315,146 @@ TEST(Fused1nn, ExpandedL2ClampsNegativeRoundoff)
   EXPECT_EQ(actual_dist, 0.0f);
 }
 
+TEST(Fused1nn, CutileAvailabilityRejectsUnsupportedArchitectures)
+{
+  EXPECT_FALSE(cuvs::detail::jit_lto::cutile_launch_available_for_arch(7, 5, 13000));
+  EXPECT_FALSE(cuvs::detail::jit_lto::cutile_launch_available_for_arch(13, 0, 13000));
+}
+
+#if CUVS_CUTILE_ENABLED
+TEST(Fused1nn, ExpectedModuleCompatibilityErrorsAreRecoverable)
+{
+  using cuvs::detail::jit_lto::is_expected_cutile_unavailable;
+  EXPECT_TRUE(is_expected_cutile_unavailable(cudaErrorInvalidDeviceFunction));
+  EXPECT_TRUE(is_expected_cutile_unavailable(cudaErrorInvalidPtx));
+  EXPECT_TRUE(is_expected_cutile_unavailable(cudaErrorNoKernelImageForDevice));
+  EXPECT_TRUE(is_expected_cutile_unavailable(cudaErrorSymbolNotFound));
+  EXPECT_TRUE(is_expected_cutile_unavailable(cudaErrorUnsupportedPtxVersion));
+  EXPECT_TRUE(is_expected_cutile_unavailable(cudaErrorCallRequiresNewerDriver));
+  EXPECT_FALSE(is_expected_cutile_unavailable(cudaErrorMemoryAllocation));
+  EXPECT_FALSE(is_expected_cutile_unavailable(cudaErrorIllegalAddress));
+}
+
+template <typename IdxT>
+void run_half_cutile_contract_case(int k)
+{
+  raft::resources handle;
+  auto stream      = raft::resource::get_cuda_stream(handle);
+  constexpr IdxT m = 2;
+  constexpr IdxT n = 2;
+
+  std::vector<half> h_x(static_cast<size_t>(m) * k, __float2half(0.0f));
+  std::vector<half> h_y(static_cast<size_t>(n) * k, __float2half(0.0f));
+  h_x[0]     = __float2half(1.0f);
+  h_x[k + 1] = __float2half(1.0f);
+  h_y[0]     = __float2half(1.0f);
+  h_y[k + 1] = __float2half(1.0f);
+
+  rmm::device_uvector<half> x(h_x.size(), stream);
+  rmm::device_uvector<half> y(h_y.size(), stream);
+  rmm::device_uvector<float> x_norm(m, stream);
+  rmm::device_uvector<float> y_norm(n, stream);
+  rmm::device_uvector<IdxT> out_idx(m, stream);
+  rmm::device_uvector<half> out_dist(m, stream);
+  rmm::device_uvector<int> workspace(m, stream);
+  raft::update_device(x.data(), h_x.data(), h_x.size(), stream);
+  raft::update_device(y.data(), h_y.data(), h_y.size(), stream);
+  const std::vector<float> h_norms(m, 1.0f);
+  raft::update_device(x_norm.data(), h_norms.data(), m, stream);
+  raft::update_device(y_norm.data(), h_norms.data(), n, stream);
+
+  if constexpr (std::is_same_v<IdxT, int64_t>) {
+    EXPECT_FALSE((cuvs::distance::detail::try_fused_1nn_tile<half, IdxT>(out_idx.data(),
+                                                                         out_dist.data(),
+                                                                         x.data(),
+                                                                         y.data(),
+                                                                         x_norm.data(),
+                                                                         y_norm.data(),
+                                                                         m,
+                                                                         n,
+                                                                         static_cast<IdxT>(k),
+                                                                         DistanceType::L2Expanded,
+                                                                         false,
+                                                                         x.data(),
+                                                                         stream)));
+  }
+
+  for (auto metric : {DistanceType::L2Expanded,
+                      DistanceType::L2SqrtExpanded,
+                      DistanceType::CosineExpanded,
+                      DistanceType::InnerProduct}) {
+    ASSERT_TRUE((
+      cuvs::distance::detail::try_fused_1nn_tile<half, IdxT>(out_idx.data(),
+                                                             out_dist.data(),
+                                                             x.data(),
+                                                             y.data(),
+                                                             x_norm.data(),
+                                                             y_norm.data(),
+                                                             m,
+                                                             n,
+                                                             static_cast<IdxT>(k),
+                                                             metric,
+                                                             metric == DistanceType::L2SqrtExpanded,
+                                                             workspace.data(),
+                                                             stream)));
+    std::vector<IdxT> h_idx(m);
+    raft::update_host(h_idx.data(), out_idx.data(), m, stream);
+    raft::resource::sync_stream(handle, stream);
+    EXPECT_EQ(h_idx[0], IdxT{0});
+    EXPECT_EQ(h_idx[1], IdxT{1});
+  }
+
+  ASSERT_TRUE((cuvs::distance::detail::try_fused_1nn_tile<half, IdxT>(out_idx.data(),
+                                                                      out_dist.data(),
+                                                                      x.data(),
+                                                                      x.data(),
+                                                                      x_norm.data(),
+                                                                      x_norm.data(),
+                                                                      m,
+                                                                      m,
+                                                                      static_cast<IdxT>(k),
+                                                                      DistanceType::L2Expanded,
+                                                                      false,
+                                                                      workspace.data(),
+                                                                      stream)));
+  std::vector<IdxT> h_alias_idx(m);
+  raft::update_host(h_alias_idx.data(), out_idx.data(), m, stream);
+  raft::resource::sync_stream(handle, stream);
+  EXPECT_EQ(h_alias_idx[0], IdxT{0});
+  EXPECT_EQ(h_alias_idx[1], IdxT{1});
+
+  raft::copy(y.data() + k, y.data(), k, stream);
+  ASSERT_TRUE((cuvs::distance::detail::try_fused_1nn_tile<half, IdxT>(out_idx.data(),
+                                                                      out_dist.data(),
+                                                                      x.data(),
+                                                                      y.data(),
+                                                                      x_norm.data(),
+                                                                      y_norm.data(),
+                                                                      m,
+                                                                      n,
+                                                                      static_cast<IdxT>(k),
+                                                                      DistanceType::L2Expanded,
+                                                                      false,
+                                                                      workspace.data(),
+                                                                      stream)));
+  IdxT h_tie_idx;
+  half h_tie_dist;
+  raft::update_host(&h_tie_idx, out_idx.data(), 1, stream);
+  raft::update_host(&h_tie_dist, out_dist.data(), 1, stream);
+  raft::resource::sync_stream(handle, stream);
+  EXPECT_TRUE(h_tie_idx == IdxT{0} || h_tie_idx == IdxT{1});
+  EXPECT_EQ(__half2float(h_tie_dist), 0.0f);
+}
+
+TEST(Fused1nn, HalfUsesFloatNormsAcrossAbisAndIndexTypes)
+{
+  run_half_cutile_contract_case<int>(8);
+  run_half_cutile_contract_case<int>(7);
+  run_half_cutile_contract_case<int64_t>(8);
+  run_half_cutile_contract_case<int64_t>(7);
+}
+#endif
+
 TEST(Fused1nn, Int64IndexWorkspaceUsesLargestChunk)
 {
   constexpr int64_t max_batch_m_float = cuvs::distance::detail::fused_1nn_cutile_max_batch_m<float>;
@@ -342,7 +485,8 @@ TEST(Fused1nn, PointerAwareProbeRejectsMisalignedArrays)
   auto out_idx  = raft::make_device_vector<int, int>(handle, m);
   auto out_dist = raft::make_device_vector<float, int>(handle, m);
 
-  for (auto metric : {DistanceType::L2Expanded, DistanceType::CosineExpanded}) {
+  for (auto metric :
+       {DistanceType::L2Expanded, DistanceType::CosineExpanded, DistanceType::InnerProduct}) {
     EXPECT_FALSE(cuvs::distance::detail::can_launch_fused_1nn_tile(out_idx.data_handle(),
                                                                    out_dist.data_handle(),
                                                                    x.data_handle() + 1,
@@ -370,6 +514,8 @@ TEST(Fused1nn, PointerAwareProbeRejectsMisalignedArrays)
                                                                      n,
                                                                      k,
                                                                      metric));
+      EXPECT_FALSE(cuvs::distance::detail::can_launch_fused_1nn_tile(
+        out_idx.data_handle(), x.data_handle(), x.data_handle(), y.data_handle(), m, n, k, metric));
     }
   }
 }

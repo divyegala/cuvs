@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "../../core/nvtx.hpp"
 #include "../../distance/fused_distance_nn.cuh"
 #include "../../distance/unfused_distance_nn.cuh"
 #include "kmeans_common.cuh"
@@ -95,6 +96,17 @@ void unpack_kvp(raft::resources const& handle,
 
 }  // namespace
 
+template <typename IndexT>
+void computeCutileRowNorms(raft::resources const& handle,
+                           const float* matrix,
+                           float* norms,
+                           IndexT n_rows,
+                           IndexT n_cols,
+                           bool take_sqrt)
+{
+  compute_tf32_row_norms(handle, matrix, norms, n_rows, n_cols, take_sqrt);
+}
+
 template <typename DataT, typename IndexT>
 FusedDistancePath select_min_cluster_distance_path(
   raft::resources const& handle,
@@ -131,7 +143,8 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
                                            int batch_samples,
                                            int batch_centroids,
                                            rmm::device_uvector<char>& workspace,
-                                           FusedDistancePath fused_path)
+                                           FusedDistancePath fused_path,
+                                           const DataT* cutile_x_norm)
 {
   cudaStream_t stream  = raft::resource::get_cuda_stream(handle);
   auto n_samples       = X.extent(0);
@@ -152,20 +165,31 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
       if constexpr (std::is_same_v<DataT, float>) {
         if (cutile_ready) {
           constexpr size_t norm_alignment = 16 / sizeof(float);
-          const size_t x_norm_storage =
-            raft::alignTo(static_cast<size_t>(n_samples), norm_alignment);
-          L2NormBuf_OR_DistBuf.resize(x_norm_storage + static_cast<size_t>(n_clusters), stream);
-          auto* tf32_x_norms        = L2NormBuf_OR_DistBuf.data();
-          auto* tf32_centroid_norms = tf32_x_norms + x_norm_storage;
-          const bool take_sqrt      = metric == cuvs::distance::DistanceType::CosineExpanded;
-          compute_tf32_row_norms(
-            handle, X.data_handle(), tf32_x_norms, n_samples, n_features, take_sqrt);
-          compute_tf32_row_norms(handle,
-                                 centroids.data_handle(),
-                                 tf32_centroid_norms,
-                                 n_clusters,
-                                 n_features,
-                                 take_sqrt);
+          const bool take_sqrt            = metric == cuvs::distance::DistanceType::CosineExpanded;
+          size_t centroid_offset          = 0;
+          if (cutile_x_norm == nullptr) {
+            centroid_offset = raft::alignTo(static_cast<size_t>(n_samples), norm_alignment);
+          }
+          L2NormBuf_OR_DistBuf.resize(centroid_offset + static_cast<size_t>(n_clusters), stream);
+          auto* tf32_x_norms        = cutile_x_norm == nullptr ? L2NormBuf_OR_DistBuf.data()
+                                                               : const_cast<DataT*>(cutile_x_norm);
+          auto* tf32_centroid_norms = L2NormBuf_OR_DistBuf.data() + centroid_offset;
+          if (cutile_x_norm == nullptr) {
+            raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> input_norm_scope(
+              "cutile_input_norm");
+            compute_tf32_row_norms(
+              handle, X.data_handle(), tf32_x_norms, n_samples, n_features, take_sqrt);
+          }
+          {
+            raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> center_norm_scope(
+              "cutile_center_norm");
+            compute_tf32_row_norms(handle,
+                                   centroids.data_handle(),
+                                   tf32_centroid_norms,
+                                   n_clusters,
+                                   n_features,
+                                   take_sqrt);
+          }
           x_norm_ptr         = tf32_x_norms;
           centroids_norm_ptr = tf32_centroid_norms;
         } else {
@@ -381,7 +405,8 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
                                   cuvs::distance::DistanceType metric,
                                   int batch_samples,
                                   int batch_centroids,
-                                  rmm::device_uvector<char>& workspace)
+                                  rmm::device_uvector<char>& workspace,
+                                  const DataT* cutile_x_norm)
 {
   auto path = select_min_cluster_distance_path(handle, X, centroids, metric);
   if constexpr (is_cutile_fused_data_type_v<DataT>) {
@@ -410,7 +435,8 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
                                                        batch_samples,
                                                        batch_centroids,
                                                        workspace,
-                                                       path);
+                                                       path,
+                                                       cutile_x_norm);
 }
 
 template <typename DataT, typename IndexT>
@@ -441,7 +467,8 @@ void minClusterAndDistanceComputeKvp(
                                                        batch_samples,
                                                        batch_centroids,
                                                        workspace,
-                                                       path);
+                                                       path,
+                                                       nullptr);
 }
 
 #define INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(DataT, IndexT)  \
@@ -456,7 +483,8 @@ void minClusterAndDistanceComputeKvp(
     cuvs::distance::DistanceType metric,                     \
     int batch_samples,                                       \
     int batch_centroids,                                     \
-    rmm::device_uvector<char>& workspace);
+    rmm::device_uvector<char>& workspace,                    \
+    const DataT* cutile_x_norm);
 
 INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(float, int64_t)
 INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(double, int64_t)
@@ -464,6 +492,11 @@ INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(float, int)
 INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(double, int)
 
 #undef INSTANTIATE_MIN_CLUSTER_AND_DISTANCE
+
+template void computeCutileRowNorms<int>(
+  raft::resources const&, const float*, float*, int, int, bool);
+template void computeCutileRowNorms<int64_t>(
+  raft::resources const&, const float*, float*, int64_t, int64_t, bool);
 
 #define INSTANTIATE_SELECT_MIN_CLUSTER_PATH(DataT, IndexT)                    \
   template FusedDistancePath select_min_cluster_distance_path<DataT, IndexT>( \

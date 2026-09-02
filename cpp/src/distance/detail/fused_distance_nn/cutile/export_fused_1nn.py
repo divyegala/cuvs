@@ -89,7 +89,8 @@ def _cuvs_matrix_constraint(
         ndim=2,
         index_dtype=index_dtype,
         stride_lower_bound_incl=(0, None),
-        alias_groups=(),
+        # Dataset and centroid views are read-only and may legally share storage.
+        alias_groups=("read_only_inputs",),
         may_alias_internally=False,
         stride_constant=(None, 1),
         stride_divisible_by=(
@@ -106,14 +107,16 @@ def _cuvs_matrix_constraint(
     )
 
 
-def _cuvs_vector_constraint(elem_dtype, *, index_dtype=ct.int32):
+def _cuvs_vector_constraint(
+    elem_dtype, *, index_dtype=ct.int32, alias_groups=()
+):
     """1-D device vectors: contiguous, 16-byte base. Length need not be divisible by 16."""
     return ArrayConstraint(
         elem_dtype,
         ndim=1,
         index_dtype=index_dtype,
         stride_lower_bound_incl=(None,),
-        alias_groups=(),
+        alias_groups=alias_groups,
         may_alias_internally=False,
         stride_constant=(1,),
         stride_divisible_by=(1,),
@@ -156,7 +159,11 @@ def _kernel_signature(
         ),
     )
     norm_elem = ct.float32 if data_type == "half" else elem
-    norm_array = _cuvs_vector_constraint(norm_elem, index_dtype=idx_dtype)
+    norm_array = _cuvs_vector_constraint(
+        norm_elem,
+        index_dtype=idx_dtype,
+        alias_groups=("read_only_inputs",),
+    )
     idx_array = _cuvs_vector_constraint(idx_dtype, index_dtype=idx_dtype)
     dist_array = _cuvs_vector_constraint(elem, index_dtype=idx_dtype)
 

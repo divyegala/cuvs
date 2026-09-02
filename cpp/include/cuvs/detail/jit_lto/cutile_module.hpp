@@ -78,15 +78,44 @@ inline std::optional<CutileModuleImage> resolve_cutile_module_image(
   return std::nullopt;
 }
 
-inline std::shared_ptr<rtcx::algorithm_launcher> load_cutile_launcher(
+inline bool is_expected_cutile_unavailable(cudaError_t status)
+{
+  switch (status) {
+    case cudaErrorInvalidDeviceFunction:
+    case cudaErrorInvalidPtx:
+    case cudaErrorNoKernelImageForDevice:
+    case cudaErrorSymbolNotFound:
+    case cudaErrorUnsupportedPtxVersion:
+    case cudaErrorCallRequiresNewerDriver:
+    case cudaErrorSharedObjectSymbolNotFound:
+    case cudaErrorSharedObjectInitFailed:
+    case cudaErrorJitCompilerNotFound: return true;
+    default: return false;
+  }
+}
+
+/**
+ * Loads a cuTile launcher, returning null for an expected module/JIT compatibility rejection.
+ * Unexpected CUDA failures retain the normal RAFT exception behavior.
+ */
+inline std::shared_ptr<rtcx::algorithm_launcher> try_load_cutile_launcher(
   const CutileModuleImage& image, const std::string& kernel_symbol)
 {
   cudaLibrary_t library{};
-  RAFT_CUDA_TRY(
-    cudaLibraryLoadData(&library, image.data, nullptr, nullptr, 0, nullptr, nullptr, 0));
+  auto load_status =
+    cudaLibraryLoadData(&library, image.data, nullptr, nullptr, 0, nullptr, nullptr, 0);
+  if (load_status != cudaSuccess) {
+    if (is_expected_cutile_unavailable(load_status)) { return nullptr; }
+    RAFT_CUDA_TRY(load_status);
+  }
 
   cudaKernel_t kernel{};
-  RAFT_CUDA_TRY(cudaLibraryGetKernel(&kernel, library, kernel_symbol.c_str()));
+  load_status = cudaLibraryGetKernel(&kernel, library, kernel_symbol.c_str());
+  if (load_status != cudaSuccess) {
+    RAFT_CUDA_TRY(cudaLibraryUnload(library));
+    if (is_expected_cutile_unavailable(load_status)) { return nullptr; }
+    RAFT_CUDA_TRY(load_status);
+  }
 
   return std::make_shared<rtcx::algorithm_launcher>(kernel, library);
 }

@@ -30,13 +30,18 @@ namespace distance {
 
 namespace detail {
 
-template <typename DataT, typename IdxT, typename Policy, typename ReduceOpT, typename KVPReduceOpT>
+template <typename DataT,
+          typename NormT,
+          typename IdxT,
+          typename Policy,
+          typename ReduceOpT,
+          typename KVPReduceOpT>
 void fusedDistanceNNImpl(IdxT* nearest_idx,
                          DataT* nearest_dist,
                          const DataT* x,
                          const DataT* y,
-                         const DataT* xn,
-                         const DataT* yn,
+                         const NormT* xn,
+                         const NormT* yn,
                          IdxT m,
                          IdxT n,
                          IdxT k,
@@ -56,7 +61,7 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
   constexpr auto maxVal = std::numeric_limits<DataT>::max();
 
   if constexpr (is_fused_1nn_cutile_data_v<DataT> &&
-                std::is_same_v<fused_1nn_cutile_norm_t<DataT>, DataT>) {
+                std::is_same_v<fused_1nn_cutile_norm_t<DataT>, NormT>) {
     if constexpr (cuvs::detail::jit_lto::library_built_with_cutile()) {
       if (try_fused_1nn_tile<DataT, IdxT>(
             nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, sqrt, workspace, stream)) {
@@ -70,6 +75,11 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
   // sentinel from the legacy L2/cosine implementation below.
   RAFT_EXPECTS(metric != cuvs::distance::DistanceType::InnerProduct,
                "Fused InnerProduct 1-NN requires a compatible cuTile launcher");
+  RAFT_EXPECTS((std::is_same_v<NormT, DataT>),
+               "Mixed-precision norm inputs require a compatible cuTile launcher");
+
+  const auto* legacy_xn = reinterpret_cast<const DataT*>(xn);
+  const auto* legacy_yn = reinterpret_cast<const DataT*>(yn);
 
   RAFT_CUDA_TRY(cudaMemsetAsync(workspace, 0, sizeof(int) * m, stream));
 
@@ -80,8 +90,8 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
                                                                                     nearest_dist,
                                                                                     x,
                                                                                     y,
-                                                                                    xn,
-                                                                                    yn,
+                                                                                    legacy_xn,
+                                                                                    legacy_yn,
                                                                                     m,
                                                                                     n,
                                                                                     k,
@@ -98,8 +108,8 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
                                                                                     nearest_dist,
                                                                                     x,
                                                                                     y,
-                                                                                    xn,
-                                                                                    yn,
+                                                                                    legacy_xn,
+                                                                                    legacy_yn,
                                                                                     m,
                                                                                     n,
                                                                                     k,

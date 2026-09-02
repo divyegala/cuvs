@@ -274,4 +274,54 @@ KB_TEST((KmeansBalancedTest<int8_t, float, int, int, i2f_scaler<int8_t, float>, 
         KmeansBalancedTestFI8I32I32_SEP,
         inputsf_i32);
 
+#if CUVS_CUTILE_ENABLED
+TEST(KmeansBalancedPredict, CutilePointerRejectionPreservesMetricFallback)
+{
+  raft::resources handle;
+  auto stream                  = raft::resource::get_cuda_stream(handle);
+  constexpr int64_t n_rows     = 4;
+  constexpr int64_t n_cols     = 4;
+  constexpr int64_t n_clusters = 2;
+
+  const std::vector<float> h_x{
+    1.0f, 0.0f, 0.2f, 0.0f, 0.0f, 1.0f, 0.0f, 0.2f, 0.8f, 0.1f, 0.0f, 0.0f, 0.1f, 0.9f, 0.0f, 0.0f};
+  const std::vector<float> h_centroids{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+
+  rmm::device_uvector<float> x_aligned(h_x.size(), stream);
+  rmm::device_uvector<float> x_misaligned(h_x.size() + 1, stream);
+  rmm::device_uvector<float> centroids(h_centroids.size(), stream);
+  rmm::device_uvector<int> labels_ref(n_rows, stream);
+  rmm::device_uvector<int> labels_misaligned(n_rows + 1, stream);
+  raft::update_device(x_aligned.data(), h_x.data(), h_x.size(), stream);
+  raft::update_device(x_misaligned.data() + 1, h_x.data(), h_x.size(), stream);
+  raft::update_device(centroids.data(), h_centroids.data(), h_centroids.size(), stream);
+
+  for (auto metric : {distance::DistanceType::L2Expanded,
+                      distance::DistanceType::CosineExpanded,
+                      distance::DistanceType::InnerProduct}) {
+    cluster::kmeans::balanced_params params;
+    params.metric = metric;
+    cluster::kmeans::predict(
+      handle,
+      params,
+      raft::make_device_matrix_view<const float, int64_t>(x_aligned.data(), n_rows, n_cols),
+      raft::make_device_matrix_view<const float, int64_t>(centroids.data(), n_clusters, n_cols),
+      raft::make_device_vector_view<int, int64_t>(labels_ref.data(), n_rows));
+    cluster::kmeans::predict(
+      handle,
+      params,
+      raft::make_device_matrix_view<const float, int64_t>(x_misaligned.data() + 1, n_rows, n_cols),
+      raft::make_device_matrix_view<const float, int64_t>(centroids.data(), n_clusters, n_cols),
+      raft::make_device_vector_view<int, int64_t>(labels_misaligned.data() + 1, n_rows));
+
+    std::vector<int> h_ref(n_rows);
+    std::vector<int> h_actual(n_rows);
+    raft::update_host(h_ref.data(), labels_ref.data(), n_rows, stream);
+    raft::update_host(h_actual.data(), labels_misaligned.data() + 1, n_rows, stream);
+    raft::resource::sync_stream(handle, stream);
+    EXPECT_EQ(h_actual, h_ref);
+  }
+}
+#endif
+
 }  // namespace cuvs

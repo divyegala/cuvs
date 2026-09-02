@@ -83,6 +83,26 @@ std::string TileAlgorithmPlanner::get_planner_key() const
     key += fragment->get_key();
   }
   if (tileir_fragment_) { key += tileir_fragment_->get_key(); }
+
+  int device         = -1;
+  int cc_major       = -1;
+  int cc_minor       = -1;
+  int driver_version = -1;
+  if (cudaGetDevice(&device) == cudaSuccess &&
+      cuvs::detail::jit_lto::get_device_compute_capability(cc_major, cc_minor)) {
+    key += ":device=" + std::to_string(device);
+    key += ":cc=" + std::to_string(cc_major) + "." + std::to_string(cc_minor);
+    if (const auto* fragment = cuvs::detail::jit_lto::find_compatible_cubin_fragment(
+          cc_major, cc_minor, cubin_fragments_)) {
+      key += ":cubin=" + std::to_string(fragment->get_cc_major()) + "." +
+             std::to_string(fragment->get_cc_minor());
+    } else {
+      key += ":tileir";
+    }
+    if (cudaDriverGetVersion(&driver_version) == cudaSuccess) {
+      key += ":driver=" + std::to_string(driver_version);
+    }
+  }
   return key;
 }
 
@@ -119,7 +139,7 @@ std::shared_ptr<rtcx::algorithm_launcher> TileAlgorithmPlanner::build()
     cc_major, cc_minor, driver_version, cubin_fragments_, tileir_fragment_.get());
   if (!image) { return nullptr; }
 
-  return cuvs::detail::jit_lto::load_cutile_launcher(*image, entrypoint_);
+  return cuvs::detail::jit_lto::try_load_cutile_launcher(*image, entrypoint_);
 }
 
 }  // namespace cuvs::detail::jit_lto
