@@ -88,7 +88,8 @@ class CUVS_EXPORT roaring_allowlist {
    * @brief Build one allowlist from host IDs.
    *
    * Host IDs are copied to the construction stream and then use the same device builder as the
-   * device overload. Empty input is valid and rejects every candidate.
+   * device overload. IDs must be smaller than dataset_rows; this precondition is not checked.
+   * Empty input is valid and rejects every candidate.
    */
   static roaring_allowlist from_ids(raft::resources const& res,
                                     std::size_t dataset_rows,
@@ -98,7 +99,8 @@ class CUVS_EXPORT roaring_allowlist {
   /**
    * @brief Build one allowlist from device IDs.
    *
-   * The input must remain valid until the construction stream reaches the enqueued work.
+   * The input must remain valid until the construction stream reaches the enqueued work. IDs must
+   * be smaller than dataset_rows; this precondition is not checked.
    * Temporary memory is O(cardinality + container count); no dataset-sized dense bitmap is used.
    */
   static roaring_allowlist from_ids(raft::resources const& res,
@@ -122,16 +124,6 @@ class CUVS_EXPORT roaring_allowlist {
 
   /** @brief Return a zero-copy view. */
   [[nodiscard]] roaring_allowlist_view view() const noexcept;
-
-  /** @brief Test row IDs and synchronize the resource stream. */
-  void contains(raft::resources const& res,
-                raft::device_vector_view<const key_type, std::int64_t> row_ids,
-                raft::device_vector_view<std::uint8_t, std::int64_t> output) const;
-
-  /** @brief Stream-ordered asynchronous version of @ref contains. */
-  void contains_async(raft::resources const& res,
-                      raft::device_vector_view<const key_type, std::int64_t> row_ids,
-                      raft::device_vector_view<std::uint8_t, std::int64_t> output) const;
 
  private:
   explicit roaring_allowlist(std::unique_ptr<impl> impl) noexcept;

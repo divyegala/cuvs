@@ -8,14 +8,12 @@
 #include <cuvs/core/roaring_allowlist.hpp>
 #include <cuvs/neighbors/common.hpp>
 
+#include <raft/core/copy.cuh>
 #include <raft/core/error.hpp>
 #include <raft/core/resource/cuda_stream.hpp>
 #include <raft/core/resources.hpp>
-#include <raft/util/cudart_utils.hpp>
 
 #include <rmm/device_uvector.hpp>
-
-#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -89,22 +87,13 @@ struct roaring_filter::impl {
       host_empty.push_back(allowlist.empty() ? 1 : 0);
     }
 
-    RAFT_CUDA_TRY(cudaMemcpyAsync(refs.data(),
-                                  host_refs.data(),
-                                  host_refs.size() * sizeof(ref_type const*),
-                                  cudaMemcpyHostToDevice,
-                                  stream));
-    RAFT_CUDA_TRY(cudaMemcpyAsync(empty_rows.data(),
-                                  host_empty.data(),
-                                  host_empty.size() * sizeof(std::uint8_t),
-                                  cudaMemcpyHostToDevice,
-                                  stream));
+    raft::copy(refs.data(), host_refs.data(), host_refs.size(), stream);
+    raft::copy(empty_rows.data(), host_empty.data(), host_empty.size(), stream);
     auto const host_payload = data_type{refs.data(),
                                         empty_rows.data(),
                                         static_cast<std::uint32_t>(allowlists.size()),
                                         static_cast<std::uint64_t>(dataset_rows_)};
-    RAFT_CUDA_TRY(cudaMemcpyAsync(
-      payload.data(), &host_payload, sizeof(host_payload), cudaMemcpyHostToDevice, stream));
+    raft::copy(payload.data(), &host_payload, 1, stream);
 
     // Construction establishes a stream-independent ready object. Search only reads these stable
     // allocations and therefore needs no event, copy, initialization kernel, or synchronization.
@@ -172,10 +161,8 @@ void roaring_filter::set_allowlist(raft::resources const& res,
   auto stream       = raft::resource::get_cuda_stream(res);
   auto const ref    = static_cast<ref_type const*>(replacement.device_reference());
   auto const empty_ = static_cast<std::uint8_t>(replacement.empty() ? 1 : 0);
-  RAFT_CUDA_TRY(cudaMemcpyAsync(
-    impl_->refs.data() + query_id, &ref, sizeof(ref), cudaMemcpyHostToDevice, stream));
-  RAFT_CUDA_TRY(cudaMemcpyAsync(
-    impl_->empty_rows.data() + query_id, &empty_, sizeof(empty_), cudaMemcpyHostToDevice, stream));
+  raft::copy(impl_->refs.data() + query_id, &ref, 1, stream);
+  raft::copy(impl_->empty_rows.data() + query_id, &empty_, 1, stream);
   raft::resource::sync_stream(res);
 
   impl_->allowlists[query_id] = replacement;
