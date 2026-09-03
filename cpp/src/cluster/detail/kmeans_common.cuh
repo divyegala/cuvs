@@ -131,10 +131,8 @@ FusedDistancePath use_legacy_fused(const raft::resources& handle,
 /**
  * @brief Selects the fused-distance assignment path for KMeans.
  *
- * Float/half: cuTile when the build and device support it. Otherwise L2/L2Sqrt/Cosine may use
- * legacy CUTLASS fused on Ampere/Hopper (large enough problems). InnerProduct without cuTile uses
- * Unfused. Double never uses cuTile; keeps historical CUTLASS/unfused heuristics on pre-Blackwell
- * GPUs.
+ * With CUDA 13, float/half use cuTile whenever the build and device support it. CUDA 12 and a
+ * failed CUDA 13 cuTile probe use the historical CUTLASS/unfused heuristic.
  */
 template <typename MathT, typename IdxT, typename LabelT>
 FusedDistancePath use_fused(
@@ -142,6 +140,7 @@ FusedDistancePath use_fused(
 {
   (void)k;
 
+#if CUDART_VERSION >= 13000
   if constexpr (is_cutile_fused_data_type_v<MathT>) {
     if constexpr (cuvs::detail::jit_lto::library_built_with_cutile()) {
       const bool dimensions_fit_i32 = n <= static_cast<IdxT>(std::numeric_limits<int>::max()) &&
@@ -151,8 +150,8 @@ FusedDistancePath use_fused(
         return FusedDistancePath::Cutile;
       }
     }
-    return use_legacy_fused(handle, m, n, metric);
   }
+#endif
 
   return use_legacy_fused(handle, m, n, metric);
 }

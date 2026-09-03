@@ -48,20 +48,24 @@ struct Top1nnTuning {
   UnfusedTop1nnTuning unfused{};
 };
 
-/** Legacy policy used only by algorithm-level AUTO selection. */
+/** Select the pre-cuTile implementation used by algorithm-level AUTO dispatch. */
 template <typename IdxT>
 constexpr Fused1nnBackend fused_1nn_legacy_backend(int cc_major,
                                                    IdxT m,
                                                    IdxT n,
                                                    cuvs::distance::DistanceType metric)
 {
-  if (metric == cuvs::distance::DistanceType::InnerProduct) { return Fused1nnBackend::Unfused; }
+  const bool legacy_fused_metric = metric == cuvs::distance::DistanceType::L2Expanded ||
+                                   metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
+                                   metric == cuvs::distance::DistanceType::CosineExpanded;
+  if (!legacy_fused_metric) { return Fused1nnBackend::Unfused; }
   if (cc_major <= 8 || (cc_major == 9 && (m >= 4096 || n >= 4096))) {
     return Fused1nnBackend::Cutlass;
   }
   return Fused1nnBackend::Unfused;
 }
 
+/** Resolve AUTO before allocating backend-native output and workspace storage. */
 template <typename DataT, typename IdxT>
 Fused1nnBackend resolve_fused_1nn_backend(const raft::resources& handle,
                                           const DataT* x,
@@ -71,9 +75,11 @@ Fused1nnBackend resolve_fused_1nn_backend(const raft::resources& handle,
                                           IdxT k,
                                           cuvs::distance::DistanceType metric)
 {
+#if CUDART_VERSION >= 13000
   if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
     if (can_launch_fused_1nn_tile(x, y, m, n, k, metric)) { return Fused1nnBackend::Cutile; }
   }
+#endif
   const auto prop = raft::resource::get_device_properties(handle);
   return fused_1nn_legacy_backend(prop.major, m, n, metric);
 }
@@ -98,9 +104,11 @@ bool can_launch_fused_1nn_backend(Fused1nnBackend backend,
     }
     return false;
   }
+  const bool supported_metric = metric == cuvs::distance::DistanceType::L2Expanded ||
+                                metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
+                                metric == cuvs::distance::DistanceType::CosineExpanded;
   return (backend == Fused1nnBackend::Cutlass || backend == Fused1nnBackend::Unfused) &&
-         metric != cuvs::distance::DistanceType::InnerProduct && x != nullptr && y != nullptr &&
-         m > 0 && n > 0 && k > 0;
+         supported_metric && x != nullptr && y != nullptr && m > 0 && n > 0 && k > 0;
 }
 
 template <typename DataT,

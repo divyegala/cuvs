@@ -67,32 +67,6 @@ void compute_tf32_row_norms(raft::resources const& handle,
   }
 }
 
-template <typename IndexT, typename DataT>
-__global__ void unpack_kvp_to_soa(IndexT* nearest_idx,
-                                  DataT* nearest_dist,
-                                  const raft::KeyValuePair<IndexT, DataT>* kvp,
-                                  IndexT n)
-{
-  IndexT i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) {
-    if (nearest_idx != nullptr) { nearest_idx[i] = kvp[i].key; }
-    if (nearest_dist != nullptr) { nearest_dist[i] = kvp[i].value; }
-  }
-}
-
-template <typename IndexT, typename DataT>
-void unpack_kvp(raft::resources const& handle,
-                IndexT* nearest_idx,
-                DataT* nearest_dist,
-                const raft::KeyValuePair<IndexT, DataT>* kvp,
-                IndexT n)
-{
-  auto stream = raft::resource::get_cuda_stream(handle);
-  int blks    = static_cast<int>((n + 255) / 256);
-  unpack_kvp_to_soa<<<blks, 256, 0, stream>>>(nearest_idx, nearest_dist, kvp, n);
-  RAFT_CUDA_TRY(cudaGetLastError());
-}
-
 }  // namespace
 
 template <typename IndexT>
@@ -124,9 +98,16 @@ Fused1nnRequirements<IndexT> get_fused_1nn_requirements(
                                                                       metric);
 
   Fused1nnRequirements<IndexT> requirements{};
-  requirements.path                = path;
-  requirements.sample_tile         = getDataBatchSize(batch_samples, X.extent(0));
-  requirements.centroid_tile       = getCentroidsBatchSize(batch_centroids, centroids.extent(0));
+  requirements.path = path;
+  const cuvs::distance::detail::Top1nnTuning default_tuning{};
+  requirements.sample_tile = std::min(
+    getDataBatchSize(batch_samples, X.extent(0)),
+    static_cast<IndexT>(std::min(default_tuning.unfused.row_tile,
+                                 static_cast<size_t>(std::numeric_limits<IndexT>::max()))));
+  requirements.centroid_tile = std::min(
+    getCentroidsBatchSize(batch_centroids, centroids.extent(0)),
+    static_cast<IndexT>(std::min(default_tuning.unfused.candidate_tile,
+                                 static_cast<size_t>(std::numeric_limits<IndexT>::max()))));
   requirements.workspace_alignment = alignof(int);
 
   if (path == FusedDistancePath::Cutile) {
@@ -201,10 +182,15 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
   if (workspace.size() < requirements.workspace_bytes) {
     workspace.resize(requirements.workspace_bytes, stream);
   }
-  RAFT_EXPECTS(!cutile_ready || native_kvp == nullptr,
-               "cuTile fused 1-NN requires separate index and distance outputs");
+  if (cutile_ready) {
+    RAFT_EXPECTS(native_kvp == nullptr && nearest_idx != nullptr && nearest_dist != nullptr,
+                 "cuTile fused 1-NN requires native separate index and distance outputs");
+  } else {
+    RAFT_EXPECTS(native_kvp != nullptr && nearest_idx == nullptr && nearest_dist == nullptr,
+                 "CUTLASS and unfused 1-NN require their native KVP output");
+  }
 
-  if (uses_fused_distance_nn(fused_path)) {
+  if (is_l2_cos || cutile_ready) {
     const DataT* x_norm_ptr         = nullptr;
     const DataT* centroids_norm_ptr = nullptr;
     if (is_l2_cos) {
@@ -257,28 +243,10 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
       }
     }
 
-    raft::KeyValuePair<IndexT, DataT>* cutlass_kvp_scratch = nullptr;
-    rmm::device_uvector<raft::KeyValuePair<IndexT, DataT>> temp_kvp(0, stream);
     const bool needs_index_workspace = cutile_ready && std::is_same_v<IndexT, int64_t>;
-    if (!cutile_ready) {
-      if (native_kvp != nullptr) {
-        cutlass_kvp_scratch = native_kvp;
-      } else {
-        temp_kvp.resize(n_samples, stream);
-        cutlass_kvp_scratch = temp_kvp.data();
-      }
-      if (workspace.size() < sizeof(int) * static_cast<size_t>(n_samples)) {
-        workspace.resize(sizeof(int) * static_cast<size_t>(n_samples), stream);
-      }
-    } else if (needs_index_workspace) {
-      const auto workspace_rows =
-        cuvs::distance::detail::fused_1nn_cutile_index_workspace_rows<DataT>(n_samples);
-      if (workspace.size() < sizeof(int) * workspace_rows) {
-        workspace.resize(sizeof(int) * workspace_rows, stream);
-      }
-    }
-
     cuvs::distance::detail::Top1nnTuning tuning{};
+    tuning.unfused.row_tile       = static_cast<size_t>(requirements.sample_tile);
+    tuning.unfused.candidate_tile = static_cast<size_t>(requirements.centroid_tile);
     cuvs::distance::top_1_nn<DataT, IndexT>(
       handle,
       cutile_ready ? nearest_idx : nullptr,
@@ -299,99 +267,8 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
       metric,
       0.0f,
       fused_path,
-      cutlass_kvp_scratch,
+      native_kvp,
       stream);
-  } else if (is_l2_cos) {
-    L2NormBuf_OR_DistBuf.resize(n_clusters, stream);
-    auto centroidsNorm =
-      raft::make_device_vector_view<DataT, IndexT>(L2NormBuf_OR_DistBuf.data(), n_clusters);
-
-    if (metric == cuvs::distance::DistanceType::CosineExpanded) {
-      raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(
-        handle, centroids, centroidsNorm, raft::sqrt_op{});
-    } else {
-      raft::linalg::norm<raft::linalg::L2Norm, raft::Apply::ALONG_ROWS>(
-        handle, centroids, centroidsNorm);
-    }
-
-    auto centroidsNormConst =
-      raft::make_device_vector_view<const DataT, IndexT>(L2NormBuf_OR_DistBuf.data(), n_clusters);
-
-    auto dataBatchSize      = getDataBatchSize(batch_samples, n_samples);
-    auto centroidsBatchSize = getCentroidsBatchSize(batch_centroids, n_clusters);
-
-    // The unfused reduction indexes its distance matrix with IndexT.
-    dataBatchSize =
-      std::min(dataBatchSize, std::numeric_limits<IndexT>::max() / centroidsBatchSize);
-
-    using KeyValueT = raft::KeyValuePair<IndexT, DataT>;
-    rmm::device_uvector<KeyValueT> temp_kvp(native_kvp == nullptr ? n_samples : 0, stream);
-    auto* kvp_output     = native_kvp == nullptr ? temp_kvp.data() : native_kvp;
-    auto kvp_output_view = raft::make_device_vector_view<KeyValueT, IndexT>(kvp_output, n_samples);
-    KeyValueT initial_value(0, std::numeric_limits<DataT>::max());
-    raft::matrix::fill(handle, kvp_output_view, initial_value);
-
-    const bool tileCentroids = centroidsBatchSize < n_clusters;
-    const size_t distance_workspace_bytes =
-      sizeof(DataT) * static_cast<size_t>(dataBatchSize) * static_cast<size_t>(centroidsBatchSize);
-    const size_t batch_min_offset = raft::alignTo(distance_workspace_bytes, alignof(KeyValueT));
-    const size_t required_workspace_bytes =
-      batch_min_offset +
-      (tileCentroids ? sizeof(KeyValueT) * static_cast<size_t>(dataBatchSize) : 0);
-    if (workspace.size() < required_workspace_bytes) {
-      workspace.resize(required_workspace_bytes, stream);
-    }
-    auto* batch_min_storage =
-      tileCentroids ? reinterpret_cast<KeyValueT*>(workspace.data() + batch_min_offset) : nullptr;
-
-    for (IndexT dIdx = 0; dIdx < n_samples;) {
-      auto ns = std::min(dataBatchSize, n_samples - dIdx);
-      auto minClusterAndDistanceView =
-        raft::make_device_vector_view<KeyValueT, IndexT>(kvp_output + dIdx, ns);
-
-      for (IndexT cIdx = 0; cIdx < n_clusters;) {
-        auto nc       = std::min(centroidsBatchSize, n_clusters - cIdx);
-        auto batchMin = tileCentroids ? batch_min_storage : minClusterAndDistanceView.data_handle();
-
-        cuvs::distance::unfusedDistanceNNMinReduce<DataT, DataT, KeyValueT, IndexT>(
-          handle,
-          batchMin,
-          X.data_handle() + dIdx * n_features,
-          centroids.data_handle() + cIdx * n_features,
-          L2NormX.data_handle() + dIdx,
-          centroidsNormConst.data_handle() + cIdx,
-          ns,
-          nc,
-          n_features,
-          (void*)workspace.data(),
-          metric != cuvs::distance::DistanceType::L2Expanded,
-          tileCentroids,
-          true,
-          metric,
-          0.0f,
-          stream);
-
-        if (tileCentroids) {
-          // Convert tile-local centroid indices and merge the tile minima.
-          auto batchMinView = raft::make_device_vector_view<const KeyValueT, IndexT>(batchMin, ns);
-          raft::linalg::map(
-            handle,
-            minClusterAndDistanceView,
-            [cIdx] __device__(KeyValueT current, KeyValueT batch) {
-              batch.key += cIdx;
-              return batch.value < current.value ? batch : current;
-            },
-            raft::make_const_mdspan(minClusterAndDistanceView),
-            batchMinView);
-        }
-        cIdx += nc;
-      }
-      dIdx += ns;
-    }
-
-    if (native_kvp == nullptr) {
-      unpack_kvp(handle, nearest_idx, nearest_dist, kvp_output, n_samples);
-    }
   } else {
     auto dataBatchSize      = getDataBatchSize(batch_samples, n_samples);
     auto centroidsBatchSize = getCentroidsBatchSize(batch_centroids, n_clusters);
@@ -401,9 +278,8 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
     auto pairwiseDistance = raft::make_device_matrix_view<DataT, IndexT>(
       L2NormBuf_OR_DistBuf.data(), dataBatchSize, centroidsBatchSize);
 
-    using KeyValueT = raft::KeyValuePair<IndexT, DataT>;
-    rmm::device_uvector<KeyValueT> temp_kvp(native_kvp == nullptr ? n_samples : 0, stream);
-    auto* kvp_output     = native_kvp == nullptr ? temp_kvp.data() : native_kvp;
+    using KeyValueT      = raft::KeyValuePair<IndexT, DataT>;
+    auto* kvp_output     = native_kvp;
     auto kvp_output_view = raft::make_device_vector_view<KeyValueT, IndexT>(kvp_output, n_samples);
     KeyValueT initial_value(0, std::numeric_limits<DataT>::max());
     raft::matrix::fill(handle, kvp_output_view, initial_value);
@@ -446,10 +322,6 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
           raft::identity_op{});
       }
     }
-
-    if (native_kvp == nullptr) {
-      unpack_kvp(handle, nearest_idx, nearest_dist, kvp_output, n_samples);
-    }
   }
 }
 
@@ -469,7 +341,7 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
                                   const DataT* cutile_x_norm)
 {
   RAFT_EXPECTS(requirements.output_layout == Fused1nnOutputLayout::Soa,
-               "resolved fused 1-NN plan requires KVP output");
+               "resolved fused 1-NN plan requires separate output arrays");
   if constexpr (is_cutile_fused_data_type_v<DataT>) {
     if (requirements.path == FusedDistancePath::Cutile) {
       RAFT_EXPECTS(cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
@@ -515,7 +387,7 @@ void minClusterAndDistanceComputeKvp(
   const Fused1nnRequirements<IndexT>& requirements)
 {
   RAFT_EXPECTS(requirements.output_layout == Fused1nnOutputLayout::Kvp,
-               "resolved fused 1-NN plan requires separate output arrays");
+               "resolved fused 1-NN plan requires KVP output");
   min_cluster_and_distance_compute_impl<DataT, IndexT>(handle,
                                                        X,
                                                        centroids,
