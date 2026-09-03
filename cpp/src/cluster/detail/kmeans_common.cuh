@@ -148,7 +148,7 @@ FusedDistancePath use_fused(
                                       k <= static_cast<IdxT>(std::numeric_limits<int>::max());
       if (dimensions_fit_i32 &&
           cuvs::detail::jit_lto::cutile_launch_available_on_current_device()) {
-        return FusedDistancePath::FusedCutile;
+        return FusedDistancePath::Cutile;
       }
     }
     return use_legacy_fused(handle, m, n, metric);

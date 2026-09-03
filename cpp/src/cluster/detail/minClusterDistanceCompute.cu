@@ -129,7 +129,7 @@ Fused1nnRequirements<IndexT> get_fused_1nn_requirements(
   requirements.centroid_tile       = getCentroidsBatchSize(batch_centroids, centroids.extent(0));
   requirements.workspace_alignment = alignof(int);
 
-  if (path == FusedDistancePath::FusedCutile) {
+  if (path == FusedDistancePath::Cutile) {
     requirements.output_layout = Fused1nnOutputLayout::Soa;
     requirements.norm_policy =
       std::is_same_v<DataT, float> ? Fused1nnNormPolicy::Tf32 : Fused1nnNormPolicy::Default;
@@ -149,7 +149,7 @@ Fused1nnRequirements<IndexT> get_fused_1nn_requirements(
     requirements.result_alignment = alignof(raft::KeyValuePair<IndexT, DataT>);
     requirements.result_bytes =
       sizeof(raft::KeyValuePair<IndexT, DataT>) * static_cast<size_t>(X.extent(0));
-    if (path == FusedDistancePath::FusedCutlass) {
+    if (path == FusedDistancePath::Cutlass) {
       requirements.workspace_bytes = sizeof(int) * static_cast<size_t>(X.extent(0));
     } else if (path == FusedDistancePath::Unfused &&
                (metric == cuvs::distance::DistanceType::L2Expanded ||
@@ -197,7 +197,7 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
                          metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
                          metric == cuvs::distance::DistanceType::CosineExpanded;
   const auto fused_path   = requirements.path;
-  const bool cutile_ready = fused_path == FusedDistancePath::FusedCutile;
+  const bool cutile_ready = fused_path == FusedDistancePath::Cutile;
   if (workspace.size() < requirements.workspace_bytes) {
     workspace.resize(requirements.workspace_bytes, stream);
   }
@@ -278,9 +278,11 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
       }
     }
 
-    cuvs::distance::fusedDistanceNNMinReduce<DataT, IndexT>(
-      nearest_idx,
-      nearest_dist,
+    cuvs::distance::detail::Top1nnTuning tuning{};
+    cuvs::distance::top_1_nn<DataT, IndexT>(
+      handle,
+      cutile_ready ? nearest_idx : nullptr,
+      cutile_ready ? nearest_dist : nullptr,
       X.data_handle(),
       centroids.data_handle(),
       x_norm_ptr,
@@ -288,12 +290,15 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
       n_samples,
       n_clusters,
       n_features,
+      tuning,
       !cutile_ready || needs_index_workspace ? (void*)workspace.data() : nullptr,
+      workspace.size(),
       metric != cuvs::distance::DistanceType::L2Expanded,
       false,
       true,
       metric,
       0.0f,
+      fused_path,
       cutlass_kvp_scratch,
       stream);
   } else if (is_l2_cos) {
@@ -466,7 +471,7 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
   RAFT_EXPECTS(requirements.output_layout == Fused1nnOutputLayout::Soa,
                "resolved fused 1-NN plan requires KVP output");
   if constexpr (is_cutile_fused_data_type_v<DataT>) {
-    if (requirements.path == FusedDistancePath::FusedCutile) {
+    if (requirements.path == FusedDistancePath::Cutile) {
       RAFT_EXPECTS(cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
                                                                      nearest_dist.data_handle(),
                                                                      X.data_handle(),
@@ -618,7 +623,7 @@ void minClusterDistanceCompute(raft::resources const& handle,
               : FusedDistancePath::Unfused;
   bool cutile_ready = false;
   if constexpr (is_cutile_fused_data_type_v<DataT>) {
-    if (fused_path == FusedDistancePath::FusedCutile) {
+    if (fused_path == FusedDistancePath::Cutile) {
       cutile_ready =
         cuvs::distance::detail::can_launch_fused_1nn_tile(static_cast<IndexT*>(nullptr),
                                                           minClusterDistance.data_handle(),
@@ -679,24 +684,51 @@ void minClusterDistanceCompute(raft::resources const& handle,
 
     if (!cutile_ready) { workspace.resize(sizeof(int) * static_cast<size_t>(n_samples), stream); }
 
-    cuvs::distance::fusedDistanceNNMinReduce<DataT, IndexT>(
-      nullptr,
-      minClusterDistance.data_handle(),
-      X.data_handle(),
-      centroids.data_handle(),
-      x_norm_ptr,
-      centroids_norm_ptr,
-      n_samples,
-      n_clusters,
-      n_features,
-      cutile_ready ? nullptr : (void*)workspace.data(),
-      metric != cuvs::distance::DistanceType::L2Expanded,
-      false,
-      true,
-      metric,
-      0.0f,
-      nullptr,
-      stream);
+    cuvs::distance::detail::Top1nnTuning tuning{};
+    if (cutile_ready) {
+      cuvs::distance::top_1_nn<DataT, IndexT>(handle,
+                                              nullptr,
+                                              minClusterDistance.data_handle(),
+                                              X.data_handle(),
+                                              centroids.data_handle(),
+                                              x_norm_ptr,
+                                              centroids_norm_ptr,
+                                              n_samples,
+                                              n_clusters,
+                                              n_features,
+                                              tuning,
+                                              nullptr,
+                                              0,
+                                              metric != cuvs::distance::DistanceType::L2Expanded,
+                                              false,
+                                              true,
+                                              metric,
+                                              0.0f,
+                                              FusedDistancePath::Cutile,
+                                              nullptr,
+                                              stream);
+    } else {
+      cuvs::distance::top_1_nn<DataT, IndexT>(nullptr,
+                                              minClusterDistance.data_handle(),
+                                              X.data_handle(),
+                                              centroids.data_handle(),
+                                              x_norm_ptr,
+                                              centroids_norm_ptr,
+                                              n_samples,
+                                              n_clusters,
+                                              n_features,
+                                              tuning,
+                                              (void*)workspace.data(),
+                                              workspace.size(),
+                                              metric != cuvs::distance::DistanceType::L2Expanded,
+                                              false,
+                                              true,
+                                              metric,
+                                              0.0f,
+                                              FusedDistancePath::Cutlass,
+                                              nullptr,
+                                              stream);
+    }
   } else {
     raft::matrix::fill(handle, minClusterDistance, std::numeric_limits<DataT>::max());
     auto dataBatchSize      = getDataBatchSize(batch_samples, n_samples);

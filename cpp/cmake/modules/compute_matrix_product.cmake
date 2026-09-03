@@ -8,6 +8,9 @@
 include_guard(GLOBAL)
 
 function(cuvs_find_build_python output_var)
+  # cuTile is a build dependency. In conda builds, it is installed in BUILD_PREFIX while CMake's
+  # default search can resolve the host interpreter from PREFIX instead. Use the build prefix so
+  # configure-time matrix expansion and build-time kernel exports see the cuTile package.
   if(DEFINED ENV{BUILD_PREFIX})
     set(Python_ROOT "$ENV{BUILD_PREFIX}")
   endif()

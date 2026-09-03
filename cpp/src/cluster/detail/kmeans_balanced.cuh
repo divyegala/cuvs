@@ -348,7 +348,7 @@ auto calc_minibatch_size(const raft::resources& handle,
       auto path_bytes_per_row = [&](FusedDistancePath path) {
         size_t bytes = 0;
         switch (path) {
-          case FusedDistancePath::FusedCutile:
+          case FusedDistancePath::Cutile:
             // cuTile writes separate distance and index arrays.
             bytes += sizeof(MathT);
             if constexpr (!std::is_same_v<LabelT, IdxT>) { bytes += sizeof(IdxT); }
@@ -363,7 +363,7 @@ auto calc_minibatch_size(const raft::resources& handle,
               }
             }
             break;
-          case FusedDistancePath::FusedCutlass:
+          case FusedDistancePath::Cutlass:
             // CUTLASS writes native KVP assignments and uses one mutex per row.
             bytes += sizeof(int);
             bytes += sizeof(raft::KeyValuePair<IdxT, MathT>);
@@ -381,7 +381,7 @@ auto calc_minibatch_size(const raft::resources& handle,
       };
 
       path_mem_per_row = path_bytes_per_row(fused_path);
-      if (fused_path == FusedDistancePath::FusedCutile) {
+      if (fused_path == FusedDistancePath::Cutile) {
         const auto prop     = raft::resource::get_device_properties(handle);
         const auto fallback = use_legacy_fused(prop.major, n_rows, n_clusters, metric);
         path_mem_per_row    = std::max(path_mem_per_row, path_bytes_per_row(fallback));
@@ -1435,7 +1435,7 @@ void build_hierarchical(const raft::resources& handle,
 
     if constexpr (std::is_same_v<MathT, float>) {
       if (use_fused<MathT, IdxT, IdxT>(handle, n_rows, n_clusters, dim, params.metric) ==
-          FusedDistancePath::FusedCutile) {
+          FusedDistancePath::Cutile) {
         dataset_cutile_norm_buf.resize(n_rows, stream);
         const bool take_sqrt = params.metric == cuvs::distance::DistanceType::CosineExpanded;
         for (IdxT offset = 0; offset < n_rows; offset += max_minibatch_size) {

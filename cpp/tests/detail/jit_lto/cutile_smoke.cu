@@ -68,14 +68,14 @@ TEST(CutileSmoke, ResolvesEveryEmbeddedArchitecture)
 
 TEST(CutileSmoke, LaunchesCompatibleCubin)
 {
-  int cc_major = 0;
-  int cc_minor = 0;
-  if (!get_device_compute_capability(cc_major, cc_minor)) {
+  CutileRuntimeCapabilities capabilities{};
+  if (!query_current_cutile_runtime_capabilities(capabilities)) {
     GTEST_SKIP() << "No CUDA device is available";
   }
 
   auto fragments = make_smoke_fragments();
-  if (find_compatible_cubin_fragment(cc_major, cc_minor, fragments) == nullptr) {
+  if (find_compatible_cubin_fragment(capabilities.cc_major, capabilities.cc_minor, fragments) ==
+      nullptr) {
     GTEST_SKIP() << "No embedded smoke cubin is compatible with this device";
   }
 

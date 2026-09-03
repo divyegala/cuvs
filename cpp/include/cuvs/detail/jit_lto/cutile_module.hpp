@@ -27,19 +27,6 @@ struct CutileModuleImage {
   size_t size;
 };
 
-inline bool get_device_compute_capability(int& cc_major, int& cc_minor)
-{
-  int device = 0;
-  if (cudaGetDevice(&device) != cudaSuccess) { return false; }
-  if (cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device) != cudaSuccess) {
-    return false;
-  }
-  if (cudaDeviceGetAttribute(&cc_minor, cudaDevAttrComputeCapabilityMinor, device) != cudaSuccess) {
-    return false;
-  }
-  return true;
-}
-
 /**
  * Selects the newest compatible cubin in the device's compute-capability major family.
  *
@@ -63,16 +50,15 @@ inline const CubinFragmentEntry* find_compatible_cubin_fragment(
 
 /** Selects compatible prebuilt SASS for the device, or TileIR when the driver can JIT it. */
 inline std::optional<CutileModuleImage> resolve_cutile_module_image(
-  int cc_major,
-  int cc_minor,
-  int driver_version,
+  const CutileRuntimeCapabilities& capabilities,
   const std::vector<std::unique_ptr<CubinFragmentEntry>>& cubin_fragments,
   const TileIrBytecodeFragmentEntry* tileir_fragment)
 {
-  if (const auto* fragment = find_compatible_cubin_fragment(cc_major, cc_minor, cubin_fragments)) {
+  if (const auto* fragment = find_compatible_cubin_fragment(
+        capabilities.cc_major, capabilities.cc_minor, cubin_fragments)) {
     return CutileModuleImage{fragment->get_data(), fragment->get_length()};
   }
-  if (tileir_fragment != nullptr && tileir_fallback_available(driver_version)) {
+  if (tileir_fragment != nullptr && tileir_fallback_available(capabilities.driver_version)) {
     return CutileModuleImage{tileir_fragment->get_data(), tileir_fragment->get_length()};
   }
   return std::nullopt;
