@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,9 +42,7 @@ __global__ void fill_int8(int8_t* buff, int len, int seed_offset)
 template <typename DataT, typename AccT, typename IdxT, ImplType impl>
 class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
  public:
-  using OutT = std::conditional_t<impl == ImplType::fused,
-                                  AccT,
-                                  raft::KeyValuePair<IdxT, AccT>>;
+  using OutT = std::conditional_t<impl == ImplType::fused, AccT, raft::KeyValuePair<IdxT, AccT>>;
   NNTest()
     : params_{::testing::TestWithParam<NNInputs<IdxT>>::GetParam()},
       m{params_.m},
@@ -203,8 +201,7 @@ template <typename IdxT>
 const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
   auto inputs = input_fp32<IdxT>;
 #if CUVS_CUTILE_ENABLED
-  inputs.push_back(
-    {512, 1024, 64, DistanceType::InnerProduct, false, uint64_t(31415926), 0.1});
+  inputs.push_back({512, 1024, 64, DistanceType::InnerProduct, false, uint64_t(31415926), 0.1});
 #endif
   return inputs;
 }();

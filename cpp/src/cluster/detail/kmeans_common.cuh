@@ -482,7 +482,7 @@ Fused1nnRequirements<IndexT> get_fused_1nn_requirements(
   raft::device_matrix_view<const DataT, IndexT> X,
   raft::device_matrix_view<const DataT, IndexT> centroids,
   cuvs::distance::DistanceType metric,
-  int batch_samples = 0,
+  int batch_samples   = 0,
   int batch_centroids = 0);
 
 template <typename DataT, typename IndexT>
@@ -591,7 +591,7 @@ void countSamplesInCluster(raft::resources const& handle,
   auto n_clusters     = centroids.extent(0);
 
   rmm::device_uvector<DataT> L2NormBuf_OR_DistBuf(0, stream);
-  auto centroids_const = raft::make_const_mdspan(centroids);
+  auto centroids_const    = raft::make_const_mdspan(centroids);
   const auto requirements = get_fused_1nn_requirements(
     handle, X, centroids_const, params.metric, params.batch_samples, params.batch_centroids);
 
@@ -843,11 +843,11 @@ void process_batch(raft::resources const& handle,
                    raft::device_scalar_view<DataT> clustering_cost,
                    rmm::device_uvector<char>& batch_workspace)
 {
-  cudaStream_t stream  = raft::resource::get_cuda_stream(handle);
-  const auto n_samples = batch_data.extent(0);
+  cudaStream_t stream     = raft::resource::get_cuda_stream(handle);
+  const auto n_samples    = batch_data.extent(0);
   const auto requirements = get_fused_1nn_requirements(
     handle, batch_data, centroids, metric, batch_samples_param, batch_centroids_param);
-  auto batch_cost      = raft::make_device_scalar<DataT>(handle, DataT{0});
+  auto batch_cost = raft::make_device_scalar<DataT>(handle, DataT{0});
 
   if (requirements.output_layout == Fused1nnOutputLayout::Soa) {
     const auto dist_offset = requirements.distance_offset;

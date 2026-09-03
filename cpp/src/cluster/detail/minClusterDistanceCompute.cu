@@ -115,35 +115,33 @@ Fused1nnRequirements<IndexT> get_fused_1nn_requirements(
   int batch_samples,
   int batch_centroids)
 {
-  const auto path = cuvs::distance::detail::resolve_fused_1nn_backend(
-    handle,
-    X.data_handle(),
-    centroids.data_handle(),
-    X.extent(0),
-    centroids.extent(0),
-    X.extent(1),
-    metric);
+  const auto path = cuvs::distance::detail::resolve_fused_1nn_backend(handle,
+                                                                      X.data_handle(),
+                                                                      centroids.data_handle(),
+                                                                      X.extent(0),
+                                                                      centroids.extent(0),
+                                                                      X.extent(1),
+                                                                      metric);
 
   Fused1nnRequirements<IndexT> requirements{};
-  requirements.path            = path;
-  requirements.sample_tile     = getDataBatchSize(batch_samples, X.extent(0));
-  requirements.centroid_tile   = getCentroidsBatchSize(batch_centroids, centroids.extent(0));
+  requirements.path                = path;
+  requirements.sample_tile         = getDataBatchSize(batch_samples, X.extent(0));
+  requirements.centroid_tile       = getCentroidsBatchSize(batch_centroids, centroids.extent(0));
   requirements.workspace_alignment = alignof(int);
 
   if (path == FusedDistancePath::FusedCutile) {
-    requirements.output_layout    = Fused1nnOutputLayout::Soa;
-    requirements.norm_policy      = std::is_same_v<DataT, float>
-                                      ? Fused1nnNormPolicy::Tf32
-                                      : Fused1nnNormPolicy::Default;
+    requirements.output_layout = Fused1nnOutputLayout::Soa;
+    requirements.norm_policy =
+      std::is_same_v<DataT, float> ? Fused1nnNormPolicy::Tf32 : Fused1nnNormPolicy::Default;
     requirements.result_alignment = 16;
     requirements.distance_offset =
       raft::alignTo(sizeof(IndexT) * static_cast<size_t>(X.extent(0)), size_t{16});
-    requirements.result_bytes = requirements.distance_offset +
-                                sizeof(DataT) * static_cast<size_t>(X.extent(0));
+    requirements.result_bytes =
+      requirements.distance_offset + sizeof(DataT) * static_cast<size_t>(X.extent(0));
     if constexpr (std::is_same_v<IndexT, int64_t>) {
       requirements.workspace_bytes =
-        sizeof(int) * cuvs::distance::detail::fused_1nn_cutile_index_workspace_rows<DataT>(
-                        X.extent(0));
+        sizeof(int) *
+        cuvs::distance::detail::fused_1nn_cutile_index_workspace_rows<DataT>(X.extent(0));
     }
   } else {
     requirements.output_layout    = Fused1nnOutputLayout::Kvp;
@@ -157,13 +155,15 @@ Fused1nnRequirements<IndexT> get_fused_1nn_requirements(
                (metric == cuvs::distance::DistanceType::L2Expanded ||
                 metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
                 metric == cuvs::distance::DistanceType::CosineExpanded)) {
-      auto sample_tile = requirements.sample_tile;
+      auto sample_tile         = requirements.sample_tile;
       const auto centroid_tile = requirements.centroid_tile;
       sample_tile = std::min(sample_tile, std::numeric_limits<IndexT>::max() / centroid_tile);
-      const size_t distance_bytes = sizeof(DataT) * static_cast<size_t>(sample_tile) *
-                                    static_cast<size_t>(centroid_tile);
-      requirements.workspace_alignment = std::max(alignof(DataT), alignof(raft::KeyValuePair<IndexT, DataT>));
-      requirements.workspace_bytes = raft::alignTo(distance_bytes, alignof(raft::KeyValuePair<IndexT, DataT>));
+      const size_t distance_bytes =
+        sizeof(DataT) * static_cast<size_t>(sample_tile) * static_cast<size_t>(centroid_tile);
+      requirements.workspace_alignment =
+        std::max(alignof(DataT), alignof(raft::KeyValuePair<IndexT, DataT>));
+      requirements.workspace_bytes =
+        raft::alignTo(distance_bytes, alignof(raft::KeyValuePair<IndexT, DataT>));
       if (centroid_tile < centroids.extent(0)) {
         requirements.workspace_bytes +=
           sizeof(raft::KeyValuePair<IndexT, DataT>) * static_cast<size_t>(sample_tile);
@@ -196,7 +196,7 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
   const bool is_l2_cos = metric == cuvs::distance::DistanceType::L2Expanded ||
                          metric == cuvs::distance::DistanceType::L2SqrtExpanded ||
                          metric == cuvs::distance::DistanceType::CosineExpanded;
-  const auto fused_path = requirements.path;
+  const auto fused_path   = requirements.path;
   const bool cutile_ready = fused_path == FusedDistancePath::FusedCutile;
   if (workspace.size() < requirements.workspace_bytes) {
     workspace.resize(requirements.workspace_bytes, stream);
@@ -331,13 +331,13 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
       sizeof(DataT) * static_cast<size_t>(dataBatchSize) * static_cast<size_t>(centroidsBatchSize);
     const size_t batch_min_offset = raft::alignTo(distance_workspace_bytes, alignof(KeyValueT));
     const size_t required_workspace_bytes =
-      batch_min_offset + (tileCentroids ? sizeof(KeyValueT) * static_cast<size_t>(dataBatchSize) : 0);
+      batch_min_offset +
+      (tileCentroids ? sizeof(KeyValueT) * static_cast<size_t>(dataBatchSize) : 0);
     if (workspace.size() < required_workspace_bytes) {
       workspace.resize(required_workspace_bytes, stream);
     }
-    auto* batch_min_storage = tileCentroids
-                                ? reinterpret_cast<KeyValueT*>(workspace.data() + batch_min_offset)
-                                : nullptr;
+    auto* batch_min_storage =
+      tileCentroids ? reinterpret_cast<KeyValueT*>(workspace.data() + batch_min_offset) : nullptr;
 
     for (IndexT dIdx = 0; dIdx < n_samples;) {
       auto ns = std::min(dataBatchSize, n_samples - dIdx);
@@ -346,8 +346,7 @@ void min_cluster_and_distance_compute_impl(raft::resources const& handle,
 
       for (IndexT cIdx = 0; cIdx < n_clusters;) {
         auto nc       = std::min(centroidsBatchSize, n_clusters - cIdx);
-        auto batchMin = tileCentroids ? batch_min_storage
-                                      : minClusterAndDistanceView.data_handle();
+        auto batchMin = tileCentroids ? batch_min_storage : minClusterAndDistanceView.data_handle();
 
         cuvs::distance::unfusedDistanceNNMinReduce<DataT, DataT, KeyValueT, IndexT>(
           handle,
@@ -469,13 +468,13 @@ void minClusterAndDistanceCompute(raft::resources const& handle,
   if constexpr (is_cutile_fused_data_type_v<DataT>) {
     if (requirements.path == FusedDistancePath::FusedCutile) {
       RAFT_EXPECTS(cuvs::distance::detail::can_launch_fused_1nn_tile(nearest_idx.data_handle(),
-                                                                      nearest_dist.data_handle(),
-                                                                      X.data_handle(),
-                                                                      centroids.data_handle(),
-                                                                      X.extent(0),
-                                                                      centroids.extent(0),
-                                                                      X.extent(1),
-                                                                      metric),
+                                                                     nearest_dist.data_handle(),
+                                                                     X.data_handle(),
+                                                                     centroids.data_handle(),
+                                                                     X.extent(0),
+                                                                     centroids.extent(0),
+                                                                     X.extent(1),
+                                                                     metric),
                    "resolved cuTile plan has incompatible output storage");
     }
   }
@@ -556,13 +555,13 @@ template void computeCutileRowNorms<int>(
 template void computeCutileRowNorms<int64_t>(
   raft::resources const&, const float*, float*, int64_t, int64_t, bool);
 
-#define INSTANTIATE_FUSED_1NN_REQUIREMENTS(DataT, IndexT)                         \
+#define INSTANTIATE_FUSED_1NN_REQUIREMENTS(DataT, IndexT)                          \
   template Fused1nnRequirements<IndexT> get_fused_1nn_requirements<DataT, IndexT>( \
-    raft::resources const&,                                                     \
-    raft::device_matrix_view<const DataT, IndexT>,                              \
-    raft::device_matrix_view<const DataT, IndexT>,                              \
-    cuvs::distance::DistanceType,                                               \
-    int,                                                                         \
+    raft::resources const&,                                                        \
+    raft::device_matrix_view<const DataT, IndexT>,                                 \
+    raft::device_matrix_view<const DataT, IndexT>,                                 \
+    cuvs::distance::DistanceType,                                                  \
+    int,                                                                           \
     int);
 
 INSTANTIATE_FUSED_1NN_REQUIREMENTS(float, int64_t)

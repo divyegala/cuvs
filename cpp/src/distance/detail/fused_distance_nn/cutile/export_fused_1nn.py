@@ -281,18 +281,18 @@ def main() -> int:
     args = parser.parse_args()
 
     export_binary(
-            args.output_file,
-            output_format=args.format,
-            data_type=args.data_type,
-            metric=args.metric,
-            index_type=args.index_type,
-            tile_m=args.tile_m,
-            tile_n=args.tile_n,
-            tile_k=args.tile_k,
-            gpu_code=args.gpu_code,
-            matrix_layout=args.matrix_layout,
-            occupancy=args.occupancy,
-            bytecode_version=args.bytecode_version,
+        args.output_file,
+        output_format=args.format,
+        data_type=args.data_type,
+        metric=args.metric,
+        index_type=args.index_type,
+        tile_m=args.tile_m,
+        tile_n=args.tile_n,
+        tile_k=args.tile_k,
+        gpu_code=args.gpu_code,
+        matrix_layout=args.matrix_layout,
+        occupancy=args.occupancy,
+        bytecode_version=args.bytecode_version,
     )
     return 0
 

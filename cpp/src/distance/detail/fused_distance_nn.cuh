@@ -15,8 +15,8 @@
 #include "pairwise_distance_base.cuh"  // PairwiseDistances
 #include <cuvs/distance/distance.hpp>
 #include <raft/core/error.hpp>
-#include <raft/core/kvp.hpp>             // raft::KeyValuePair
-#include <raft/core/operators.hpp>       // raft::identity_op
+#include <raft/core/kvp.hpp>        // raft::KeyValuePair
+#include <raft/core/operators.hpp>  // raft::identity_op
 #include <raft/core/resource/device_properties.hpp>
 #include <raft/core/resources.hpp>
 #include <raft/linalg/contractions.cuh>  // Policy
@@ -40,8 +40,10 @@ enum class Fused1nnBackend : std::uint8_t {
 };
 
 template <typename IdxT>
-constexpr Fused1nnBackend fused_1nn_legacy_backend(
-  int cc_major, IdxT m, IdxT n, cuvs::distance::DistanceType metric)
+constexpr Fused1nnBackend fused_1nn_legacy_backend(int cc_major,
+                                                   IdxT m,
+                                                   IdxT n,
+                                                   cuvs::distance::DistanceType metric)
 {
   if (metric == cuvs::distance::DistanceType::InnerProduct) { return Fused1nnBackend::Unfused; }
   if (cc_major <= 8 || (cc_major == 9 && (m >= 4096 || n >= 4096))) {
@@ -61,9 +63,7 @@ Fused1nnBackend resolve_fused_1nn_backend(const raft::resources& handle,
                                           cuvs::distance::DistanceType metric)
 {
   if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
-    if (can_launch_fused_1nn_tile(x, y, m, n, k, metric)) {
-      return Fused1nnBackend::FusedCutile;
-    }
+    if (can_launch_fused_1nn_tile(x, y, m, n, k, metric)) { return Fused1nnBackend::FusedCutile; }
   }
   const auto prop = raft::resource::get_device_properties(handle);
   return fused_1nn_legacy_backend(prop.major, m, n, metric);
