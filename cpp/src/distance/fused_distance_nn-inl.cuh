@@ -397,8 +397,9 @@ void top_1_nn(raft::resources const& handle,
       RAFT_EXPECTS(launched,
                    "Requested cuTile fused 1-NN backend is unavailable for this input/device");
       return;
+    } else {
+      RAFT_FAIL("Requested cuTile fused 1-NN backend does not support these data/norm types");
     }
-    RAFT_FAIL("Requested cuTile fused 1-NN backend does not support these data/norm types");
   }
   RAFT_EXPECTS(detail::can_launch_fused_1nn_backend(backend, x, y, m, n, k, metric),
                "Requested fused 1-NN backend is unavailable for this input");
