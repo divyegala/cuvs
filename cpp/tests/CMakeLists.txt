@@ -137,6 +137,13 @@ ConfigureTest(
 )
 
 ConfigureTest(
+  NAME CUTILE_SMOKE_TEST
+  PATH detail/jit_lto/cutile_smoke.cu
+  GPUS 1
+  PERCENT 100
+)
+
+ConfigureTest(
   NAME NEIGHBORS_ANN_IVF_FLAT_UDF_TEST
   PATH neighbors/ann_ivf_flat/test_udf.cu
   GPUS 1
