@@ -1434,6 +1434,7 @@ if(NOT BUILD_CPU_ONLY)
     src/distance/detail/kernels/kernel_matrices.cu
     ${pairwise_matrix_dispatch_inst_files}
     src/distance/distance.cu
+    src/distance/top_1_nn.cu
     src/distance/kde.cu
     src/distance/pairwise_distance.cu
     src/distance/sparse_distance.cu
