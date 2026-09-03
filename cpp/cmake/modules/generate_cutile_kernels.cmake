@@ -9,13 +9,6 @@ include_guard(GLOBAL)
 
 include(${CMAKE_CURRENT_LIST_DIR}/compute_matrix_product.cmake)
 
-function(generate_cutile_kernels_stub)
-  set(CUVS_CUTILE_ENABLED
-      0
-      PARENT_SCOPE
-  )
-endfunction()
-
 function(_cutile_fragment_tag_header_files output_var)
   set(${output_var} "")
   foreach(_header IN LISTS ARGN)
@@ -237,7 +230,12 @@ function(generate_cutile_kernels source_list_var)
     MATRIX_JSON_FILE "${_CUTILE_MATRIX_JSON_FILE}" OUTPUT_DIRECTORY "${_CUTILE_OUTPUT_DIRECTORY}"
   )
   if(NOT _CUTILE_SETUP_OK)
-    generate_cutile_kernels_stub()
+    # This function's parent is cpp/CMakeLists.txt. Propagate the disabled feature state there so
+    # the compile definition cannot retain a stale value from a previous generator invocation.
+    set(CUVS_CUTILE_ENABLED
+        0
+        PARENT_SCOPE
+    )
     set(${source_list_var}
         ""
         PARENT_SCOPE
@@ -255,24 +253,15 @@ function(generate_cutile_kernels source_list_var)
     string(JSON matrix_json_entry GET "${matrix_product}" "${i}")
     process_cutile_matrix_entry(
       "${source_list_var}"
-      KERNEL_DIR
-      "${_CUTILE_KERNEL_DIR}"
-      KERNEL_BASENAME
-      "${_CUTILE_KERNEL_BASENAME}"
-      KERNEL_PYTHON
-      "${_CUTILE_KERNEL_PYTHON}"
-      EXPORT_SCRIPT
-      "${_CUTILE_EXPORT_SCRIPT}"
-      OUTPUT_DIRECTORY
-      "${_CUTILE_OUTPUT_DIRECTORY}"
-      FRAGMENT_TAG_FORMAT_CUBIN
-      "${_CUTILE_FRAGMENT_TAG_FORMAT_CUBIN}"
-      FRAGMENT_TAG_FORMAT_TILEIR
-      "${_CUTILE_FRAGMENT_TAG_FORMAT_TILEIR}"
-      FRAGMENT_TAG_HEADER_FILES
-      ${_CUTILE_FRAGMENT_TAG_HEADER_FILES}
-      MATRIX_JSON_ENTRY
-      "${matrix_json_entry}"
+      KERNEL_DIR "${_CUTILE_KERNEL_DIR}"
+      KERNEL_BASENAME "${_CUTILE_KERNEL_BASENAME}"
+      KERNEL_PYTHON "${_CUTILE_KERNEL_PYTHON}"
+      EXPORT_SCRIPT "${_CUTILE_EXPORT_SCRIPT}"
+      OUTPUT_DIRECTORY "${_CUTILE_OUTPUT_DIRECTORY}"
+      FRAGMENT_TAG_FORMAT_CUBIN "${_CUTILE_FRAGMENT_TAG_FORMAT_CUBIN}"
+      FRAGMENT_TAG_FORMAT_TILEIR "${_CUTILE_FRAGMENT_TAG_FORMAT_TILEIR}"
+      FRAGMENT_TAG_HEADER_FILES ${_CUTILE_FRAGMENT_TAG_HEADER_FILES}
+      MATRIX_JSON_ENTRY "${matrix_json_entry}"
     )
   endforeach()
 

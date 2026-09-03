@@ -19,10 +19,14 @@
 
 namespace cuvs::detail::jit_lto {
 
+struct CutileRuntimeCapabilities;
+
 struct TileLauncherCache {
   std::shared_mutex mutex;
   std::unordered_map<std::string, std::shared_ptr<rtcx::algorithm_launcher>> launchers;
-  std::unordered_set<std::string> build_failed;
+  // Cache expected compatibility misses so an unsupported module is not loaded on every call.
+  // Unexpected CUDA errors are raised rather than inserted here.
+  std::unordered_set<std::string> unavailable_launchers;
 };
 
 /** Loads prebuilt cubins or TileIR bytecode directly through the CUDA library API. */
@@ -59,9 +63,9 @@ struct TileAlgorithmPlanner {
   std::unique_ptr<TileIrBytecodeFragmentEntry> tileir_fragment_;
 
  private:
-  std::string get_planner_key() const;
+  std::string get_planner_key(const CutileRuntimeCapabilities* capabilities) const;
 
-  std::shared_ptr<rtcx::algorithm_launcher> build();
+  std::shared_ptr<rtcx::algorithm_launcher> build(const CutileRuntimeCapabilities* capabilities);
 
   std::string entrypoint_;
   TileLauncherCache& launcher_cache_;

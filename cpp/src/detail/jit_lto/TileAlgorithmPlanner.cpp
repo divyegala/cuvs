@@ -40,11 +40,14 @@ CutileTileConfig tile_config_from_fragment(const FragmentT* fragment, const std:
 
 std::shared_ptr<rtcx::algorithm_launcher> TileAlgorithmPlanner::try_get_launcher()
 {
-  auto launch_key = this->get_planner_key();
+  CutileRuntimeCapabilities capabilities{};
+  const auto* current_capabilities =
+    query_current_cutile_runtime_capabilities(capabilities) ? &capabilities : nullptr;
+  auto launch_key = this->get_planner_key(current_capabilities);
 
   {
     std::shared_lock<std::shared_mutex> read_lock(launcher_cache_.mutex);
-    if (launcher_cache_.build_failed.count(launch_key)) { return nullptr; }
+    if (launcher_cache_.unavailable_launchers.count(launch_key)) { return nullptr; }
     if (auto it = launcher_cache_.launchers.find(launch_key);
         it != launcher_cache_.launchers.end()) {
       return it->second;
@@ -52,14 +55,14 @@ std::shared_ptr<rtcx::algorithm_launcher> TileAlgorithmPlanner::try_get_launcher
   }
 
   std::unique_lock<std::shared_mutex> write_lock(launcher_cache_.mutex);
-  if (launcher_cache_.build_failed.count(launch_key)) { return nullptr; }
+  if (launcher_cache_.unavailable_launchers.count(launch_key)) { return nullptr; }
   if (auto it = launcher_cache_.launchers.find(launch_key); it != launcher_cache_.launchers.end()) {
     return it->second;
   }
 
-  auto launcher = this->build();
+  auto launcher = this->build(current_capabilities);
   if (!launcher) {
-    launcher_cache_.build_failed.insert(launch_key);
+    launcher_cache_.unavailable_launchers.insert(launch_key);
     return nullptr;
   }
   launcher_cache_.launchers[launch_key] = launcher;
@@ -75,7 +78,8 @@ std::shared_ptr<rtcx::algorithm_launcher> TileAlgorithmPlanner::get_launcher()
   return launcher;
 }
 
-std::string TileAlgorithmPlanner::get_planner_key() const
+std::string TileAlgorithmPlanner::get_planner_key(
+  const CutileRuntimeCapabilities* capabilities) const
 {
   std::string key = entrypoint_;
   for (const auto& fragment : cubin_fragments_) {
@@ -83,35 +87,28 @@ std::string TileAlgorithmPlanner::get_planner_key() const
   }
   if (tileir_fragment_) { key += tileir_fragment_->get_key(); }
 
-  int device         = -1;
-  int cc_major       = -1;
-  int cc_minor       = -1;
-  int driver_version = -1;
-  if (cudaGetDevice(&device) == cudaSuccess &&
-      cuvs::detail::jit_lto::get_device_compute_capability(cc_major, cc_minor)) {
-    key += ":device=" + std::to_string(device);
-    key += ":cc=" + std::to_string(cc_major) + "." + std::to_string(cc_minor);
+  if (capabilities != nullptr) {
+    key += ":device=" + std::to_string(capabilities->device);
+    key += ":cc=" + std::to_string(capabilities->cc_major) + "." +
+           std::to_string(capabilities->cc_minor);
     if (const auto* fragment = cuvs::detail::jit_lto::find_compatible_cubin_fragment(
-          cc_major, cc_minor, cubin_fragments_)) {
+          capabilities->cc_major, capabilities->cc_minor, cubin_fragments_)) {
       key += ":cubin=" + std::to_string(fragment->get_cc_major()) + "." +
              std::to_string(fragment->get_cc_minor());
     } else {
       key += ":tileir";
     }
-    if (cudaDriverGetVersion(&driver_version) == cudaSuccess) {
-      key += ":driver=" + std::to_string(driver_version);
-    }
+    key += ":driver=" + std::to_string(capabilities->driver_version);
   }
   return key;
 }
 
 CutileTileConfig TileAlgorithmPlanner::tile_config() const
 {
-  int cc_major = 0;
-  int cc_minor = 0;
-  if (cuvs::detail::jit_lto::get_device_compute_capability(cc_major, cc_minor)) {
+  CutileRuntimeCapabilities capabilities{};
+  if (query_current_cutile_runtime_capabilities(capabilities)) {
     if (const auto* fragment = cuvs::detail::jit_lto::find_compatible_cubin_fragment(
-          cc_major, cc_minor, cubin_fragments_)) {
+          capabilities.cc_major, capabilities.cc_minor, cubin_fragments_)) {
       return tile_config_from_fragment(fragment, entrypoint_);
     }
   }
@@ -125,17 +122,13 @@ CutileTileConfig TileAlgorithmPlanner::tile_config() const
   RAFT_FAIL("cuTile planner '%s' has no registered fragments", entrypoint_.c_str());
 }
 
-std::shared_ptr<rtcx::algorithm_launcher> TileAlgorithmPlanner::build()
+std::shared_ptr<rtcx::algorithm_launcher> TileAlgorithmPlanner::build(
+  const CutileRuntimeCapabilities* capabilities)
 {
-  int cc_major = 0;
-  int cc_minor = 0;
-  if (!cuvs::detail::jit_lto::get_device_compute_capability(cc_major, cc_minor)) { return nullptr; }
-
-  int driver_version = 0;
-  if (cudaDriverGetVersion(&driver_version) != cudaSuccess) { return nullptr; }
+  if (capabilities == nullptr) { return nullptr; }
 
   auto image = cuvs::detail::jit_lto::resolve_cutile_module_image(
-    cc_major, cc_minor, driver_version, cubin_fragments_, tileir_fragment_.get());
+    *capabilities, cubin_fragments_, tileir_fragment_.get());
   if (!image) { return nullptr; }
 
   return cuvs::detail::jit_lto::try_load_cutile_launcher(*image, entrypoint_);

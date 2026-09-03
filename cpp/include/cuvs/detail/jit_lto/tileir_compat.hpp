@@ -16,6 +16,30 @@
 
 namespace cuvs::detail::jit_lto {
 
+/** Runtime/device properties that determine cuTile image selection and launch eligibility. */
+struct CutileRuntimeCapabilities {
+  int device;
+  int cc_major;
+  int cc_minor;
+  int driver_version;
+};
+
+inline bool query_current_cutile_runtime_capabilities(CutileRuntimeCapabilities& capabilities)
+{
+  if (cudaGetDevice(&capabilities.device) != cudaSuccess) { return false; }
+  if (cudaDeviceGetAttribute(&capabilities.cc_major,
+                             cudaDevAttrComputeCapabilityMajor,
+                             capabilities.device) != cudaSuccess) {
+    return false;
+  }
+  if (cudaDeviceGetAttribute(&capabilities.cc_minor,
+                             cudaDevAttrComputeCapabilityMinor,
+                             capabilities.device) != cudaSuccess) {
+    return false;
+  }
+  return cudaDriverGetVersion(&capabilities.driver_version) == cudaSuccess;
+}
+
 /** Minimum CUDA driver version (from cudaDriverGetVersion) for TileIR JIT of embedded bytecode. */
 inline constexpr int kMinTileIrJitDriverVersion = 13010;  // CUDA 13.1 / driver >= 590.44
 
@@ -75,33 +99,13 @@ inline bool cutile_launch_available_for_arch(int cc_major, int cc_minor, int dri
 inline constexpr bool cutile_launch_available_for_arch(int, int, int) { return false; }
 #endif
 
-inline bool query_driver_version(int& driver_version)
-{
-  return cudaDriverGetVersion(&driver_version) == cudaSuccess;
-}
-
-inline bool query_current_device_arch(int& cc_major, int& cc_minor)
-{
-  int device = 0;
-  if (cudaGetDevice(&device) != cudaSuccess) { return false; }
-  if (cudaDeviceGetAttribute(&cc_major, cudaDevAttrComputeCapabilityMajor, device) != cudaSuccess) {
-    return false;
-  }
-  if (cudaDeviceGetAttribute(&cc_minor, cudaDevAttrComputeCapabilityMinor, device) != cudaSuccess) {
-    return false;
-  }
-  return true;
-}
-
 #if CUVS_CUTILE_ENABLED
 inline bool cutile_launch_available_on_current_device()
 {
-  int cc_major       = 0;
-  int cc_minor       = 0;
-  int driver_version = 0;
-  if (!query_current_device_arch(cc_major, cc_minor)) { return false; }
-  if (!query_driver_version(driver_version)) { return false; }
-  return cutile_launch_available_for_arch(cc_major, cc_minor, driver_version);
+  CutileRuntimeCapabilities capabilities{};
+  if (!query_current_cutile_runtime_capabilities(capabilities)) { return false; }
+  return cutile_launch_available_for_arch(
+    capabilities.cc_major, capabilities.cc_minor, capabilities.driver_version);
 }
 #else
 /** Compile-time false when cuTile is not built; use in if constexpr to skip cuTile-only paths. */
