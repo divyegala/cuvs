@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include "distance_ops/l2_exp.cuh"  // ops::l2_exp_distance_op
+#include "fused_distance_nn/cutile/fused_1nn_tile.hpp"
 #include "fused_distance_nn/cutlass_base.cuh"
 #include "fused_distance_nn/fused_cosine_nn.cuh"
 #include "fused_distance_nn/fused_l2_nn.cuh"
@@ -20,12 +21,19 @@
 #include <raft/util/cuda_utils.cuh>      // raft::ceildiv, raft::shfl
 
 #include <cstddef>  // size_t
-#include <limits>   // std::numeric_limits
+#include <cstdint>
+#include <limits>  // std::numeric_limits
 
 namespace cuvs {
 namespace distance {
 
 namespace detail {
+
+/** Explicit implementation selected for the fused 1-NN primitive. */
+enum class Fused1nnBackend : std::uint8_t {
+  Cutile,
+  Cutlass,
+};
 
 template <typename DataT,
           typename OutT,
