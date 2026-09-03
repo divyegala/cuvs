@@ -33,6 +33,17 @@ namespace detail {
 enum class Fused1nnBackend : std::uint8_t {
   Cutile,
   Cutlass,
+  Unfused,
+};
+
+/** Tuning used only by the bounded-workspace unfused backend. */
+struct UnfusedTop1nnTuning {
+  std::size_t row_tile       = 8192;
+  std::size_t candidate_tile = 8192;
+};
+
+struct Top1nnTuning {
+  UnfusedTop1nnTuning unfused{};
 };
 
 /**
@@ -55,7 +66,7 @@ bool can_launch_fused_1nn_backend(Fused1nnBackend backend,
     }
     return false;
   }
-  return backend == Fused1nnBackend::Cutlass &&
+  return (backend == Fused1nnBackend::Cutlass || backend == Fused1nnBackend::Unfused) &&
          metric != cuvs::distance::DistanceType::InnerProduct && x != nullptr && y != nullptr &&
          m > 0 && n > 0 && k > 0;
 }
