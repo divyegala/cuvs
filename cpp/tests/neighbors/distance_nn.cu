@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,14 @@ namespace cuvs::neighbors {
 
 enum class ImplType { fused, unfused };
 
+template <typename AccT, typename IdxT>
+void vector_compare_soa(raft::resources const& handle,
+                        const raft::KeyValuePair<IdxT, AccT>* ref,
+                        const IdxT* indices,
+                        const AccT* distances,
+                        IdxT n,
+                        ComparisonSummary& summary);
+
 template <typename IdxT>
 struct NNInputs {
   IdxT m;
@@ -27,6 +35,8 @@ struct NNInputs {
   bool sqrt;
   uint64_t rng_seed;
   double tol;
+  cuvs::distance::detail::Fused1nnBackend backend =
+    cuvs::distance::detail::Fused1nnBackend::Cutlass;
 };
 
 __global__ void fill_int8(int8_t* buff, int len, int seed_offset)
@@ -50,13 +60,16 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
       k{params_.k},
       metric{params_.metric},
       sqrt{params_.sqrt},
+      backend{params_.backend},
       stream{raft::resource::get_cuda_stream(handle)},
       x{raft::make_device_matrix<DataT, IdxT>(handle, m, k)},
       y{raft::make_device_matrix<DataT, IdxT>(handle, n, k)},
       x_norm{raft::make_device_vector<AccT, IdxT>(handle, m)},
       y_norm{raft::make_device_vector<AccT, IdxT>(handle, n)},
       out{raft::make_device_vector<OutT, IdxT>(handle, m)},
-      ref_out{raft::make_device_vector<OutT, IdxT>(handle, m)}
+      ref_out{raft::make_device_vector<OutT, IdxT>(handle, m)},
+      cutile_idx{raft::make_device_vector<IdxT, IdxT>(handle, m)},
+      cutile_dist{raft::make_device_vector<AccT, IdxT>(handle, m)}
   {
   }
 
@@ -114,21 +127,32 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
 
     if constexpr (impl == ImplType::fused) {
       if constexpr (std::is_same_v<DataT, float>) {
-        cuvs::distance::fusedDistanceNNMinReduce<DataT, OutT, IdxT>(out.data_handle(),
-                                                                    x.data_handle(),
-                                                                    y.data_handle(),
-                                                                    x_norm.data_handle(),
-                                                                    y_norm.data_handle(),
-                                                                    m,
-                                                                    n,
-                                                                    k,
-                                                                    (void*)workspace.data_handle(),
-                                                                    sqrt,
-                                                                    true,
-                                                                    true,
-                                                                    metric,
-                                                                    0.0,
-                                                                    stream);
+        if (backend == cuvs::distance::detail::Fused1nnBackend::Cutile &&
+            !cuvs::distance::detail::can_launch_fused_1nn_backend(
+              backend, x.data_handle(), y.data_handle(), m, n, k, metric)) {
+          GTEST_SKIP() << "cuTile is not available for this device/input";
+        }
+        cuvs::distance::fusedDistanceNNMinReduce<DataT, IdxT>(
+          backend == cuvs::distance::detail::Fused1nnBackend::Cutile ? cutile_idx.data_handle()
+                                                                     : nullptr,
+          backend == cuvs::distance::detail::Fused1nnBackend::Cutile ? cutile_dist.data_handle()
+                                                                     : nullptr,
+          x.data_handle(),
+          y.data_handle(),
+          x_norm.data_handle(),
+          y_norm.data_handle(),
+          m,
+          n,
+          k,
+          (void*)workspace.data_handle(),
+          sqrt,
+          true,
+          true,
+          metric,
+          0.0,
+          backend,
+          backend == cuvs::distance::detail::Fused1nnBackend::Cutlass ? out.data_handle() : nullptr,
+          stream);
       } else {
         static_assert(sizeof(DataT) == 0,
                       "fusedDistanceNNMinReduce is not implemented for datatype other than float");
@@ -156,7 +180,20 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
 
   void compare()
   {
-    vector_compare(handle, ref_out.data_handle(), out.data_handle(), m, summary);
+    if constexpr (impl == ImplType::fused) {
+      if (backend == cuvs::distance::detail::Fused1nnBackend::Cutile) {
+        vector_compare_soa(handle,
+                           ref_out.data_handle(),
+                           cutile_idx.data_handle(),
+                           cutile_dist.data_handle(),
+                           m,
+                           summary);
+      } else {
+        vector_compare(handle, ref_out.data_handle(), out.data_handle(), m, summary);
+      }
+    } else {
+      vector_compare(handle, ref_out.data_handle(), out.data_handle(), m, summary);
+    }
     ASSERT_TRUE(summary.max_diff < params_.tol) << summary;
   }
 
@@ -170,12 +207,15 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   IdxT k;
   DistanceType metric;
   bool sqrt;
+  cuvs::distance::detail::Fused1nnBackend backend;
   raft::device_matrix<DataT, IdxT> x;
   raft::device_matrix<DataT, IdxT> y;
   raft::device_vector<AccT, IdxT> x_norm;
   raft::device_vector<AccT, IdxT> y_norm;
   raft::device_vector<OutT, IdxT> out;
   raft::device_vector<OutT, IdxT> ref_out;
+  raft::device_vector<IdxT, IdxT> cutile_idx;
+  raft::device_vector<AccT, IdxT> cutile_dist;
   size_t workspace_size;
 };
 
@@ -195,6 +235,18 @@ const std::vector<NNInputs<IdxT>> input_fp32 = {
   // {4096, 8192, 128, DistanceType::CosineExpanded, true, uint64_t(31415926), 0.1},
 };
 
+template <typename IdxT>
+const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
+  auto inputs = input_fp32<IdxT>;
+#if CUVS_CUTILE_ENABLED
+  for (auto input : input_fp32<IdxT>) {
+    input.backend = cuvs::distance::detail::Fused1nnBackend::Cutile;
+    inputs.push_back(input);
+  }
+#endif
+  return inputs;
+}();
+
 // Test fused implementation with single-precision
 typedef NNTest<float, float, int32_t, ImplType::fused> NNTest_fp32_fused;
 TEST_P(NNTest_fp32_fused, test)
@@ -203,7 +255,7 @@ TEST_P(NNTest_fp32_fused, test)
   this->compare();
 }
 
-INSTANTIATE_TEST_CASE_P(NNTest, NNTest_fp32_fused, ::testing::ValuesIn(input_fp32<int>));
+INSTANTIATE_TEST_CASE_P(NNTest, NNTest_fp32_fused, ::testing::ValuesIn(input_fp32_fused<int>));
 
 // Test unfused implementation with single-precision
 typedef NNTest<float, float, int32_t, ImplType::unfused> NNTest_fp32_unfused;

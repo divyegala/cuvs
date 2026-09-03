@@ -311,20 +311,6 @@ void fusedDistanceNNMinReduce(OutT* min,
                                      stream);
 }
 
-namespace detail {
-template <typename IdxT, typename DataT>
-__global__ void unpack_fused_1nn_kvp(IdxT* nearest_idx,
-                                     DataT* nearest_dist,
-                                     const raft::KeyValuePair<IdxT, DataT>* kvp,
-                                     IdxT m)
-{
-  const auto i = static_cast<IdxT>(blockIdx.x * blockDim.x + threadIdx.x);
-  if (i >= m) { return; }
-  if (nearest_idx != nullptr) { nearest_idx[i] = kvp[i].key; }
-  if (nearest_dist != nullptr) { nearest_dist[i] = kvp[i].value; }
-}
-}  // namespace detail
-
 template <typename DataT, typename IdxT, typename NormT = DataT>
 void fusedDistanceNNMinReduce(IdxT* nearest_idx,
                               DataT* nearest_dist,
@@ -342,11 +328,10 @@ void fusedDistanceNNMinReduce(IdxT* nearest_idx,
                               cuvs::distance::DistanceType metric,
                               float metric_arg,
                               detail::Fused1nnBackend backend,
-                              raft::KeyValuePair<IdxT, DataT>* cutlass_kvp_scratch,
+                              raft::KeyValuePair<IdxT, DataT>* cutlass_kvp_output,
                               cudaStream_t stream)
 {
   RAFT_EXPECTS(is_row_major, "fusedDistanceNN only supports row-major inputs");
-  RAFT_EXPECTS(nearest_dist != nullptr, "Explicit fused 1-NN backends require nearest_dist");
   if (backend == detail::Fused1nnBackend::Cutile) {
     if constexpr (detail::is_fused_1nn_cutile_data_v<DataT> &&
                   std::is_same_v<NormT, detail::fused_1nn_cutile_norm_t<DataT>>) {
@@ -359,12 +344,14 @@ void fusedDistanceNNMinReduce(IdxT* nearest_idx,
     RAFT_FAIL("Requested cuTile fused 1-NN backend does not support these data/norm types");
   }
   RAFT_EXPECTS(backend == detail::Fused1nnBackend::Cutlass, "Unknown fused 1-NN backend");
+  RAFT_EXPECTS(detail::can_launch_fused_1nn_backend(backend, x, y, m, n, k, metric),
+               "Requested CUTLASS fused 1-NN backend is unavailable for this input");
   RAFT_EXPECTS(metric != cuvs::distance::DistanceType::InnerProduct,
                "CUTLASS fused 1-NN does not support InnerProduct");
   RAFT_EXPECTS(std::is_same_v<NormT, DataT>, "CUTLASS fused 1-NN requires matching norm types");
-  RAFT_EXPECTS(cutlass_kvp_scratch != nullptr,
-               "CUTLASS fused 1-NN with explicit outputs requires KVP scratch storage");
-  fusedDistanceNNMinReduce<DataT, raft::KeyValuePair<IdxT, DataT>, IdxT>(cutlass_kvp_scratch,
+  RAFT_EXPECTS(cutlass_kvp_output != nullptr,
+               "CUTLASS fused 1-NN requires its native KVP output buffer");
+  fusedDistanceNNMinReduce<DataT, raft::KeyValuePair<IdxT, DataT>, IdxT>(cutlass_kvp_output,
                                                                          x,
                                                                          y,
                                                                          xn,
@@ -379,11 +366,6 @@ void fusedDistanceNNMinReduce(IdxT* nearest_idx,
                                                                          metric,
                                                                          metric_arg,
                                                                          stream);
-  constexpr int threads = 256;
-  detail::
-    unpack_fused_1nn_kvp<<<static_cast<int>((m + threads - 1) / threads), threads, 0, stream>>>(
-      nearest_idx, nearest_dist, cutlass_kvp_scratch, m);
-  RAFT_CUDA_TRY(cudaGetLastError());
 }
 
 /** @} */

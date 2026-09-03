@@ -35,6 +35,31 @@ enum class Fused1nnBackend : std::uint8_t {
   Cutlass,
 };
 
+/**
+ * Output-independent backend probe. Call this before allocating backend-native result storage.
+ * cuTile delegates to its launcher/ABI probe; CUTLASS is available for the legacy L2/cosine
+ * fused primitive only.
+ */
+template <typename DataT, typename IdxT>
+bool can_launch_fused_1nn_backend(Fused1nnBackend backend,
+                                  const DataT* x,
+                                  const DataT* y,
+                                  IdxT m,
+                                  IdxT n,
+                                  IdxT k,
+                                  cuvs::distance::DistanceType metric)
+{
+  if (backend == Fused1nnBackend::Cutile) {
+    if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
+      return can_launch_fused_1nn_tile(x, y, m, n, k, metric);
+    }
+    return false;
+  }
+  return backend == Fused1nnBackend::Cutlass &&
+         metric != cuvs::distance::DistanceType::InnerProduct && x != nullptr && y != nullptr &&
+         m > 0 && n > 0 && k > 0;
+}
+
 template <typename DataT,
           typename OutT,
           typename IdxT,
