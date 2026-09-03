@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import cuda.tile as ct
 from cuda.tile.compilation import (
@@ -16,6 +17,8 @@ from cuda.tile.compilation import (
     KernelSignature,
     export_kernel,
 )
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from smoke_kernel import TILE_SIZE, cutile_smoke_add
 
