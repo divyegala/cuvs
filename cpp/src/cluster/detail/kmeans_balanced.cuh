@@ -67,21 +67,57 @@ bool predict_core_min_cluster(const raft::resources& handle,
                               const MathT* cutile_x_norm)
 {
   auto n_rows = X.extent(0);
-  auto path   = select_min_cluster_distance_path(handle, X, centroids, metric);
+  const auto requirements = get_fused_1nn_requirements(handle, X, centroids, metric);
 
-  if constexpr (std::is_same_v<LabelT, IdxT> && std::is_same_v<IdxT, int>) {
-    if (path == FusedDistancePath::FusedCutile &&
-        reinterpret_cast<std::uintptr_t>(labels) % 16 != 0) {
-      path = use_legacy_fused(handle, n_rows, centroids.extent(0), metric);
+  if (requirements.output_layout == Fused1nnOutputLayout::Soa) {
+    // cuTile indices are int32. For 32-bit labels, request that native representation directly;
+    // cluster labels are never negative, so no conversion or copy is required.
+    if constexpr (std::is_same_v<LabelT, int> || std::is_same_v<LabelT, uint32_t>) {
+      if (n_rows <= static_cast<IdxT>(std::numeric_limits<int>::max())) {
+        using CutileIdxT = int;
+        const auto cutile_rows = static_cast<CutileIdxT>(n_rows);
+        const auto cutile_cols = static_cast<CutileIdxT>(X.extent(1));
+        const auto cutile_clusters = static_cast<CutileIdxT>(centroids.extent(0));
+        auto cutile_X = raft::make_device_matrix_view<const MathT, CutileIdxT>(
+          X.data_handle(), cutile_rows, cutile_cols);
+        auto cutile_centroids = raft::make_device_matrix_view<const MathT, CutileIdxT>(
+          centroids.data_handle(), cutile_clusters, cutile_cols);
+        const auto cutile_requirements =
+          get_fused_1nn_requirements(handle, cutile_X, cutile_centroids, metric);
+        RAFT_EXPECTS(cutile_requirements.output_layout == Fused1nnOutputLayout::Soa,
+                     "resolved cuTile plan changed while adapting 32-bit labels");
+
+        auto nearest_dist =
+          raft::make_device_mdarray<MathT, CutileIdxT>(handle, mr, raft::make_extents<CutileIdxT>(cutile_rows));
+        auto* cutile_labels = reinterpret_cast<CutileIdxT*>(labels);
+        auto labels_view =
+          raft::make_device_vector_view<CutileIdxT, CutileIdxT>(cutile_labels, cutile_rows);
+        auto cutile_norm = raft::make_device_vector_view<const MathT, CutileIdxT>(
+          X_norm.data_handle(), cutile_rows);
+        minClusterAndDistanceCompute<MathT, CutileIdxT>(handle,
+                                                        cutile_X,
+                                                        cutile_centroids,
+                                                        labels_view,
+                                                        nearest_dist.view(),
+                                                        cutile_norm,
+                                                        L2NormBuf_OR_DistBuf,
+                                                        metric,
+                                                        0,
+                                                        0,
+                                                        workspace,
+                                                        cutile_requirements,
+                                                        cutile_x_norm);
+        return true;
+      }
     }
-  }
 
-  if (path == FusedDistancePath::FusedCutile) {
+    constexpr bool label_storage_is_cutile_index = std::is_same_v<LabelT, IdxT>;
     auto nearest_dist =
       raft::make_device_mdarray<MathT, IdxT>(handle, mr, raft::make_extents<IdxT>(n_rows));
 
-    if constexpr (std::is_same_v<LabelT, IdxT>) {
-      auto labels_view = raft::make_device_vector_view<IdxT, IdxT>(labels, n_rows);
+    if constexpr (label_storage_is_cutile_index) {
+      auto* cutile_labels = reinterpret_cast<IdxT*>(labels);
+      auto labels_view = raft::make_device_vector_view<IdxT, IdxT>(cutile_labels, n_rows);
       minClusterAndDistanceCompute<MathT, IdxT>(handle,
                                                 X,
                                                 centroids,
@@ -93,6 +129,7 @@ bool predict_core_min_cluster(const raft::resources& handle,
                                                 0,
                                                 0,
                                                 workspace,
+                                                requirements,
                                                 cutile_x_norm);
     } else {
       auto nearest_idx =
@@ -108,6 +145,7 @@ bool predict_core_min_cluster(const raft::resources& handle,
                                                 0,
                                                 0,
                                                 workspace,
+                                                requirements,
                                                 cutile_x_norm);
       raft::copy(
         handle, raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows), nearest_idx.view());
@@ -132,7 +170,7 @@ bool predict_core_min_cluster(const raft::resources& handle,
                                   0,
                                   0,
                                   workspace,
-                                  path);
+                                  requirements);
   auto* nearest_ptr = nearest.data_handle();
   raft::linalg::map_offset(
     handle,
@@ -1400,8 +1438,6 @@ void build_hierarchical(const raft::resources& handle,
           FusedDistancePath::FusedCutile) {
         dataset_cutile_norm_buf.resize(n_rows, stream);
         const bool take_sqrt = params.metric == cuvs::distance::DistanceType::CosineExpanded;
-        raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> cached_input_norm_scope(
-          "cutile_cached_input_norm");
         for (IdxT offset = 0; offset < n_rows; offset += max_minibatch_size) {
           const IdxT minibatch_size = std::min<IdxT>(max_minibatch_size, n_rows - offset);
           compute_cutile_norm(handle,

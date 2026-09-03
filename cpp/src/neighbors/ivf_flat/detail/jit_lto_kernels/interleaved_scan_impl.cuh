@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -179,12 +179,7 @@ __device__ __forceinline__ void interleaved_scan_impl(const uint32_t query_smem_
         }
 
         if constexpr (kManageLocalTopK) {
-          // A filtered or padded record must not carry an in-range sample offset. If fewer than k
-          // valid records remain, the dummy can reach the output queue; using the end offset makes
-          // postprocess_neighbors translate it to kOutOfBoundsRecord instead of a duplicate valid
-          // database index.
-          const uint32_t sample_ix = valid ? sample_offset + vec_id : chunk_indices[n_probes - 1];
-          queue.add(val, sample_ix);
+          queue.add(val, sample_offset + vec_id);
         } else {
           if (vec_id < list_length) distances[sample_offset + vec_id] = val;
         }
@@ -207,16 +202,6 @@ __device__ __forceinline__ void interleaved_scan_impl(const uint32_t query_smem_
     __syncthreads();
     queue.done(interleaved_scan_kernel_smem);
     queue.store(distances, neighbors, [](auto val) { return post_process(val); });
-
-    // block_sort initializes slots that never received a candidate with (kDummy, idx=0). Scrub
-    // those too so a completely empty/filtered probe set cannot turn the internal index zero into
-    // a real database ID during neighbor postprocessing.
-    if (threadIdx.x < raft::WarpSize) {
-      const auto dummy_out = post_process(local_topk_t::queue_t::kDummy);
-      for (uint32_t i = threadIdx.x; i < k; i += raft::WarpSize) {
-        if (distances[i] == dummy_out) { neighbors[i] = chunk_indices[n_probes - 1]; }
-      }
-    }
   }
 }
 

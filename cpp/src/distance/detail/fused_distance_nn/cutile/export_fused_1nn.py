@@ -280,8 +280,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print(
-        export_binary(
+    export_binary(
             args.output_file,
             output_format=args.format,
             data_type=args.data_type,
@@ -294,7 +293,6 @@ def main() -> int:
             matrix_layout=args.matrix_layout,
             occupancy=args.occupancy,
             bytecode_version=args.bytecode_version,
-        )
     )
     return 0
 

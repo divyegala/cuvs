@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -519,8 +519,6 @@ void data_transformation_batch_opt(const float* d_data,
   // 5. Save the rotated centroid: copy CP into d_rotated_c.
   raft::copy(d_rotated_c, d_CP, D, stream);
 
-  if (num_points == 0) { return; }
-
   // 6. Launch the single FUSED kernel for subtract, normalize, and binarize.
   const unsigned int FusedBlockSize = 256;  // A good default, can be tuned.
   dim3 gridDim(num_points);
@@ -637,8 +635,6 @@ void DataQuantizerGPU::quantize_batch_opt(const float* d_data,
                                 D,
                                 handle_);
 
-  if (num_points == 0) { return; }
-
   rabitq_codes_and_factors_fused(d_rotated_c,
                                  d_bin_XP.data_handle(),
                                  d_XP.data_handle(),
@@ -716,8 +712,6 @@ void data_transformation_batch_opt_contiguous(const float* d_contiguous_data,
   // 5. Save the rotated centroid: copy CP into d_rotated_c.
   raft::copy(d_rotated_c, d_CP, D, stream);
 
-  if (num_points == 0) { return; }
-
   // 6. Launch the single FUSED kernel for subtract, normalize, and binarize.
   const unsigned int FusedBlockSize = 256;  // A good default, can be tuned.
   dim3 gridDim(num_points);
@@ -760,8 +754,6 @@ void DataQuantizerGPU::quantize_batch_opt_contiguous(const float* d_contiguous_d
                                            DIM,
                                            D,
                                            handle_);
-
-  if (num_points == 0) { return; }
 
   rabitq_codes_and_factors_fused(d_rotated_c,
                                  d_bin_XP.data_handle(),

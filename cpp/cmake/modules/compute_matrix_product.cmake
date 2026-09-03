@@ -11,9 +11,7 @@ function(cuvs_find_build_python output_var)
   if(DEFINED ENV{BUILD_PREFIX})
     set(Python_ROOT "$ENV{BUILD_PREFIX}")
   endif()
-  set(CMAKE_FIND_DEBUG_MODE TRUE)
   find_package(Python REQUIRED COMPONENTS Interpreter)
-  set(CMAKE_FIND_DEBUG_MODE FALSE)
   set(${output_var}
       "${Python_EXECUTABLE}"
       PARENT_SCOPE

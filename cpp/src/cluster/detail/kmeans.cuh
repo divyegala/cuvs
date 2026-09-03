@@ -1082,15 +1082,10 @@ void kmeans_predict(raft::resources const& handle,
   auto l2normx_view =
     raft::make_device_vector_view<const DataT, IndexT>(L2NormX.data_handle(), n_samples);
   rmm::device_scalar<DataT> clusterCostD(stream);
-  auto path = select_min_cluster_distance_path(handle, X, centroids, metric);
-  if constexpr (std::is_same_v<LabelT, IndexT> && std::is_same_v<IndexT, int>) {
-    if (path == FusedDistancePath::FusedCutile &&
-        reinterpret_cast<uintptr_t>(labels.data_handle()) % 16 != 0) {
-      path = use_legacy_fused(handle, n_samples, centroids.extent(0), metric);
-    }
-  }
+  const auto requirements = get_fused_1nn_requirements(
+    handle, X, centroids, metric, pams.batch_samples, pams.batch_centroids);
 
-  if (path == FusedDistancePath::FusedCutile) {
+  if (requirements.output_layout == Fused1nnOutputLayout::Soa) {
     auto nearest_dist = raft::make_device_vector<DataT, IndexT>(handle, n_samples);
     if constexpr (std::is_same_v<LabelT, IndexT>) {
       minClusterAndDistanceCompute<DataT, IndexT>(handle,
@@ -1103,7 +1098,8 @@ void kmeans_predict(raft::resources const& handle,
                                                   metric,
                                                   pams.batch_samples,
                                                   pams.batch_centroids,
-                                                  workspace);
+                                                  workspace,
+                                                  requirements);
     } else {
       auto index_labels = raft::make_device_vector<IndexT, IndexT>(handle, n_samples);
       minClusterAndDistanceCompute<DataT, IndexT>(handle,
@@ -1116,7 +1112,8 @@ void kmeans_predict(raft::resources const& handle,
                                                   metric,
                                                   pams.batch_samples,
                                                   pams.batch_centroids,
-                                                  workspace);
+                                                  workspace,
+                                                  requirements);
       raft::linalg::map(
         handle, labels, raft::cast_op<LabelT>{}, raft::make_const_mdspan(index_labels.view()));
     }
@@ -1144,7 +1141,7 @@ void kmeans_predict(raft::resources const& handle,
                                     pams.batch_samples,
                                     pams.batch_centroids,
                                     workspace,
-                                    path);
+                                    requirements);
     auto* nearest_ptr = nearest.data_handle();
     raft::linalg::map_offset(handle, labels, [nearest_ptr] __device__(IndexT i) {
       return static_cast<LabelT>(nearest_ptr[i].key);

@@ -679,8 +679,7 @@ TEST_P(KmeansFitBatchedTestF, Result)
 {
   prepareBlobInputs();
   fitBatchedTest();
-  // Batched FP32 centroid accumulation uses atomics, so its reduction order is not deterministic.
-  // Compare the resulting clustering and inertia rather than individual centroid coordinates.
+  ASSERT_TRUE(centroids_match);
   ASSERT_TRUE(score >= 0.99);
   ASSERT_TRUE(inertia_match);
   runInitSizeCompare();

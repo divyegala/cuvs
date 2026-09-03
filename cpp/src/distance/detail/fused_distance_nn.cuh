@@ -17,6 +17,8 @@
 #include <raft/core/error.hpp>
 #include <raft/core/kvp.hpp>             // raft::KeyValuePair
 #include <raft/core/operators.hpp>       // raft::identity_op
+#include <raft/core/resource/device_properties.hpp>
+#include <raft/core/resources.hpp>
 #include <raft/linalg/contractions.cuh>  // Policy
 #include <raft/util/arch.cuh>            // raft::util::arch::SM_*
 #include <raft/util/cuda_utils.cuh>      // raft::ceildiv, raft::shfl
@@ -29,6 +31,43 @@ namespace cuvs {
 namespace distance {
 
 namespace detail {
+
+/** Backend selected by the fused 1-NN primitive. */
+enum class Fused1nnBackend : std::uint8_t {
+  Unfused = 0,
+  FusedCutile,
+  FusedCutlass,
+};
+
+template <typename IdxT>
+constexpr Fused1nnBackend fused_1nn_legacy_backend(
+  int cc_major, IdxT m, IdxT n, cuvs::distance::DistanceType metric)
+{
+  if (metric == cuvs::distance::DistanceType::InnerProduct) { return Fused1nnBackend::Unfused; }
+  if (cc_major <= 8 || (cc_major == 9 && (m >= 4096 || n >= 4096))) {
+    return Fused1nnBackend::FusedCutlass;
+  }
+  return Fused1nnBackend::Unfused;
+}
+
+/** Resolve the executable fused 1-NN backend before callers allocate result storage. */
+template <typename DataT, typename IdxT>
+Fused1nnBackend resolve_fused_1nn_backend(const raft::resources& handle,
+                                          const DataT* x,
+                                          const DataT* y,
+                                          IdxT m,
+                                          IdxT n,
+                                          IdxT k,
+                                          cuvs::distance::DistanceType metric)
+{
+  if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
+    if (can_launch_fused_1nn_tile(x, y, m, n, k, metric)) {
+      return Fused1nnBackend::FusedCutile;
+    }
+  }
+  const auto prop = raft::resource::get_device_properties(handle);
+  return fused_1nn_legacy_backend(prop.major, m, n, metric);
+}
 
 template <typename DataT,
           typename NormT,
@@ -132,7 +171,9 @@ void fusedDistanceNNImpl(IdxT* nearest_idx,
     initialize<DataT, KVP, IdxT, decltype(cutlass_red_op)>(
       cutlass_kvp_scratch, m, maxVal, cutlass_red_op, stream);
     launch_legacy(cutlass_kvp_scratch, cutlass_red_op);
-    unpackFused1nnKvpToSoa(nearest_idx, nearest_dist, cutlass_kvp_scratch, m, stream);
+    if (nearest_idx != nullptr || nearest_dist != nullptr) {
+      unpackFused1nnKvpToSoa(nearest_idx, nearest_dist, cutlass_kvp_scratch, m, stream);
+    }
   } else {
     RAFT_EXPECTS(nearest_idx == nullptr && nearest_dist != nullptr,
                  "Direct CUTLASS output supports distance-only results");

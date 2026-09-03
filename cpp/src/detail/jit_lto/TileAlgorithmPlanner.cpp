@@ -57,7 +57,6 @@ std::shared_ptr<rtcx::algorithm_launcher> TileAlgorithmPlanner::try_get_launcher
     return it->second;
   }
 
-  RAFT_LOG_DEBUG("Building launcher for kernel entrypoint: %s", entrypoint_.c_str());
   auto launcher = this->build();
   if (!launcher) {
     launcher_cache_.build_failed.insert(launch_key);
