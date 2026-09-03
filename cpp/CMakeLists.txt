@@ -1576,8 +1576,7 @@ if(NOT BUILD_CPU_ONLY)
            "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c/include>"
     INTERFACE "$<INSTALL_INTERFACE:include>"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_BINARY_DIR}/src"
-            "${cutile_fused_1nn_generated_dir}"
-            "${cutile_smoke_generated_dir}"
+            "${cutile_fused_1nn_generated_dir}" "${cutile_smoke_generated_dir}"
   )
 
   # Endian detection
