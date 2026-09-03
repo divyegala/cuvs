@@ -336,7 +336,7 @@ function(generate_cutile_kernels source_list_var)
     message(FATAL_ERROR "generate_cutile_kernels: KERNEL_BASENAME is required")
   endif()
   if(NOT _CUTILE_KERNEL_PYTHON)
-    set(_CUTILE_KERNEL_PYTHON "fused_1nn_kernel.py")
+    message(FATAL_ERROR "generate_cutile_kernels: KERNEL_PYTHON is required")
   endif()
 
   _cutile_kernels_setup(
