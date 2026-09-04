@@ -12,6 +12,7 @@
 #include "fused_distance_nn_helpers.cuh"
 #include "top_1_nn.cuh"
 #include "unfused_distance_nn.cuh"
+#include <raft/core/resource/cuda_stream.hpp>
 #include <raft/core/resources.hpp>
 #include <raft/linalg/contractions.cuh>
 #include <raft/linalg/map.cuh>
@@ -297,6 +298,7 @@ void fusedDistanceNNMinReduce(OutT* min,
     std::is_same_v<OutT, raft::KeyValuePair<IdxT, DataT>> || std::is_same_v<OutT, DataT>,
     "fusedDistanceNNMinReduce supports KVP or scalar distance output");
   raft::resources handle;
+  raft::resource::set_cuda_stream(handle, stream);
   detail::Top1nnTuning tuning{};
   const auto workspace_bytes =
     top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, detail::Top1nnBackend::Cutlass);
