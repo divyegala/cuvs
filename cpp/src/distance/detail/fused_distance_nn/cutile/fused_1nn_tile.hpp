@@ -14,6 +14,7 @@
 
 #include <cuvs/detail/jit_lto/tileir_compat.hpp>
 #include <cuvs/distance/distance.hpp>
+#include <raft/core/error.hpp>
 
 #ifndef CUVS_CUTILE_ENABLED
 #define CUVS_CUTILE_ENABLED 0
@@ -55,107 +56,55 @@ constexpr size_t fused_1nn_cutile_index_workspace_rows(IdxT m)
  */
 template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
-bool can_launch_fused_1nn_tile(
+bool is_fused_1nn_tile_available(
   const DataT* x, const DataT* y, IdxT m, IdxT n, IdxT k, cuvs::distance::DistanceType metric);
 
 /**
- * Return whether the supplied problem can use cuTile without fallback scratch.
+ * Launch fused 1-NN with cuTile.
  *
- * The result includes runtime/device support, exported ABI constraints, and launcher construction.
- * A successful probe populates the shared launcher cache used by try_fused_1nn_tile.
- * An int64 output index still requires an int32 workspace sized to the largest launch chunk.
+ * All launch arguments are validated. An int64 output index requires an int32 workspace sized to
+ * fused_1nn_cutile_index_workspace_rows<DataT>(m). This function throws instead of falling back
+ * when the explicitly requested cuTile backend is unavailable.
  */
 template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
-bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
-                               DataT* nearest_dist,
-                               const DataT* x,
-                               const DataT* y,
-                               IdxT m,
-                               IdxT n,
-                               IdxT k,
-                               cuvs::distance::DistanceType metric);
-
-/**
- * Return whether the supplied problem and existing norm buffers can use cuTile.
- *
- * The overload without norm pointers is a preflight probe for callers that allocate aligned norm
- * buffers only after the remaining launch requirements have been validated.
- */
-template <typename DataT, typename IdxT>
-  requires is_fused_1nn_cutile_data_v<DataT>
-bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
-                               DataT* nearest_dist,
-                               const DataT* x,
-                               const DataT* y,
-                               const fused_1nn_cutile_norm_t<DataT>* xn,
-                               const fused_1nn_cutile_norm_t<DataT>* yn,
-                               IdxT m,
-                               IdxT n,
-                               IdxT k,
-                               cuvs::distance::DistanceType metric);
-
-template <typename DataT, typename IdxT>
-  requires is_fused_1nn_cutile_data_v<DataT>
-bool try_fused_1nn_tile(IdxT* nearest_idx,
-                        DataT* nearest_dist,
-                        const DataT* x,
-                        const DataT* y,
-                        const fused_1nn_cutile_norm_t<DataT>* xn,
-                        const fused_1nn_cutile_norm_t<DataT>* yn,
-                        IdxT m,
-                        IdxT n,
-                        IdxT k,
-                        cuvs::distance::DistanceType metric,
-                        bool is_sqrt,
-                        void* index_workspace,
-                        cudaStream_t stream);
+void launch_fused_1nn_tile(IdxT* nearest_idx,
+                           DataT* nearest_dist,
+                           const DataT* x,
+                           const DataT* y,
+                           const fused_1nn_cutile_norm_t<DataT>* xn,
+                           const fused_1nn_cutile_norm_t<DataT>* yn,
+                           IdxT m,
+                           IdxT n,
+                           IdxT k,
+                           cuvs::distance::DistanceType metric,
+                           bool is_sqrt,
+                           void* index_workspace,
+                           cudaStream_t stream);
 #else
 template <typename DataT, typename IdxT>
-bool can_launch_fused_1nn_tile(
+bool is_fused_1nn_tile_available(
   const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
 {
   return false;
 }
 
 template <typename DataT, typename IdxT>
-bool can_launch_fused_1nn_tile(
-  IdxT*, DataT*, const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
+void launch_fused_1nn_tile(IdxT*,
+                           DataT*,
+                           const DataT*,
+                           const DataT*,
+                           const fused_1nn_cutile_norm_t<DataT>*,
+                           const fused_1nn_cutile_norm_t<DataT>*,
+                           IdxT,
+                           IdxT,
+                           IdxT,
+                           cuvs::distance::DistanceType,
+                           bool,
+                           void*,
+                           cudaStream_t)
 {
-  return false;
-}
-
-template <typename DataT, typename IdxT>
-bool can_launch_fused_1nn_tile(IdxT*,
-                               DataT*,
-                               const DataT*,
-                               const DataT*,
-                               const fused_1nn_cutile_norm_t<DataT>*,
-                               const fused_1nn_cutile_norm_t<DataT>*,
-                               IdxT,
-                               IdxT,
-                               IdxT,
-                               cuvs::distance::DistanceType)
-{
-  return false;
-}
-
-template <typename DataT, typename IdxT>
-bool try_fused_1nn_tile(IdxT*,
-                        DataT*,
-                        const DataT*,
-                        const DataT*,
-                        const fused_1nn_cutile_norm_t<DataT>*,
-                        const fused_1nn_cutile_norm_t<DataT>*,
-                        IdxT,
-                        IdxT,
-                        IdxT,
-                        cuvs::distance::DistanceType,
-                        bool,
-                        void*,
-                        cudaStream_t)
-{
-  return false;
+  RAFT_FAIL("Requested cuTile fused 1-NN backend was not built");
 }
 #endif
 

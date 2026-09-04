@@ -392,10 +392,8 @@ void top_1_nn(raft::resources const& handle,
   if (backend == detail::Fused1nnBackend::Cutile) {
     if constexpr (detail::is_fused_1nn_cutile_data_v<DataT> &&
                   std::is_same_v<NormT, detail::fused_1nn_cutile_norm_t<DataT>>) {
-      const bool launched = detail::try_fused_1nn_tile<DataT, IdxT>(
+      detail::launch_fused_1nn_tile<DataT, IdxT>(
         nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, sqrt, workspace, stream);
-      RAFT_EXPECTS(launched,
-                   "Requested cuTile fused 1-NN backend is unavailable for this input/device");
       return;
     } else {
       RAFT_FAIL("Requested cuTile fused 1-NN backend does not support these data/norm types");

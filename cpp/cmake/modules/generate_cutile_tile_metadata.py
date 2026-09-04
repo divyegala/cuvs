@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+from compute_matrix_product import iterate_matrix_product
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -16,23 +18,19 @@ def main():
     parser.add_argument("--alias-prefix", required=True)
     args = parser.parse_args()
     aliases = {}
-    for entry in json.loads(args.matrix.read_text()):
-        default_tile = entry.get("_tile", [{}])[0]
-        for data in entry["_data"]:
-            for abi in entry["_abi"]:
-                tile = tuple(
-                    abi.get(k, default_tile.get(k))
-                    for k in ("tile_m", "tile_n", "tile_k")
-                )
-                if any(value is None for value in tile):
-                    raise ValueError("missing cuTile tile geometry")
-                for exported in entry["_export"]:
-                    suffix = f"{data['data_abbrev']}_{exported.get('arch_tag', 'tileir')}_{abi['abi_abbrev']}"
-                    if suffix in aliases and aliases[suffix] != tile:
-                        raise ValueError(
-                            f"conflicting tile geometry for {suffix}"
-                        )
-                    aliases[suffix] = tile
+    matrix = json.loads(args.matrix.read_text())
+    for entry in iterate_matrix_product(matrix=matrix):
+        tile = tuple(entry.get(key) for key in ("tile_m", "tile_n", "tile_k"))
+        if any(value is None for value in tile):
+            raise ValueError("missing cuTile tile geometry")
+        suffix = (
+            f"{entry['data_abbrev']}_"
+            f"{entry.get('arch_tag', 'tileir')}_"
+            f"{entry['abi_abbrev']}"
+        )
+        if suffix in aliases and aliases[suffix] != tile:
+            raise ValueError(f"conflicting tile geometry for {suffix}")
+        aliases[suffix] = tile
     lines = [
         "#pragma once",
         "",

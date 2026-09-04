@@ -64,28 +64,24 @@ bool has_fused_1nn_tile_launcher()
 }
 
 template <typename DataT, typename IdxT, typename AbiTag>
-bool launch_fused_1nn_tile(IdxT* nearest_idx,
-                           DataT* nearest_dist,
-                           const DataT* x,
-                           const DataT* y,
-                           const fused_1nn_cutile_norm_t<DataT>* xn,
-                           const fused_1nn_cutile_norm_t<DataT>* yn,
-                           IdxT m,
-                           IdxT n,
-                           IdxT k,
-                           cuvs::distance::DistanceType metric,
-                           bool is_sqrt,
-                           cudaStream_t stream)
+void launch_fused_1nn_tile_impl(IdxT* nearest_idx,
+                                DataT* nearest_dist,
+                                const DataT* x,
+                                const DataT* y,
+                                const fused_1nn_cutile_norm_t<DataT>* xn,
+                                const fused_1nn_cutile_norm_t<DataT>* yn,
+                                IdxT m,
+                                IdxT n,
+                                IdxT k,
+                                cuvs::distance::DistanceType metric,
+                                bool is_sqrt,
+                                cudaStream_t stream)
 {
-  if constexpr (!std::is_same_v<DataT, float> && !std::is_same_v<DataT, half>) { return false; }
-
-  if (nearest_dist == nullptr) { return false; }
-
   Fused1nnTilePlanner<DataT, AbiTag> planner;
   planner.add_entrypoint();
   planner.add_tileir_fallback();
   auto launcher = planner.try_get_launcher();
-  if (!launcher) { return false; }
+  RAFT_EXPECTS(launcher != nullptr, "Requested cuTile fused 1-NN launcher is unavailable");
   const cuvs::detail::jit_lto::CutileTileConfig tile_cfg = planner.tile_config();
 
   int metric_code;
@@ -102,7 +98,7 @@ bool launch_fused_1nn_tile(IdxT* nearest_idx,
     case cuvs::distance::DistanceType::CosineExpanded:
       metric_code = static_cast<int>(cuvs::distance::DistanceType::CosineExpanded);
       break;
-    default: return false;
+    default: RAFT_FAIL("Unsupported cuTile fused 1-NN metric");
   }
 
   IdxT shape_x[2]  = {m, k};
@@ -195,32 +191,75 @@ bool launch_fused_1nn_tile(IdxT* nearest_idx,
                                                          store_idx,
                                                          metric_code);
   RAFT_CUDA_TRY(cudaGetLastError());
-  return true;
 }
 
-template <typename AbiTag, typename DataT, typename IdxT>
-bool try_fused_1nn_tile_dispatch(IdxT* nearest_idx,
-                                 DataT* nearest_dist,
-                                 const DataT* x,
-                                 const DataT* y,
-                                 const fused_1nn_cutile_norm_t<DataT>* xn,
-                                 const fused_1nn_cutile_norm_t<DataT>* yn,
-                                 IdxT m,
-                                 IdxT n,
-                                 IdxT k,
-                                 cuvs::distance::DistanceType metric,
-                                 bool is_sqrt,
-                                 cudaStream_t stream)
+template <typename DataT, typename IdxT>
+void validate_fused_1nn_tile_launch(IdxT* nearest_idx,
+                                    DataT* nearest_dist,
+                                    const DataT* x,
+                                    const DataT* y,
+                                    const fused_1nn_cutile_norm_t<DataT>* xn,
+                                    const fused_1nn_cutile_norm_t<DataT>* yn,
+                                    IdxT m,
+                                    IdxT n,
+                                    IdxT k,
+                                    cuvs::distance::DistanceType metric,
+                                    void* index_workspace)
 {
-  return launch_fused_1nn_tile<DataT, IdxT, AbiTag>(
-    nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, is_sqrt, stream);
+  RAFT_EXPECTS(is_fused_1nn_tile_available(x, y, m, n, k, metric),
+               "Requested cuTile fused 1-NN backend is unavailable for this input/device");
+  RAFT_EXPECTS(nearest_dist != nullptr && is_16_byte_aligned(nearest_dist),
+               "cuTile fused 1-NN requires a 16-byte-aligned distance output");
+  if constexpr (std::is_same_v<IdxT, int>) {
+    RAFT_EXPECTS(is_16_byte_aligned(nearest_idx),
+                 "cuTile fused 1-NN requires a 16-byte-aligned int32 index output");
+  }
+  RAFT_EXPECTS(
+    metric == cuvs::distance::DistanceType::InnerProduct || (xn != nullptr && yn != nullptr),
+    "cuTile fused 1-NN requires norm buffers for this metric");
+  RAFT_EXPECTS(is_16_byte_aligned(xn) && is_16_byte_aligned(yn),
+               "cuTile fused 1-NN requires 16-byte-aligned norm buffers");
+
+  const auto x_bytes    = checked_tensor_bytes(m, k, sizeof(DataT));
+  const auto y_bytes    = checked_tensor_bytes(n, k, sizeof(DataT));
+  const auto dist_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
+  const auto idx_bytes  = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
+  const auto xn_bytes   = checked_tensor_bytes(m, IdxT{1}, sizeof(*xn));
+  const auto yn_bytes   = checked_tensor_bytes(n, IdxT{1}, sizeof(*yn));
+  RAFT_EXPECTS(!byte_ranges_overlap(nearest_dist, dist_bytes, x, x_bytes) &&
+                 !byte_ranges_overlap(nearest_dist, dist_bytes, y, y_bytes) &&
+                 !byte_ranges_overlap(nearest_idx, idx_bytes, x, x_bytes) &&
+                 !byte_ranges_overlap(nearest_idx, idx_bytes, y, y_bytes) &&
+                 !byte_ranges_overlap(nearest_idx, idx_bytes, nearest_dist, dist_bytes) &&
+                 !byte_ranges_overlap(nearest_dist, dist_bytes, xn, xn_bytes) &&
+                 !byte_ranges_overlap(nearest_dist, dist_bytes, yn, yn_bytes) &&
+                 !byte_ranges_overlap(nearest_idx, idx_bytes, xn, xn_bytes) &&
+                 !byte_ranges_overlap(nearest_idx, idx_bytes, yn, yn_bytes),
+               "cuTile fused 1-NN input, norm, and output buffers must not overlap");
+
+  if constexpr (std::is_same_v<IdxT, int64_t>) {
+    RAFT_EXPECTS(nearest_idx == nullptr || index_workspace != nullptr,
+                 "cuTile fused 1-NN requires int32 workspace for int64 index output");
+    RAFT_EXPECTS(is_16_byte_aligned(index_workspace),
+                 "cuTile fused 1-NN requires 16-byte-aligned index workspace");
+    const auto workspace_rows  = static_cast<IdxT>(fused_1nn_cutile_index_workspace_rows<DataT>(m));
+    const auto workspace_bytes = checked_tensor_bytes(workspace_rows, IdxT{1}, sizeof(int));
+    RAFT_EXPECTS(
+      !byte_ranges_overlap(index_workspace, workspace_bytes, x, x_bytes) &&
+        !byte_ranges_overlap(index_workspace, workspace_bytes, y, y_bytes) &&
+        !byte_ranges_overlap(index_workspace, workspace_bytes, xn, xn_bytes) &&
+        !byte_ranges_overlap(index_workspace, workspace_bytes, yn, yn_bytes) &&
+        !byte_ranges_overlap(index_workspace, workspace_bytes, nearest_dist, dist_bytes) &&
+        !byte_ranges_overlap(index_workspace, workspace_bytes, nearest_idx, idx_bytes),
+      "cuTile fused 1-NN index workspace must not overlap input or output buffers");
+  }
 }
 
 }  // namespace
 
 template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
-bool can_launch_fused_1nn_tile(
+bool is_fused_1nn_tile_available(
   const DataT* x, const DataT* y, IdxT m, IdxT n, IdxT k, cuvs::distance::DistanceType metric)
 {
   if (!cuvs::detail::jit_lto::cutile_launch_available_on_current_device()) { return false; }
@@ -247,114 +286,35 @@ bool can_launch_fused_1nn_tile(
 
 template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
-bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
-                               DataT* nearest_dist,
-                               const DataT* x,
-                               const DataT* y,
-                               IdxT m,
-                               IdxT n,
-                               IdxT k,
-                               cuvs::distance::DistanceType metric)
+void launch_fused_1nn_tile(IdxT* nearest_idx,
+                           DataT* nearest_dist,
+                           const DataT* x,
+                           const DataT* y,
+                           const fused_1nn_cutile_norm_t<DataT>* xn,
+                           const fused_1nn_cutile_norm_t<DataT>* yn,
+                           IdxT m,
+                           IdxT n,
+                           IdxT k,
+                           cuvs::distance::DistanceType metric,
+                           bool is_sqrt,
+                           void* index_workspace,
+                           cudaStream_t stream)
 {
-  if (!can_launch_fused_1nn_tile(x, y, m, n, k, metric)) { return false; }
-  if (nearest_dist == nullptr || !is_16_byte_aligned(nearest_dist)) { return false; }
-  if constexpr (std::is_same_v<IdxT, int>) {
-    if (!is_16_byte_aligned(nearest_idx)) { return false; }
-  }
-  const auto x_bytes    = checked_tensor_bytes(m, k, sizeof(DataT));
-  const auto y_bytes    = checked_tensor_bytes(n, k, sizeof(DataT));
-  const auto dist_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
-  const auto idx_bytes  = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
-  if (byte_ranges_overlap(nearest_dist, dist_bytes, x, x_bytes) ||
-      byte_ranges_overlap(nearest_dist, dist_bytes, y, y_bytes) ||
-      byte_ranges_overlap(nearest_idx, idx_bytes, x, x_bytes) ||
-      byte_ranges_overlap(nearest_idx, idx_bytes, y, y_bytes) ||
-      byte_ranges_overlap(nearest_idx, idx_bytes, nearest_dist, dist_bytes)) {
-    return false;
-  }
-  return true;
-}
-
-template <typename DataT, typename IdxT>
-  requires is_fused_1nn_cutile_data_v<DataT>
-bool can_launch_fused_1nn_tile(IdxT* nearest_idx,
-                               DataT* nearest_dist,
-                               const DataT* x,
-                               const DataT* y,
-                               const fused_1nn_cutile_norm_t<DataT>* xn,
-                               const fused_1nn_cutile_norm_t<DataT>* yn,
-                               IdxT m,
-                               IdxT n,
-                               IdxT k,
-                               cuvs::distance::DistanceType metric)
-{
-  if (!can_launch_fused_1nn_tile(nearest_idx, nearest_dist, x, y, m, n, k, metric)) {
-    return false;
-  }
-  if (metric != cuvs::distance::DistanceType::InnerProduct && (xn == nullptr || yn == nullptr)) {
-    return false;
-  }
-  if (!is_16_byte_aligned(xn) || !is_16_byte_aligned(yn)) { return false; }
-  const auto xn_bytes   = checked_tensor_bytes(m, IdxT{1}, sizeof(*xn));
-  const auto yn_bytes   = checked_tensor_bytes(n, IdxT{1}, sizeof(*yn));
-  const auto dist_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
-  const auto idx_bytes  = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
-  return !byte_ranges_overlap(nearest_dist, dist_bytes, xn, xn_bytes) &&
-         !byte_ranges_overlap(nearest_dist, dist_bytes, yn, yn_bytes) &&
-         !byte_ranges_overlap(nearest_idx, idx_bytes, xn, xn_bytes) &&
-         !byte_ranges_overlap(nearest_idx, idx_bytes, yn, yn_bytes);
-}
-
-template <typename DataT, typename IdxT>
-  requires is_fused_1nn_cutile_data_v<DataT>
-bool try_fused_1nn_tile(IdxT* nearest_idx,
-                        DataT* nearest_dist,
-                        const DataT* x,
-                        const DataT* y,
-                        const fused_1nn_cutile_norm_t<DataT>* xn,
-                        const fused_1nn_cutile_norm_t<DataT>* yn,
-                        IdxT m,
-                        IdxT n,
-                        IdxT k,
-                        cuvs::distance::DistanceType metric,
-                        bool is_sqrt,
-                        void* index_workspace,
-                        cudaStream_t stream)
-{
-  if (!can_launch_fused_1nn_tile(nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric)) {
-    return false;
-  }
+  validate_fused_1nn_tile_launch(
+    nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, index_workspace);
 
   constexpr int strict_pitch_elements = 16 / sizeof(DataT);
   const bool use_strict_abi           = k % strict_pitch_elements == 0;
 
   if constexpr (std::is_same_v<IdxT, int>) {
     if (use_strict_abi) {
-      return try_fused_1nn_tile_dispatch<cutile_abi_strict, DataT, int>(
+      launch_fused_1nn_tile_impl<DataT, int, cutile_abi_strict>(
+        nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, is_sqrt, stream);
+    } else {
+      launch_fused_1nn_tile_impl<DataT, int, cutile_abi_relaxed>(
         nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, is_sqrt, stream);
     }
-    return try_fused_1nn_tile_dispatch<cutile_abi_relaxed, DataT, int>(
-      nearest_idx, nearest_dist, x, y, xn, yn, m, n, k, metric, is_sqrt, stream);
   } else {
-    if (nearest_idx != nullptr && index_workspace == nullptr) { return false; }
-    if (!is_16_byte_aligned(index_workspace)) { return false; }
-    const auto workspace_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(int));
-    const auto x_bytes         = checked_tensor_bytes(m, k, sizeof(DataT));
-    const auto y_bytes         = checked_tensor_bytes(n, k, sizeof(DataT));
-    const auto norm_x_bytes    = checked_tensor_bytes(m, IdxT{1}, sizeof(*xn));
-    const auto norm_y_bytes    = checked_tensor_bytes(n, IdxT{1}, sizeof(*yn));
-    const auto dist_bytes      = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
-    const auto idx_bytes       = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
-    if (byte_ranges_overlap(index_workspace, workspace_bytes, x, x_bytes) ||
-        byte_ranges_overlap(index_workspace, workspace_bytes, y, y_bytes) ||
-        byte_ranges_overlap(index_workspace, workspace_bytes, xn, norm_x_bytes) ||
-        byte_ranges_overlap(index_workspace, workspace_bytes, yn, norm_y_bytes) ||
-        byte_ranges_overlap(index_workspace, workspace_bytes, nearest_dist, dist_bytes) ||
-        byte_ranges_overlap(index_workspace, workspace_bytes, nearest_idx, idx_bytes)) {
-      return false;
-    }
-
-    // Keep every chunk offset 16-byte aligned for x, xn, and nearest_dist.
     constexpr int64_t max_batch_m = fused_1nn_cutile_max_batch_m<DataT>;
     auto* tmp_idx                 = static_cast<int*>(index_workspace);
     for (int64_t offset = 0; offset < m;) {
@@ -362,35 +322,35 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
       const int batch_m       = static_cast<int>(batch_m64);
       const auto* batch_x     = x + static_cast<size_t>(offset) * static_cast<size_t>(k);
       const auto* batch_xn    = xn == nullptr ? nullptr : xn + offset;
-      auto* batch_dist        = nearest_dist == nullptr ? nullptr : nearest_dist + offset;
+      auto* batch_dist        = nearest_dist + offset;
 
-      const bool launched =
-        use_strict_abi
-          ? try_fused_1nn_tile_dispatch<cutile_abi_strict, DataT, int>(tmp_idx,
-                                                                       batch_dist,
-                                                                       batch_x,
-                                                                       y,
-                                                                       batch_xn,
-                                                                       yn,
-                                                                       batch_m,
-                                                                       static_cast<int>(n),
-                                                                       static_cast<int>(k),
-                                                                       metric,
-                                                                       is_sqrt,
-                                                                       stream)
-          : try_fused_1nn_tile_dispatch<cutile_abi_relaxed, DataT, int>(tmp_idx,
-                                                                        batch_dist,
-                                                                        batch_x,
-                                                                        y,
-                                                                        batch_xn,
-                                                                        yn,
-                                                                        batch_m,
-                                                                        static_cast<int>(n),
-                                                                        static_cast<int>(k),
-                                                                        metric,
-                                                                        is_sqrt,
-                                                                        stream);
-      if (!launched) { return false; }
+      if (use_strict_abi) {
+        launch_fused_1nn_tile_impl<DataT, int, cutile_abi_strict>(tmp_idx,
+                                                                  batch_dist,
+                                                                  batch_x,
+                                                                  y,
+                                                                  batch_xn,
+                                                                  yn,
+                                                                  batch_m,
+                                                                  static_cast<int>(n),
+                                                                  static_cast<int>(k),
+                                                                  metric,
+                                                                  is_sqrt,
+                                                                  stream);
+      } else {
+        launch_fused_1nn_tile_impl<DataT, int, cutile_abi_relaxed>(tmp_idx,
+                                                                   batch_dist,
+                                                                   batch_x,
+                                                                   y,
+                                                                   batch_xn,
+                                                                   yn,
+                                                                   batch_m,
+                                                                   static_cast<int>(n),
+                                                                   static_cast<int>(k),
+                                                                   metric,
+                                                                   is_sqrt,
+                                                                   stream);
+      }
 
       if (nearest_idx != nullptr) {
         raft::linalg::unaryOp(
@@ -398,73 +358,42 @@ bool try_fused_1nn_tile(IdxT* nearest_idx,
       }
       offset += batch_m64;
     }
-    return true;
   }
 }
 
-#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(DataT, IdxT)     \
-  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \
+#define CUVS_INST_IS_FUSED_1NN_TILE_AVAILABLE(DataT, IdxT)            \
+  template CUVS_EXPORT bool is_fused_1nn_tile_available<DataT, IdxT>( \
     const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
 
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(float, int);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(float, int64_t);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(half, int);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS(half, int64_t);
+CUVS_INST_IS_FUSED_1NN_TILE_AVAILABLE(float, int);
+CUVS_INST_IS_FUSED_1NN_TILE_AVAILABLE(float, int64_t);
+CUVS_INST_IS_FUSED_1NN_TILE_AVAILABLE(half, int);
+CUVS_INST_IS_FUSED_1NN_TILE_AVAILABLE(half, int64_t);
 
-#undef CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_INPUTS
+#undef CUVS_INST_IS_FUSED_1NN_TILE_AVAILABLE
 
-#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(DataT, IdxT)  \
-  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \
-    IdxT*, DataT*, const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
+#define CUVS_INST_LAUNCH_FUSED_1NN_TILE(DataT, IdxT)            \
+  template CUVS_EXPORT void launch_fused_1nn_tile<DataT, IdxT>( \
+    IdxT*,                                                      \
+    DataT*,                                                     \
+    const DataT*,                                               \
+    const DataT*,                                               \
+    const fused_1nn_cutile_norm_t<DataT>*,                      \
+    const fused_1nn_cutile_norm_t<DataT>*,                      \
+    IdxT,                                                       \
+    IdxT,                                                       \
+    IdxT,                                                       \
+    cuvs::distance::DistanceType,                               \
+    bool,                                                       \
+    void*,                                                      \
+    cudaStream_t)
 
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(float, int);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(float, int64_t);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(half, int);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT(half, int64_t);
+CUVS_INST_LAUNCH_FUSED_1NN_TILE(float, int);
+CUVS_INST_LAUNCH_FUSED_1NN_TILE(float, int64_t);
+CUVS_INST_LAUNCH_FUSED_1NN_TILE(half, int);
+CUVS_INST_LAUNCH_FUSED_1NN_TILE(half, int64_t);
 
-#undef CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE_PREFLIGHT
-
-#define CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(DataT, IdxT)            \
-  template CUVS_EXPORT bool can_launch_fused_1nn_tile<DataT, IdxT>( \
-    IdxT*,                                                          \
-    DataT*,                                                         \
-    const DataT*,                                                   \
-    const DataT*,                                                   \
-    const fused_1nn_cutile_norm_t<DataT>*,                          \
-    const fused_1nn_cutile_norm_t<DataT>*,                          \
-    IdxT,                                                           \
-    IdxT,                                                           \
-    IdxT,                                                           \
-    cuvs::distance::DistanceType)
-
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(float, int);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(float, int64_t);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(half, int);
-CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE(half, int64_t);
-
-#undef CUVS_INST_CAN_LAUNCH_FUSED_1NN_TILE
-
-#define CUVS_INST_TRY_FUSED_1NN_TILE(DataT, IdxT)                                                  \
-  template CUVS_EXPORT bool try_fused_1nn_tile<DataT, IdxT>(IdxT*,                                 \
-                                                            DataT*,                                \
-                                                            const DataT*,                          \
-                                                            const DataT*,                          \
-                                                            const fused_1nn_cutile_norm_t<DataT>*, \
-                                                            const fused_1nn_cutile_norm_t<DataT>*, \
-                                                            IdxT,                                  \
-                                                            IdxT,                                  \
-                                                            IdxT,                                  \
-                                                            cuvs::distance::DistanceType,          \
-                                                            bool,                                  \
-                                                            void*,                                 \
-                                                            cudaStream_t)
-
-CUVS_INST_TRY_FUSED_1NN_TILE(float, int);
-CUVS_INST_TRY_FUSED_1NN_TILE(float, int64_t);
-CUVS_INST_TRY_FUSED_1NN_TILE(half, int);
-CUVS_INST_TRY_FUSED_1NN_TILE(half, int64_t);
-
-#undef CUVS_INST_TRY_FUSED_1NN_TILE
+#undef CUVS_INST_LAUNCH_FUSED_1NN_TILE
 
 }  // namespace detail
 }  // namespace distance

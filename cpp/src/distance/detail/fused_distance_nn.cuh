@@ -62,7 +62,7 @@ bool can_launch_fused_1nn_backend(Fused1nnBackend backend,
 {
   if (backend == Fused1nnBackend::Cutile) {
     if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
-      return can_launch_fused_1nn_tile(x, y, m, n, k, metric);
+      return is_fused_1nn_tile_available(x, y, m, n, k, metric);
     }
     return false;
   }
