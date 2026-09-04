@@ -1216,7 +1216,6 @@ if(NOT BUILD_CPU_ONLY)
     )
     list(APPEND cutile_fused_1nn_files "${cutile_fused_1nn_tiles}")
   endif()
-
   # Note that this matrix contains an `arch_includes` placeholder, since we don't currently have a
   # way to do an item-wise transform on a list after computing the matrix product and before
   # configuring the file
