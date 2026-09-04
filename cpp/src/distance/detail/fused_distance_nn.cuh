@@ -32,6 +32,7 @@ namespace detail {
 /** Explicit implementation selected for the top-1 nearest-neighbor primitive. */
 enum class Top1nnBackend : std::uint8_t {
   Cutile,
+  /** Legacy fused dispatcher: CUTLASS on SM80+, with its existing SIMT path before SM80. */
   Cutlass,
   Unfused,
 };
@@ -48,8 +49,8 @@ struct Top1nnTuning {
 
 /**
  * Output-independent backend probe. Call this before allocating backend-native result storage.
- * cuTile delegates to its launcher/ABI probe; CUTLASS is available for the legacy L2/cosine
- * fused primitive only.
+ * cuTile delegates to its launcher/ABI probe. The unfused implementation is always built;
+ * backend-specific input validation remains the responsibility of top_1_nn.
  */
 template <typename DataT, typename IdxT>
 bool is_top_1_nn_backend_available(Top1nnBackend backend,
@@ -66,7 +67,8 @@ bool is_top_1_nn_backend_available(Top1nnBackend backend,
     }
     return false;
   }
-  return (backend == Top1nnBackend::Cutlass || backend == Top1nnBackend::Unfused) &&
+  if (backend == Top1nnBackend::Unfused) { return true; }
+  return backend == Top1nnBackend::Cutlass &&
          metric != cuvs::distance::DistanceType::InnerProduct && x != nullptr && y != nullptr &&
          m > 0 && n > 0 && k > 0;
 }

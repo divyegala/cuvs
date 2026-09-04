@@ -36,7 +36,9 @@ inline const char* fused_1nn_kernel_entrypoint()
 
 template <typename DataT, typename AbiTag>
 struct Fused1nnTilePlanner : cuvs::detail::jit_lto::TileAlgorithmPlanner {
-  using DataTag  = fused_1nn_data_tag_t<DataT>;
+  using DataTag  = std::conditional_t<std::is_same_v<DataT, float>,
+                                      cuvs::neighbors::detail::tag_f,
+                                      cuvs::neighbors::detail::tag_h>;
   using IndexTag = cuvs::neighbors::detail::tag_index_i32;
 
   inline static cuvs::detail::jit_lto::TileLauncherCache launcher_cache{};
