@@ -7,55 +7,41 @@
 
 namespace cuvs::distance {
 
-#define CUVS_INSTANTIATE_TOP_1_NN(DataT, IdxT, NormT)                                      \
-  template CUVS_EXPORT void top_1_nn<DataT, IdxT, NormT>(raft::resources const&,           \
-                                                         IdxT*,                            \
-                                                         DataT*,                           \
-                                                         const DataT*,                     \
-                                                         const DataT*,                     \
-                                                         const NormT*,                     \
-                                                         const NormT*,                     \
-                                                         IdxT,                             \
-                                                         IdxT,                             \
-                                                         IdxT,                             \
-                                                         const detail::Top1nnTuning&,      \
-                                                         void*,                            \
-                                                         std::size_t,                      \
-                                                         bool,                             \
-                                                         bool,                             \
-                                                         bool,                             \
-                                                         DistanceType,                     \
-                                                         float,                            \
-                                                         detail::Fused1nnBackend,          \
-                                                         raft::KeyValuePair<IdxT, DataT>*, \
-                                                         cudaStream_t);                    \
-  template CUVS_EXPORT void top_1_nn<DataT, IdxT, NormT>(IdxT*,                            \
-                                                         DataT*,                           \
-                                                         const DataT*,                     \
-                                                         const DataT*,                     \
-                                                         const NormT*,                     \
-                                                         const NormT*,                     \
-                                                         IdxT,                             \
-                                                         IdxT,                             \
-                                                         IdxT,                             \
-                                                         const detail::Top1nnTuning&,      \
-                                                         void*,                            \
-                                                         std::size_t,                      \
-                                                         bool,                             \
-                                                         bool,                             \
-                                                         bool,                             \
-                                                         DistanceType,                     \
-                                                         float,                            \
-                                                         detail::Fused1nnBackend,          \
-                                                         raft::KeyValuePair<IdxT, DataT>*, \
-                                                         cudaStream_t)
+#define CUVS_INSTANTIATE_TOP_1_NN(DataT, IdxT, NormT, OutputKind)                            \
+  template CUVS_EXPORT void                                                                  \
+  top_1_nn<DataT, IdxT, typename detail::Top1nnOutputTypes<DataT, IdxT>::OutputKind, NormT>( \
+    raft::resources const&,                                                                  \
+    typename detail::Top1nnOutputTypes<DataT, IdxT>::OutputKind,                             \
+    const DataT*,                                                                            \
+    const DataT*,                                                                            \
+    const NormT*,                                                                            \
+    const NormT*,                                                                            \
+    IdxT,                                                                                    \
+    IdxT,                                                                                    \
+    IdxT,                                                                                    \
+    const detail::Top1nnTuning&,                                                             \
+    void*,                                                                                   \
+    std::size_t,                                                                             \
+    bool,                                                                                    \
+    bool,                                                                                    \
+    bool,                                                                                    \
+    DistanceType,                                                                            \
+    float,                                                                                   \
+    detail::Top1nnBackend,                                                                   \
+    cudaStream_t)
 
-CUVS_INSTANTIATE_TOP_1_NN(float, int, float);
-CUVS_INSTANTIATE_TOP_1_NN(float, int64_t, float);
-CUVS_INSTANTIATE_TOP_1_NN(double, int, double);
-CUVS_INSTANTIATE_TOP_1_NN(double, int64_t, double);
-CUVS_INSTANTIATE_TOP_1_NN(half, int, float);
-CUVS_INSTANTIATE_TOP_1_NN(half, int64_t, float);
+CUVS_INSTANTIATE_TOP_1_NN(float, int, float, kvp);
+CUVS_INSTANTIATE_TOP_1_NN(float, int, float, scalar);
+CUVS_INSTANTIATE_TOP_1_NN(float, int, float, separate);
+CUVS_INSTANTIATE_TOP_1_NN(float, int64_t, float, kvp);
+CUVS_INSTANTIATE_TOP_1_NN(float, int64_t, float, scalar);
+CUVS_INSTANTIATE_TOP_1_NN(float, int64_t, float, separate);
+CUVS_INSTANTIATE_TOP_1_NN(double, int, double, kvp);
+CUVS_INSTANTIATE_TOP_1_NN(double, int, double, scalar);
+CUVS_INSTANTIATE_TOP_1_NN(double, int64_t, double, kvp);
+CUVS_INSTANTIATE_TOP_1_NN(double, int64_t, double, scalar);
+CUVS_INSTANTIATE_TOP_1_NN(half, int, float, separate);
+CUVS_INSTANTIATE_TOP_1_NN(half, int64_t, float, separate);
 
 #undef CUVS_INSTANTIATE_TOP_1_NN
 

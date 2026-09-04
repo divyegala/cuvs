@@ -35,8 +35,7 @@ struct NNInputs {
   bool sqrt;
   uint64_t rng_seed;
   double tol;
-  cuvs::distance::detail::Fused1nnBackend backend =
-    cuvs::distance::detail::Fused1nnBackend::Cutlass;
+  cuvs::distance::detail::Top1nnBackend backend = cuvs::distance::detail::Top1nnBackend::Cutlass;
   cuvs::distance::detail::Top1nnTuning tuning{};
 };
 
@@ -103,7 +102,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
 
     if constexpr (impl == ImplType::fused) {
       workspace_size = m * sizeof(IdxT);
-      if (backend == cuvs::distance::detail::Fused1nnBackend::Unfused) {
+      if (backend == cuvs::distance::detail::Top1nnBackend::Unfused) {
         workspace_size = std::min<std::size_t>(m, tuning.unfused.row_tile) *
                          std::min<std::size_t>(n, tuning.unfused.candidate_tile) * sizeof(AccT);
       }
@@ -133,35 +132,38 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
 
     if constexpr (impl == ImplType::fused) {
       if constexpr (std::is_same_v<DataT, float>) {
-        if (backend == cuvs::distance::detail::Fused1nnBackend::Cutile &&
-            !cuvs::distance::detail::can_launch_fused_1nn_backend(
+        if (backend == cuvs::distance::detail::Top1nnBackend::Cutile &&
+            !cuvs::distance::detail::is_top_1_nn_backend_available(
               backend, x.data_handle(), y.data_handle(), m, n, k, metric)) {
           GTEST_SKIP() << "cuTile is not available for this device/input";
         }
-        cuvs::distance::top_1_nn<DataT, IdxT>(
-          handle,
-          backend == cuvs::distance::detail::Fused1nnBackend::Cutile ? cutile_idx.data_handle()
-                                                                     : nullptr,
-          backend == cuvs::distance::detail::Fused1nnBackend::Cutile ? cutile_dist.data_handle()
-                                                                     : nullptr,
-          x.data_handle(),
-          y.data_handle(),
-          x_norm.data_handle(),
-          y_norm.data_handle(),
-          m,
-          n,
-          k,
-          tuning,
-          (void*)workspace.data_handle(),
-          workspace_size,
-          sqrt,
-          true,
-          true,
-          metric,
-          0.0,
-          backend,
-          backend == cuvs::distance::detail::Fused1nnBackend::Cutile ? nullptr : out.data_handle(),
-          stream);
+        auto run_top_1_nn = [&](auto output) {
+          cuvs::distance::top_1_nn<DataT, IdxT>(handle,
+                                                output,
+                                                x.data_handle(),
+                                                y.data_handle(),
+                                                x_norm.data_handle(),
+                                                y_norm.data_handle(),
+                                                m,
+                                                n,
+                                                k,
+                                                tuning,
+                                                (void*)workspace.data_handle(),
+                                                workspace_size,
+                                                sqrt,
+                                                true,
+                                                true,
+                                                metric,
+                                                0.0,
+                                                backend,
+                                                stream);
+        };
+        if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
+          run_top_1_nn(cuvs::distance::Top1nnOutput<IdxT, DataT>{cutile_idx.data_handle(),
+                                                                 cutile_dist.data_handle()});
+        } else {
+          run_top_1_nn(out.data_handle());
+        }
       } else {
         static_assert(sizeof(DataT) == 0,
                       "fusedDistanceNNMinReduce is not implemented for datatype other than float");
@@ -190,7 +192,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   void compare()
   {
     if constexpr (impl == ImplType::fused) {
-      if (backend == cuvs::distance::detail::Fused1nnBackend::Cutile) {
+      if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
         vector_compare_soa(handle,
                            ref_out.data_handle(),
                            cutile_idx.data_handle(),
@@ -216,7 +218,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   IdxT k;
   DistanceType metric;
   bool sqrt;
-  cuvs::distance::detail::Fused1nnBackend backend;
+  cuvs::distance::detail::Top1nnBackend backend;
   cuvs::distance::detail::Top1nnTuning tuning;
   raft::device_matrix<DataT, IdxT> x;
   raft::device_matrix<DataT, IdxT> y;
@@ -249,12 +251,12 @@ template <typename IdxT>
 const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
   auto inputs = input_fp32<IdxT>;
   for (auto input : input_fp32<IdxT>) {
-    input.backend = cuvs::distance::detail::Fused1nnBackend::Unfused;
+    input.backend = cuvs::distance::detail::Top1nnBackend::Unfused;
     inputs.push_back(input);
   }
 #if CUVS_CUTILE_ENABLED
   for (auto input : input_fp32<IdxT>) {
-    input.backend = cuvs::distance::detail::Fused1nnBackend::Cutile;
+    input.backend = cuvs::distance::detail::Top1nnBackend::Cutile;
     inputs.push_back(input);
   }
 #endif

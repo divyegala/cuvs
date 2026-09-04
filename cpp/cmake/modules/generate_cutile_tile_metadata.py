@@ -4,9 +4,12 @@
 
 import argparse
 import json
+import runpy
 from pathlib import Path
 
-from compute_matrix_product import iterate_matrix_product
+iterate_matrix_product = runpy.run_path(
+    str(Path(__file__).with_name("compute_matrix_product.py"))
+)["iterate_matrix_product"]
 
 
 def main():

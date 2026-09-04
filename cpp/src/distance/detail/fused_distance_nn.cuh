@@ -29,8 +29,8 @@ namespace distance {
 
 namespace detail {
 
-/** Explicit implementation selected for the fused 1-NN primitive. */
-enum class Fused1nnBackend : std::uint8_t {
+/** Explicit implementation selected for the top-1 nearest-neighbor primitive. */
+enum class Top1nnBackend : std::uint8_t {
   Cutile,
   Cutlass,
   Unfused,
@@ -52,21 +52,21 @@ struct Top1nnTuning {
  * fused primitive only.
  */
 template <typename DataT, typename IdxT>
-bool can_launch_fused_1nn_backend(Fused1nnBackend backend,
-                                  const DataT* x,
-                                  const DataT* y,
-                                  IdxT m,
-                                  IdxT n,
-                                  IdxT k,
-                                  cuvs::distance::DistanceType metric)
+bool is_top_1_nn_backend_available(Top1nnBackend backend,
+                                   const DataT* x,
+                                   const DataT* y,
+                                   IdxT m,
+                                   IdxT n,
+                                   IdxT k,
+                                   cuvs::distance::DistanceType metric)
 {
-  if (backend == Fused1nnBackend::Cutile) {
+  if (backend == Top1nnBackend::Cutile) {
     if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
       return is_fused_1nn_tile_available(x, y, m, n, k, metric);
     }
     return false;
   }
-  return (backend == Fused1nnBackend::Cutlass || backend == Fused1nnBackend::Unfused) &&
+  return (backend == Top1nnBackend::Cutlass || backend == Top1nnBackend::Unfused) &&
          metric != cuvs::distance::DistanceType::InnerProduct && x != nullptr && y != nullptr &&
          m > 0 && n > 0 && k > 0;
 }
