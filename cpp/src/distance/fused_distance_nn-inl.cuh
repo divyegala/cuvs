@@ -18,7 +18,7 @@
 #include <raft/linalg/map.cuh>
 #include <raft/util/cuda_utils.cuh>
 
-#include <rmm/device_uvector.hpp>
+#include <rmm/cuda_stream_view.hpp>
 
 #include <cub/util_type.cuh>
 
@@ -301,6 +301,8 @@ void fusedDistanceNNMinReduce(OutT* min,
     "fusedDistanceNNMinReduce supports KVP or scalar distance output");
   raft::device_resources handle{rmm::cuda_stream_view{stream}};
   detail::Top1nnTuning tuning{};
+  const auto workspace_bytes =
+    top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, detail::Top1nnBackend::Cutlass);
   top_1_nn<DataT, IdxT>(handle,
                         min,
                         x,
@@ -312,7 +314,7 @@ void fusedDistanceNNMinReduce(OutT* min,
                         k,
                         tuning,
                         workspace,
-                        0,
+                        workspace_bytes,
                         sqrt,
                         initOutBuffer,
                         isRowMajor,
@@ -323,6 +325,75 @@ void fusedDistanceNNMinReduce(OutT* min,
 }
 
 namespace detail {
+
+inline std::size_t checked_top_1_nn_workspace_multiply(std::size_t lhs, std::size_t rhs)
+{
+  RAFT_EXPECTS(rhs == 0 || lhs <= std::numeric_limits<std::size_t>::max() / rhs,
+               "top_1_nn workspace size overflowed");
+  return lhs * rhs;
+}
+
+inline std::size_t checked_top_1_nn_workspace_add(std::size_t lhs, std::size_t rhs)
+{
+  RAFT_EXPECTS(lhs <= std::numeric_limits<std::size_t>::max() - rhs,
+               "top_1_nn workspace size overflowed");
+  return lhs + rhs;
+}
+
+template <typename IdxT>
+std::size_t checked_top_1_nn_extent(IdxT value)
+{
+  static_assert(std::is_integral_v<IdxT>);
+  if constexpr (std::is_signed_v<IdxT>) {
+    RAFT_EXPECTS(value >= 0, "top_1_nn dimensions must be non-negative");
+  }
+  using UnsignedIdxT = std::make_unsigned_t<IdxT>;
+  RAFT_EXPECTS(static_cast<UnsignedIdxT>(value) <= std::numeric_limits<std::size_t>::max(),
+               "top_1_nn dimension does not fit in size_t");
+  return static_cast<std::size_t>(value);
+}
+
+template <typename DataT, typename IdxT>
+struct UnfusedTop1nnWorkspaceLayout {
+  IdxT row_tile;
+  IdxT candidate_tile;
+  std::size_t candidate_offset;
+  std::size_t candidate_bytes;
+  std::size_t total_bytes;
+};
+
+template <typename DataT, typename IdxT>
+UnfusedTop1nnWorkspaceLayout<DataT, IdxT> make_unfused_top_1_nn_workspace_layout(
+  IdxT m, IdxT n, const Top1nnTuning& tuning)
+{
+  RAFT_EXPECTS(tuning.unfused.row_tile > 0 && tuning.unfused.candidate_tile > 0,
+               "Unfused top_1_nn tile dimensions must be positive");
+
+  const auto rows           = checked_top_1_nn_extent(m);
+  const auto candidates     = checked_top_1_nn_extent(n);
+  const auto row_tile       = std::min(tuning.unfused.row_tile, rows);
+  const auto candidate_tile = std::min(tuning.unfused.candidate_tile, candidates);
+  const auto distance_bytes = checked_top_1_nn_workspace_multiply(
+    checked_top_1_nn_workspace_multiply(row_tile, candidate_tile), sizeof(DataT));
+
+  using KeyValueT            = raft::KeyValuePair<IdxT, DataT>;
+  const auto candidate_bytes = candidate_tile < candidates
+                                 ? checked_top_1_nn_workspace_multiply(row_tile, sizeof(KeyValueT))
+                                 : 0;
+  auto candidate_offset      = distance_bytes;
+  if (candidate_bytes != 0) {
+    constexpr auto alignment = alignof(KeyValueT);
+    const auto padding       = (alignment - distance_bytes % alignment) % alignment;
+    candidate_offset         = checked_top_1_nn_workspace_add(distance_bytes, padding);
+  }
+  const auto total_bytes = checked_top_1_nn_workspace_add(candidate_offset, candidate_bytes);
+
+  return {static_cast<IdxT>(row_tile),
+          static_cast<IdxT>(candidate_tile),
+          candidate_offset,
+          candidate_bytes,
+          total_bytes};
+}
 
 template <typename DataT, typename IdxT, typename OutputT, typename NormT>
 void top_1_nn_cutile(OutputT output,
@@ -466,27 +537,25 @@ void top_1_nn_unfused(raft::resources const& handle,
 
   if constexpr (matching_norm_type && is_kvp_output) {
     RAFT_EXPECTS(output != nullptr, "Unfused top_1_nn requires its native KVP output buffer");
-    RAFT_EXPECTS(tuning.unfused.row_tile > 0 && tuning.unfused.candidate_tile > 0,
-                 "Unfused top_1_nn tile dimensions must be positive");
-
-    const auto max_row_tile       = static_cast<std::size_t>(m);
-    const auto max_candidate_tile = static_cast<std::size_t>(n);
-    const auto row_tile = static_cast<IdxT>(std::min(tuning.unfused.row_tile, max_row_tile));
-    const auto candidate_tile =
-      static_cast<IdxT>(std::min(tuning.unfused.candidate_tile, max_candidate_tile));
-    const auto required_workspace_bytes =
-      static_cast<std::size_t>(row_tile) * static_cast<std::size_t>(candidate_tile) * sizeof(DataT);
-    RAFT_EXPECTS(workspace != nullptr && workspace_bytes >= required_workspace_bytes,
+    const auto layout = make_unfused_top_1_nn_workspace_layout<DataT>(m, n, tuning);
+    RAFT_EXPECTS(layout.total_bytes == 0 || workspace != nullptr,
+                 "Unfused top_1_nn requires a workspace buffer");
+    RAFT_EXPECTS(workspace_bytes >= layout.total_bytes,
                  "Unfused top_1_nn workspace is smaller than its configured tile");
 
-    using KeyValueT = raft::KeyValuePair<IdxT, DataT>;
-    rmm::device_uvector<KeyValueT> candidate_min(candidate_tile < n ? row_tile : 0, stream);
+    const auto row_tile       = layout.row_tile;
+    const auto candidate_tile = layout.candidate_tile;
+    using KeyValueT           = raft::KeyValuePair<IdxT, DataT>;
+    auto* candidate_min =
+      layout.candidate_bytes == 0
+        ? nullptr
+        : reinterpret_cast<KeyValueT*>(static_cast<char*>(workspace) + layout.candidate_offset);
     for (IdxT row_offset = 0; row_offset < m; row_offset += row_tile) {
       const auto rows = std::min(row_tile, static_cast<IdxT>(m - row_offset));
       auto row_output = raft::make_device_vector_view<KeyValueT, IdxT>(output + row_offset, rows);
       for (IdxT candidate_offset = 0; candidate_offset < n; candidate_offset += candidate_tile) {
         const auto candidates = std::min(candidate_tile, static_cast<IdxT>(n - candidate_offset));
-        auto* tile_output = candidate_offset == 0 ? row_output.data_handle() : candidate_min.data();
+        auto* tile_output     = candidate_offset == 0 ? row_output.data_handle() : candidate_min;
         unfusedDistanceNNMinReduce<DataT, DataT, KeyValueT, IdxT>(
           handle,
           tile_output,
@@ -506,7 +575,7 @@ void top_1_nn_unfused(raft::resources const& handle,
           stream);
         if (candidate_offset != 0) {
           auto candidate_output =
-            raft::make_device_vector_view<const KeyValueT, IdxT>(candidate_min.data(), rows);
+            raft::make_device_vector_view<const KeyValueT, IdxT>(candidate_min, rows);
           raft::linalg::map(
             handle,
             row_output,
@@ -525,6 +594,29 @@ void top_1_nn_unfused(raft::resources const& handle,
 }
 
 }  // namespace detail
+
+template <typename DataT, typename IdxT>
+std::size_t top_1_nn_workspace_size(IdxT m,
+                                    IdxT n,
+                                    const detail::Top1nnTuning& tuning,
+                                    detail::Top1nnBackend backend)
+{
+  const auto rows = detail::checked_top_1_nn_extent(m);
+  detail::checked_top_1_nn_extent(n);
+  switch (backend) {
+    case detail::Top1nnBackend::Cutile:
+      if constexpr (std::is_same_v<IdxT, int64_t>) {
+        return detail::checked_top_1_nn_workspace_multiply(
+          detail::fused_1nn_cutile_index_workspace_rows<DataT>(m), sizeof(int));
+      }
+      return 0;
+    case detail::Top1nnBackend::Cutlass:
+      return detail::checked_top_1_nn_workspace_multiply(rows, sizeof(int));
+    case detail::Top1nnBackend::Unfused:
+      return detail::make_unfused_top_1_nn_workspace_layout<DataT>(m, n, tuning).total_bytes;
+  }
+  RAFT_FAIL("Unknown top_1_nn backend");
+}
 
 template <typename DataT, typename IdxT, typename OutputT, typename NormT>
 void top_1_nn(raft::resources const& handle,
@@ -548,6 +640,11 @@ void top_1_nn(raft::resources const& handle,
               cudaStream_t stream)
 {
   RAFT_EXPECTS(is_row_major, "top_1_nn only supports row-major inputs");
+  const auto required_workspace_bytes = top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, backend);
+  RAFT_EXPECTS(required_workspace_bytes == 0 || workspace != nullptr,
+               "top_1_nn requires a workspace buffer for the selected backend");
+  RAFT_EXPECTS(workspace_bytes >= required_workspace_bytes,
+               "top_1_nn workspace is too small for the selected backend");
   switch (backend) {
     case detail::Top1nnBackend::Cutile:
       detail::top_1_nn_cutile(output, x, y, xn, yn, m, n, k, workspace, sqrt, metric, stream);

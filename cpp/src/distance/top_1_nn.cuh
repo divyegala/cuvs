@@ -34,6 +34,18 @@ struct Top1nnOutputTypes {
 
 }  // namespace detail
 
+/**
+ * Return the workspace bytes required for one top-1 NN call.
+ *
+ * Callers that batch a larger problem should pass their maximum batch dimensions and reuse one
+ * allocation across calls.
+ */
+template <typename DataT, typename IdxT>
+CUVS_EXPORT std::size_t top_1_nn_workspace_size(IdxT m,
+                                                IdxT n,
+                                                const detail::Top1nnTuning& tuning,
+                                                detail::Top1nnBackend backend);
+
 /** Dispatch 1-NN to a selected backend using its native output representation. */
 template <typename DataT, typename IdxT, typename OutputT, typename NormT = DataT>
 CUVS_EXPORT void top_1_nn(raft::resources const& handle,
@@ -55,6 +67,19 @@ CUVS_EXPORT void top_1_nn(raft::resources const& handle,
                           float metric_arg,
                           detail::Top1nnBackend backend,
                           cudaStream_t stream);
+
+#define CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(DataT, IdxT)            \
+  extern template std::size_t top_1_nn_workspace_size<DataT, IdxT>( \
+    IdxT, IdxT, const detail::Top1nnTuning&, detail::Top1nnBackend)
+
+CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(float, int);
+CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(float, int64_t);
+CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(double, int);
+CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(double, int64_t);
+CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(half, int);
+CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(half, int64_t);
+
+#undef CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE
 
 #define CUVS_EXTERN_TOP_1_NN(DataT, IdxT, NormT, OutputKind)                                 \
   extern template void                                                                       \

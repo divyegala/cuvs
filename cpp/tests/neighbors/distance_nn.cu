@@ -101,11 +101,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
     }
 
     if constexpr (impl == ImplType::fused) {
-      workspace_size = m * sizeof(IdxT);
-      if (backend == cuvs::distance::detail::Top1nnBackend::Unfused) {
-        workspace_size = std::min<std::size_t>(m, tuning.unfused.row_tile) *
-                         std::min<std::size_t>(n, tuning.unfused.candidate_tile) * sizeof(AccT);
-      }
+      workspace_size = cuvs::distance::top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, backend);
     } else if constexpr (impl == ImplType::unfused) {
       workspace_size = m * n * sizeof(AccT);
     }
