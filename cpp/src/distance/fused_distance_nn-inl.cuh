@@ -394,6 +394,7 @@ UnfusedTop1nnWorkspaceLayout<DataT, IdxT> make_unfused_top_1_nn_workspace_layout
           total_bytes};
 }
 
+#if CUVS_CUTILE_ENABLED
 template <typename DataT, typename IdxT, typename OutputT, typename NormT>
 void top_1_nn_cutile(OutputT output,
                      const DataT* x,
@@ -430,6 +431,8 @@ void top_1_nn_cutile(OutputT output,
       "Requested cuTile fused 1-NN backend does not support these data, norm, or output types");
   }
 }
+
+#endif
 
 template <typename DataT, typename IdxT, typename OutputT, typename NormT>
 void top_1_nn_legacy_fused(OutputT output,
@@ -591,10 +594,12 @@ std::size_t top_1_nn_workspace_size(IdxT m,
   detail::checked_top_1_nn_extent(n);
   switch (backend) {
     case detail::Top1nnBackend::Cutile:
+#if CUVS_CUTILE_ENABLED
       if constexpr (std::is_same_v<IdxT, int64_t>) {
         return detail::checked_top_1_nn_workspace_multiply(
           detail::fused_1nn_cutile_index_workspace_rows<DataT>(m), sizeof(int));
       }
+#endif
       return 0;
     case detail::Top1nnBackend::Cutlass:
       return detail::checked_top_1_nn_workspace_multiply(rows, sizeof(int));
@@ -633,7 +638,11 @@ void top_1_nn(raft::resources const& handle,
                "top_1_nn workspace is too small for the selected backend");
   switch (backend) {
     case detail::Top1nnBackend::Cutile:
+#if CUVS_CUTILE_ENABLED
       detail::top_1_nn_cutile(output, x, y, xn, yn, m, n, k, workspace, sqrt, metric, stream);
+#else
+      RAFT_FAIL("Requested cuTile fused 1-NN backend was not built");
+#endif
       return;
     case detail::Top1nnBackend::Cutlass:
       detail::top_1_nn_legacy_fused(output,

@@ -14,11 +14,6 @@
 
 #include <cuvs/detail/jit_lto/tileir_compat.hpp>
 #include <cuvs/distance/distance.hpp>
-#include <raft/core/error.hpp>
-
-#ifndef CUVS_CUTILE_ENABLED
-#define CUVS_CUTILE_ENABLED 0
-#endif
 
 namespace cuvs {
 namespace distance {
@@ -28,9 +23,10 @@ template <typename DataT>
 inline constexpr bool is_fused_1nn_cutile_data_v =
   std::is_same_v<DataT, float> || std::is_same_v<DataT, half>;
 
-// Tensor-core products accumulate in FP32; FP16 norms must remain FP32 through the epilogue.
+// Norm buffers use FP32 storage. Accumulate FP16 norms in FP32; for FP32 inputs, accumulate
+// the squares of TF32-rounded values in FP32 to match the cuTile MMA operands.
 template <typename DataT>
-using fused_1nn_cutile_norm_t = std::conditional_t<std::is_same_v<DataT, half>, float, DataT>;
+using fused_1nn_cutile_norm_t = float;
 
 template <typename DataT>
 inline constexpr int64_t fused_1nn_cutile_max_batch_m = [] {
@@ -48,7 +44,6 @@ constexpr size_t fused_1nn_cutile_index_workspace_rows(IdxT m)
     rows < fused_1nn_cutile_max_batch_m<DataT> ? rows : fused_1nn_cutile_max_batch_m<DataT>);
 }
 
-#if CUVS_CUTILE_ENABLED
 /**
  * Return whether the input problem has a compatible cuTile launcher.
  *
@@ -81,33 +76,6 @@ void launch_fused_1nn_tile(IdxT* nearest_idx,
                            bool is_sqrt,
                            void* index_workspace,
                            cudaStream_t stream);
-#else
-template <typename DataT, typename IdxT>
-bool is_fused_1nn_tile_available(
-  const DataT*, const DataT*, IdxT, IdxT, IdxT, cuvs::distance::DistanceType)
-{
-  return false;
-}
-
-template <typename DataT, typename IdxT>
-void launch_fused_1nn_tile(IdxT*,
-                           DataT*,
-                           const DataT*,
-                           const DataT*,
-                           const fused_1nn_cutile_norm_t<DataT>*,
-                           const fused_1nn_cutile_norm_t<DataT>*,
-                           IdxT,
-                           IdxT,
-                           IdxT,
-                           cuvs::distance::DistanceType,
-                           bool,
-                           void*,
-                           cudaStream_t)
-{
-  RAFT_FAIL("Requested cuTile fused 1-NN backend was not built");
-}
-#endif
-
 }  // namespace detail
 }  // namespace distance
 }  // namespace cuvs

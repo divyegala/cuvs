@@ -1174,7 +1174,6 @@ if(NOT BUILD_CPU_ONLY)
   if(NOT DEFINED CUVS_CUTILE_ENABLED)
     set(CUVS_CUTILE_ENABLED 0)
   endif()
-  target_compile_definitions(cuvs_cpp_headers INTERFACE CUVS_CUTILE_ENABLED=${CUVS_CUTILE_ENABLED})
 
   set(fused_1nn_cutile_dir
       "${CMAKE_CURRENT_SOURCE_DIR}/src/distance/detail/fused_distance_nn/cutile"
@@ -1552,8 +1551,10 @@ if(NOT BUILD_CPU_ONLY)
 
   target_compile_definitions(
     cuvs_objs
-    PRIVATE $<$<BOOL:${BUILD_CAGRA_HNSWLIB}>:CUVS_BUILD_CAGRA_HNSWLIB>
-            $<$<BOOL:${BUILD_MG_ALGOS}>:CUVS_BUILD_MG_ALGOS> $<$<BOOL:${CUVS_NVTX}>:NVTX_ENABLED>
+    PRIVATE CUVS_CUTILE_ENABLED=${CUVS_CUTILE_ENABLED}
+            $<$<BOOL:${BUILD_CAGRA_HNSWLIB}>:CUVS_BUILD_CAGRA_HNSWLIB>
+            $<$<BOOL:${BUILD_MG_ALGOS}>:CUVS_BUILD_MG_ALGOS>
+            $<$<BOOL:${CUVS_NVTX}>:NVTX_ENABLED>
   )
 
   target_link_libraries(

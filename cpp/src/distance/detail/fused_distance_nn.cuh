@@ -6,7 +6,9 @@
 #pragma once
 
 #include "distance_ops/l2_exp.cuh"  // ops::l2_exp_distance_op
+#if CUVS_CUTILE_ENABLED
 #include "fused_distance_nn/cutile/fused_1nn_tile.hpp"
+#endif
 #include "fused_distance_nn/cutlass_base.cuh"
 #include "fused_distance_nn/fused_cosine_nn.cuh"
 #include "fused_distance_nn/fused_l2_nn.cuh"
@@ -62,9 +64,11 @@ bool is_top_1_nn_backend_available(Top1nnBackend backend,
                                    cuvs::distance::DistanceType metric)
 {
   if (backend == Top1nnBackend::Cutile) {
+#if CUVS_CUTILE_ENABLED
     if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
       return is_fused_1nn_tile_available(x, y, m, n, k, metric);
     }
+#endif
     return false;
   }
   if (backend == Top1nnBackend::Unfused) { return true; }
