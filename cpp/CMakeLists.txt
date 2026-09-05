@@ -1526,10 +1526,15 @@ if(NOT BUILD_CPU_ONLY)
     src/stats/trustworthiness_score.cu
     ${CUVS_MG_ALGOS}
     ${jit_lto_files}
-    ${cutile_fused_1nn_files}
-    $<$<BOOL:${CUVS_CUTILE_ENABLED}>:src/distance/detail/fused_distance_nn/cutile/fused_1nn_tile.cu>
-    ${cutile_smoke_files}
   )
+
+  if(CUVS_CUTILE_ENABLED)
+    target_sources(
+      cuvs_objs
+      PRIVATE ${cutile_fused_1nn_files}
+              src/distance/detail/fused_distance_nn/cutile/fused_1nn_tile.cu ${cutile_smoke_files}
+    )
+  endif()
 
   set_target_properties(
     cuvs_objs
