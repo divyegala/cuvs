@@ -1,11 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include "distance_ops/l2_exp.cuh"  // ops::l2_exp_distance_op
+#if CUVS_CUTILE_ENABLED
+#include "fused_distance_nn/cutile/fused_1nn_tile.hpp"
+#endif
 #include "fused_distance_nn/cutlass_base.cuh"
 #include "fused_distance_nn/fused_cosine_nn.cuh"
 #include "fused_distance_nn/fused_l2_nn.cuh"
@@ -13,19 +16,68 @@
 #include "fused_distance_nn/simt_kernel.cuh"
 #include "pairwise_distance_base.cuh"  // PairwiseDistances
 #include <cuvs/distance/distance.hpp>
-#include <raft/core/kvp.hpp>             // raft::KeyValuePair
-#include <raft/core/operators.hpp>       // raft::identity_op
+#include <raft/core/kvp.hpp>        // raft::KeyValuePair
+#include <raft/core/operators.hpp>  // raft::identity_op
+#include <raft/core/resource/cuda_stream.hpp>
+#include <raft/core/resources.hpp>
 #include <raft/linalg/contractions.cuh>  // Policy
 #include <raft/util/arch.cuh>            // raft::util::arch::SM_*
 #include <raft/util/cuda_utils.cuh>      // raft::ceildiv, raft::shfl
 
 #include <cstddef>  // size_t
-#include <limits>   // std::numeric_limits
+#include <cstdint>
+#include <limits>  // std::numeric_limits
 
 namespace cuvs {
 namespace distance {
 
 namespace detail {
+
+/** Explicit implementation selected for the top-1 nearest-neighbor primitive. */
+enum class Top1nnBackend : std::uint8_t {
+  Cutile,
+  /** Legacy fused dispatcher: CUTLASS on SM80+, with its existing SIMT path before SM80. */
+  Cutlass,
+  Unfused,
+};
+
+/** Tuning used only by the bounded-workspace unfused backend. */
+struct UnfusedTop1nnTuning {
+  std::size_t row_tile       = 8192;
+  std::size_t candidate_tile = 8192;
+};
+
+struct Top1nnTuning {
+  UnfusedTop1nnTuning unfused{};
+};
+
+/**
+ * Output-independent backend probe. Call this before allocating backend-native result storage.
+ * cuTile delegates to its launcher/ABI probe. The unfused implementation is always built;
+ * backend-specific input validation remains the responsibility of top_1_nn.
+ */
+template <typename DataT, typename IdxT>
+bool is_top_1_nn_backend_available(Top1nnBackend backend,
+                                   const DataT* x,
+                                   const DataT* y,
+                                   IdxT m,
+                                   IdxT n,
+                                   IdxT k,
+                                   cuvs::distance::DistanceType metric)
+{
+  if (backend == Top1nnBackend::Cutile) {
+#if CUVS_CUTILE_ENABLED
+    if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
+      return is_fused_1nn_tile_available(x, y, m, n, k, metric);
+    }
+#endif
+    return false;
+  }
+  if (backend == Top1nnBackend::Unfused) { return true; }
+  return backend == Top1nnBackend::Cutlass &&
+         metric != cuvs::distance::DistanceType::InnerProduct && x != nullptr && y != nullptr &&
+         m > 0 && n > 0 && k > 0;
+}
 
 template <typename DataT,
           typename OutT,
@@ -33,7 +85,8 @@ template <typename DataT,
           typename Policy,
           typename ReduceOpT,
           typename KVPReduceOpT>
-void fusedDistanceNNImpl(OutT* min,
+void fusedDistanceNNImpl(raft::resources const& handle,
+                         OutT* min,
                          const DataT* x,
                          const DataT* y,
                          const DataT* xn,
@@ -48,9 +101,9 @@ void fusedDistanceNNImpl(OutT* min,
                          bool initOutBuffer,
                          bool isRowMajor,
                          cuvs::distance::DistanceType metric,
-                         float metric_arg,
-                         cudaStream_t stream)
+                         float metric_arg)
 {
+  const auto stream = raft::resource::get_cuda_stream(handle);
   // The kernel policy is determined by fusedDistanceNN.
   typedef Policy P;
 
