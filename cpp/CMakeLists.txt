@@ -1209,7 +1209,7 @@ if(NOT BUILD_CPU_ONLY)
       "\n"
     )
     set(CUTILE_TILE_METADATA_INCLUDE
-        "<cuvs/detail/jit_lto/fused_distance_nn/fused_1nn_fragments.hpp>"
+        "#include <cuvs/detail/jit_lto/fused_distance_nn/fused_1nn_fragments.hpp>"
     )
     set(CUTILE_TILE_METADATA_NAMESPACE "cuvs::distance::detail")
     set(CUTILE_TILE_METADATA_ALIASES "${cutile_fused_1nn_tile_aliases}")

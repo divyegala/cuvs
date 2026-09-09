@@ -6,7 +6,7 @@
 #pragma once
 
 // clang-format off
-#include @CUTILE_TILE_METADATA_INCLUDE@
+@CUTILE_TILE_METADATA_INCLUDE@
 
 namespace @CUTILE_TILE_METADATA_NAMESPACE@ {
 
