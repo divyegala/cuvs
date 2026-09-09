@@ -15,6 +15,7 @@
 #include <cuvs/detail/jit_lto/tileir_compat.hpp>
 #include <cuvs/distance/distance.hpp>
 #include <raft/core/resources.hpp>
+#include <raft/util/cudart_utils.hpp>
 
 namespace cuvs {
 namespace distance {
@@ -32,7 +33,7 @@ using fused_1nn_cutile_norm_t = float;
 template <typename DataT>
 inline constexpr int64_t fused_1nn_cutile_max_batch_m = [] {
   constexpr int64_t max_i32         = std::numeric_limits<int>::max();
-  constexpr int64_t batch_alignment = 16 / sizeof(DataT);
+  constexpr int64_t batch_alignment = 16 / raft::gcd<int64_t>(16, sizeof(DataT));
   return max_i32 - max_i32 % batch_alignment;
 }();
 

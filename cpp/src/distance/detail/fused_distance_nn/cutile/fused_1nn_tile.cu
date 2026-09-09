@@ -36,11 +36,8 @@ bool byte_ranges_overlap(const void* lhs, size_t lhs_bytes, const void* rhs, siz
   if (lhs == nullptr || rhs == nullptr || lhs_bytes == 0 || rhs_bytes == 0) { return false; }
   const auto lhs_begin = reinterpret_cast<std::uintptr_t>(lhs);
   const auto rhs_begin = reinterpret_cast<std::uintptr_t>(rhs);
-  if (lhs_bytes > std::numeric_limits<std::uintptr_t>::max() - lhs_begin ||
-      rhs_bytes > std::numeric_limits<std::uintptr_t>::max() - rhs_begin) {
-    return true;
-  }
-  return lhs_begin < rhs_begin + rhs_bytes && rhs_begin < lhs_begin + lhs_bytes;
+  return lhs_begin <= rhs_begin ? rhs_begin - lhs_begin < lhs_bytes
+                                : lhs_begin - rhs_begin < rhs_bytes;
 }
 
 template <typename IdxT>

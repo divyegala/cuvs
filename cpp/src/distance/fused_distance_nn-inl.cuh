@@ -378,7 +378,7 @@ UnfusedTop1nnWorkspaceLayout<DataT, IdxT> make_unfused_top_1_nn_workspace_layout
   auto candidate_offset      = distance_bytes;
   if (candidate_bytes != 0) {
     constexpr auto alignment = alignof(KeyValueT);
-    const auto padding       = (alignment - distance_bytes % alignment) % alignment;
+    const auto padding       = alignment - distance_bytes % alignment;
     candidate_offset         = checked_top_1_nn_workspace_add(distance_bytes, padding);
   }
   const auto total_bytes = checked_top_1_nn_workspace_add(candidate_offset, candidate_bytes);

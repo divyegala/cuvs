@@ -1199,19 +1199,23 @@ if(NOT BUILD_CPU_ONLY)
       "<cuvs/detail/jit_lto/cutile_arch_tags.hpp>" "<cuvs/detail/jit_lto/common_fragments.hpp>"
   )
   if(CUVS_CUTILE_ENABLED)
-    cuvs_find_build_python(cutile_tile_metadata_python)
-    add_custom_command(
-      OUTPUT "${cutile_fused_1nn_tiles}"
-      COMMAND
-        "${cutile_tile_metadata_python}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/generate_cutile_tile_metadata.py" --matrix
-        "${fused_1nn_cutile_dir}/fused_1nn_cutile_matrix.json" --output "${cutile_fused_1nn_tiles}"
-        --namespace "cuvs::distance::detail" --include
-        "<cuvs/detail/jit_lto/fused_distance_nn/fused_1nn_fragments.hpp>" --alias-prefix
-        fused_1nn_matrix_tile
-      DEPENDS "${fused_1nn_cutile_dir}/fused_1nn_cutile_matrix.json"
-              "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/generate_cutile_tile_metadata.py"
-      VERBATIM
+    generate_string_matrix(
+      cutile_fused_1nn_tile_aliases
+      MATRIX_JSON_FILE
+      "${fused_1nn_cutile_dir}/fused_1nn_cutile_matrix.json"
+      ITEM_FORMAT
+      "using fused_1nn_matrix_tile_@data_abbrev@_@arch_tag@_@abi_abbrev@ = cutile_tile_config<@tile_m@, @tile_n@, @tile_k@>@semicolon@"
+      GLUE
+      "\n"
+    )
+    set(CUTILE_TILE_METADATA_INCLUDE
+        "<cuvs/detail/jit_lto/fused_distance_nn/fused_1nn_fragments.hpp>"
+    )
+    set(CUTILE_TILE_METADATA_NAMESPACE "cuvs::distance::detail")
+    set(CUTILE_TILE_METADATA_ALIASES "${cutile_fused_1nn_tile_aliases}")
+    configure_file(
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/cutile_tile_metadata.hpp.in"
+      "${cutile_fused_1nn_tiles}" @ONLY
     )
     list(APPEND cutile_fused_1nn_files "${cutile_fused_1nn_tiles}")
   endif()
