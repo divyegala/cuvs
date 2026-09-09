@@ -5,6 +5,12 @@
 
 #pragma once
 
-#include@CUTILE_TILE_METADATA_INCLUDE@
+// clang-format off
+#include @CUTILE_TILE_METADATA_INCLUDE@
 
-namespace@CUTILE_TILE_METADATA_NAMESPACE@ { @CUTILE_TILE_METADATA_ALIASES@ }  // namespace ##__1 ##
+namespace @CUTILE_TILE_METADATA_NAMESPACE@ {
+
+@CUTILE_TILE_METADATA_ALIASES@
+
+}  // namespace
+// clang-format on
