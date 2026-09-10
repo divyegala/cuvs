@@ -51,6 +51,20 @@ struct Top1nnTuning {
   UnfusedTop1nnTuning unfused{};
 };
 
+inline constexpr bool is_top_1_nn_metric_supported(Top1nnBackend backend, DistanceType metric)
+{
+  switch (backend) {
+    case Top1nnBackend::Cutile:
+      return metric == DistanceType::InnerProduct || metric == DistanceType::L2Expanded ||
+             metric == DistanceType::L2SqrtExpanded || metric == DistanceType::CosineExpanded;
+    case Top1nnBackend::Cutlass:
+    case Top1nnBackend::Unfused:
+      return metric == DistanceType::L2Expanded || metric == DistanceType::L2SqrtExpanded ||
+             metric == DistanceType::CosineExpanded;
+  }
+  return false;
+}
+
 /**
  * Output-independent backend probe. Call this before allocating backend-native result storage.
  * cuTile delegates to its launcher/ABI probe. The unfused implementation is always built;
@@ -65,6 +79,7 @@ bool is_top_1_nn_backend_available(Top1nnBackend backend,
                                    IdxT k,
                                    cuvs::distance::DistanceType metric)
 {
+  if (!is_top_1_nn_metric_supported(backend, metric)) { return false; }
   if (backend == Top1nnBackend::Cutile) {
 #if CUVS_CUTILE_ENABLED
     if constexpr (is_fused_1nn_cutile_data_v<DataT>) {
@@ -74,9 +89,8 @@ bool is_top_1_nn_backend_available(Top1nnBackend backend,
     return false;
   }
   if (backend == Top1nnBackend::Unfused) { return true; }
-  return backend == Top1nnBackend::Cutlass &&
-         metric != cuvs::distance::DistanceType::InnerProduct && x != nullptr && y != nullptr &&
-         m > 0 && n > 0 && k > 0;
+  return backend == Top1nnBackend::Cutlass && x != nullptr && y != nullptr && m > 0 && n > 0 &&
+         k > 0;
 }
 
 template <typename DataT,
@@ -130,7 +144,7 @@ void fusedDistanceNNImpl(raft::resources const& handle,
       fusedL2NNImpl<DataT, OutT, IdxT, P, ReduceOpT, KVPReduceOpT>(
         min, x, y, xn, yn, m, n, k, workspace, redOp, pairRedOp, sqrt, false, stream);
       break;
-    default: assert("only cosine/l2 metric is supported with fusedDistanceNN\n"); break;
+    default: RAFT_FAIL("Only cosine and L2 metrics are supported by fusedDistanceNN");
   }
 }
 

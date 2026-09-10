@@ -28,24 +28,27 @@ struct CutileModuleImage {
 };
 
 /**
- * Selects the newest compatible cubin in the device's compute-capability major family.
+ * Selects an exact architecture-specific cubin, with SM86 as the universal forward fallback.
  *
- * CUDA cubins are forward compatible across minor revisions within a major family, so an SM 8.9
- * device can load SM 8.6 SASS and an SM 12.1 device can load SM 12.0 SASS.
+ * Starting with SM90, SASS has architecture-specific and family-specific variants. cuTile emits
+ * only architecture-specific SASS, so a lower minor in the same compute-capability family is not a
+ * compatible fallback. SM86 SASS remains forward compatible with every newer GPU architecture.
  */
 inline const CubinFragmentEntry* find_compatible_cubin_fragment(
   int cc_major,
   int cc_minor,
   const std::vector<std::unique_ptr<CubinFragmentEntry>>& cubin_fragments)
 {
-  const CubinFragmentEntry* best = nullptr;
+  const CubinFragmentEntry* sm86_fallback = nullptr;
   for (const auto& fragment : cubin_fragments) {
-    if (fragment->get_cc_major() != cc_major || fragment->get_cc_minor() > cc_minor) { continue; }
-    if (best == nullptr || fragment->get_cc_minor() > best->get_cc_minor()) {
-      best = fragment.get();
+    if (fragment->get_cc_major() == cc_major && fragment->get_cc_minor() == cc_minor) {
+      return fragment.get();
+    }
+    if (fragment->get_cc_major() == 8 && fragment->get_cc_minor() == 6) {
+      sm86_fallback = fragment.get();
     }
   }
-  return best;
+  return can_launch_sm86_cubin(cc_major, cc_minor) ? sm86_fallback : nullptr;
 }
 
 /** Selects compatible prebuilt SASS for the device, or TileIR when the driver can JIT it. */

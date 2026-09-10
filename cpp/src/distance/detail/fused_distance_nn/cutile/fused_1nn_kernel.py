@@ -130,9 +130,12 @@ def make_kernel(
                     # avoids cancellation in the score used by argmin.
                     score = (0.5 * b_norm)[None, :] - accumulator
                 else:
-                    # Defer the A-norm division until after selecting the
-                    # winning centroid.
-                    score = accumulator / (-b_norm)[None, :]
+                    # Cosine distance involving any zero-norm vector is defined as 1.
+                    # A zero B norm therefore contributes a normalized dot score of 0.
+                    positive_b_norm = b_norm > 0.0
+                    safe_b_norm = ct.where(positive_b_norm, b_norm, 1.0)
+                    score = accumulator / (-safe_b_norm)[None, :]
+                    score = ct.where(positive_b_norm[None, :], score, 0.0)
 
             if n == num_tiles_n - 1:
                 col = ct.arange(tn, dtype=ct.int16)
@@ -160,7 +163,10 @@ def make_kernel(
                     apply_sqrt != 0, ct.sqrt(out_dist), out_dist
                 )
             else:
-                out_dist = 1.0 + best_dist / a_norm
+                positive_a_norm = a_norm > 0.0
+                safe_a_norm = ct.where(positive_a_norm, a_norm, 1.0)
+                out_dist = 1.0 + best_dist / safe_a_norm
+                out_dist = ct.where(positive_a_norm, out_dist, 1.0)
 
         if store_idx != 0:
             ct.store(OutIdx, index=(bidm,), tile=best_idx.reshape((tm,)))

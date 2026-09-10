@@ -68,10 +68,11 @@ inline bool cutile_integration_enabled()
   return library_built_with_cutile() && runtime_cuda13_or_newer();
 }
 
-/** True when this build embeds compatible SASS in the device's compute-capability major family. */
-inline bool has_embedded_cubin_for_arch(int cc_major, int cc_minor)
+/** True when this build embeds exact SASS or the universal SM86 fallback for the device. */
+inline bool has_compatible_embedded_cubin_for_arch(int cc_major, int cc_minor)
 {
-  return is_embedded_cubin_arch(cc_major, cc_minor);
+  return is_embedded_cubin_arch(cc_major, cc_minor) ||
+         (can_launch_sm86_cubin(cc_major, cc_minor) && is_embedded_cubin_arch(8, 6));
 }
 
 /** True when the driver can JIT-compile embedded TileIR bytecode at load time. */
@@ -82,17 +83,16 @@ inline bool tileir_fallback_available(int driver_version)
 
 /**
  * True when a cuTile launch may be attempted for the given device: cuTile is enabled, the runtime
- * is CUDA 13+, and either compatible same-family SASS exists (no driver JIT required) or the
- * driver can JIT the embedded TileIR bytecode fallback.
+ * is CUDA 13+, and either exact SASS or the universal SM86 fallback exists (no driver JIT
+ * required), or the driver can JIT the embedded TileIR bytecode fallback.
  */
 #if CUVS_CUTILE_ENABLED
 inline bool cutile_launch_available_for_arch(int cc_major, int cc_minor, int driver_version)
 {
   if (!runtime_cuda13_or_newer()) { return false; }
-  // The exported fused-1NN kernels require Ampere-or-newer tensor-core semantics, and the current
-  // integration is validated only through the SM12 family.
-  if (cc_major < 8 || cc_major > 12) { return false; }
-  if (has_embedded_cubin_for_arch(cc_major, cc_minor)) { return true; }
+  // The exported fused-1NN kernels require Ampere-or-newer tensor-core semantics.
+  if (cc_major < 8) { return false; }
+  if (has_compatible_embedded_cubin_for_arch(cc_major, cc_minor)) { return true; }
   return tileir_fallback_available(driver_version);
 }
 #else

@@ -82,10 +82,9 @@ __global__ void reduce_min_kernel(OutT* out,
       // GEMM round-off can produce slightly negative expanded distances; clamp to zero.
       dist = (dist > AccT(0)) ? dist : AccT(0);
     } else if constexpr (metric == DistanceType::CosineExpanded) {
-      // Guard against zero-norm vectors to avoid inf/NaN from division by zero.
-      AccT denom = x_norm_row * y_norm[col];
-      denom      = (denom > AccT(0)) ? denom : AccT(1);
-      dist       = AccT(1.0) - (z[row * n + col] / denom);
+      // Cosine distance involving any zero-norm vector is defined as 1.
+      const AccT denom = x_norm_row * y_norm[col];
+      dist             = denom > AccT(0) ? AccT(1.0) - (z[row * n + col] / denom) : AccT(1.0);
     }
     if (dist < thread_min.value) {
       thread_min.value = dist;

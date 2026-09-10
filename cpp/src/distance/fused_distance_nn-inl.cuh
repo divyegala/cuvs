@@ -532,11 +532,11 @@ void top_1_nn_unfused(raft::resources const& handle,
       layout.candidate_bytes == 0
         ? nullptr
         : reinterpret_cast<NativeOutputT*>(static_cast<char*>(workspace) + layout.candidate_offset);
-    for (IdxT row_offset = 0; row_offset < m; row_offset += row_tile) {
+    for (IdxT row_offset = 0; row_offset < m;) {
       const auto rows = std::min(row_tile, static_cast<IdxT>(m - row_offset));
       auto row_output =
         raft::make_device_vector_view<NativeOutputT, IdxT>(output + row_offset, rows);
-      for (IdxT candidate_offset = 0; candidate_offset < n; candidate_offset += candidate_tile) {
+      for (IdxT candidate_offset = 0; candidate_offset < n;) {
         const auto candidates = std::min(candidate_tile, static_cast<IdxT>(n - candidate_offset));
         auto* tile_output     = candidate_offset == 0 ? row_output.data_handle() : candidate_min;
         unfusedDistanceNNMinReduce<DataT, DataT, NativeOutputT, IdxT>(
@@ -572,7 +572,9 @@ void top_1_nn_unfused(raft::resources const& handle,
             raft::make_const_mdspan(row_output),
             candidate_output);
         }
+        candidate_offset += candidates;
       }
+      row_offset += rows;
     }
   } else {
     RAFT_FAIL("Unfused top_1_nn requires matching norm types and native KVP or scalar output");
@@ -627,6 +629,13 @@ void top_1_nn(raft::resources const& handle,
               detail::Top1nnBackend backend)
 {
   RAFT_EXPECTS(is_row_major, "top_1_nn only supports row-major inputs");
+  RAFT_EXPECTS(m > 0 && n > 0 && k > 0, "top_1_nn requires positive m, n, and k");
+  RAFT_EXPECTS(detail::is_top_1_nn_metric_supported(backend, metric),
+               "Selected top_1_nn backend does not support the requested metric");
+  RAFT_EXPECTS(x != nullptr && y != nullptr, "top_1_nn requires non-null input buffers");
+  RAFT_EXPECTS(
+    metric == cuvs::distance::DistanceType::InnerProduct || (xn != nullptr && yn != nullptr),
+    "top_1_nn requires non-null norm buffers for the requested metric");
   const auto required_workspace_bytes = top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, backend);
   RAFT_EXPECTS(required_workspace_bytes == 0 || workspace != nullptr,
                "top_1_nn requires a workspace buffer for the selected backend");
