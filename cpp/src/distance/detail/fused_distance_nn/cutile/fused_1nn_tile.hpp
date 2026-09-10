@@ -12,7 +12,7 @@
 
 #include <cuda_runtime.h>
 
-#include <cuvs/detail/jit_lto/tileir_compat.hpp>
+#include <cuvs/detail/jit_lto/cutile_compat.hpp>
 #include <cuvs/distance/distance.hpp>
 #include <raft/core/resources.hpp>
 #include <raft/util/cudart_utils.hpp>

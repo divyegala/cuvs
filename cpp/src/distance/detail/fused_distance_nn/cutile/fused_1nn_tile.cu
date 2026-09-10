@@ -57,7 +57,6 @@ bool has_fused_1nn_tile_launcher()
 {
   Fused1nnTilePlanner<DataT, AbiTag> planner;
   planner.add_entrypoint();
-  planner.add_tileir_fallback();
   return planner.try_get_launcher() != nullptr;
 }
 
@@ -78,7 +77,6 @@ void launch_fused_1nn_tile_impl(raft::resources const& handle,
   const auto stream = raft::resource::get_cuda_stream(handle);
   Fused1nnTilePlanner<DataT, AbiTag> planner;
   planner.add_entrypoint();
-  planner.add_tileir_fallback();
   auto launcher = planner.try_get_launcher();
   RAFT_EXPECTS(launcher != nullptr, "Requested cuTile fused 1-NN launcher is unavailable");
   const cuvs::detail::jit_lto::CutileTileConfig tile_cfg = planner.tile_config();

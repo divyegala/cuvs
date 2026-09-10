@@ -23,7 +23,4 @@ struct fragment_tag_fused_1nn_cubin {
   static constexpr int cc_minor = ArchTag::cc_minor;
 };
 
-template <typename DataTag, typename IndexTag, typename TileTag, typename AbiTag>
-struct fragment_tag_fused_1nn_tileir {};
-
 }  // namespace cuvs::distance::detail

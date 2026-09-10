@@ -1,13 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Export fused 1-NN cuTile kernels to cubin or TileIR bytecode."""
+"""Export fused 1-NN cuTile kernels to cubin."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
-from typing import Literal
 
 import cuda.tile as ct
 from cuda.tile.compilation import (
@@ -33,11 +32,6 @@ from fused_1nn_kernel import (  # noqa: E402
     kernel_symbol,
     make_kernel,
 )
-
-DEFAULT_TILEIR_BYTECODE_VERSION = "13.1"
-# cuTile requires a gpu_code even for TileIR bytecode export: it selects the compilation
-# target / feature set for lowering, not the runtime architecture (the driver JITs at load).
-DEFAULT_TILEIR_EXPORT_GPU_CODE = "sm_80"
 
 
 def _dtype_for(data_type: str):
@@ -199,7 +193,6 @@ def _kernel_signature(
 def export_binary(
     output_file: Path,
     *,
-    output_format: Literal["cubin", "tileir_bytecode"],
     data_type: str,
     metric: str,
     index_type: str,
@@ -209,7 +202,6 @@ def export_binary(
     gpu_code: str,
     matrix_layout: str = "strict",
     occupancy: int | None = None,
-    bytecode_version: str | None = None,
 ) -> str:
     kernel = make_kernel(
         data_type,
@@ -233,19 +225,13 @@ def export_binary(
         matrix_layout,
     )
 
-    export_kwargs = {
-        "kernel": kernel,
-        "signatures": [signature],
-        "output_file": str(output_file),
-        "gpu_code": gpu_code,
-        "output_format": output_format,
-    }
-    if output_format == "tileir_bytecode":
-        export_kwargs["bytecode_version"] = (
-            bytecode_version or DEFAULT_TILEIR_BYTECODE_VERSION
-        )
-
-    export_kernel(**export_kwargs)
+    export_kernel(
+        kernel=kernel,
+        signatures=[signature],
+        output_file=str(output_file),
+        gpu_code=gpu_code,
+        output_format="cubin",
+    )
 
     return signature.symbol
 
@@ -253,9 +239,7 @@ def export_binary(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_file", type=Path)
-    parser.add_argument(
-        "--format", choices=("cubin", "tileir_bytecode"), default="cubin"
-    )
+    parser.add_argument("--format", choices=("cubin",), default="cubin")
     parser.add_argument(
         "--data-type", choices=("half", "float"), required=True
     )
@@ -265,9 +249,7 @@ def main() -> int:
     parser.add_argument("--tile-n", type=int, required=True)
     parser.add_argument("--tile-k", type=int, required=True)
     parser.add_argument(
-        "--gpu-code",
-        default=DEFAULT_TILEIR_EXPORT_GPU_CODE,
-        help="Target SM for cubin export, or compile hint for TileIR bytecode export",
+        "--gpu-code", required=True, help="Target SM for cubin export"
     )
     parser.add_argument(
         "--matrix-layout",
@@ -275,14 +257,10 @@ def main() -> int:
         default="strict",
     )
     parser.add_argument("--occupancy", type=int)
-    parser.add_argument(
-        "--bytecode-version", default=DEFAULT_TILEIR_BYTECODE_VERSION
-    )
     args = parser.parse_args()
 
     export_binary(
         args.output_file,
-        output_format=args.format,
         data_type=args.data_type,
         metric=args.metric,
         index_type=args.index_type,
@@ -292,7 +270,6 @@ def main() -> int:
         gpu_code=args.gpu_code,
         matrix_layout=args.matrix_layout,
         occupancy=args.occupancy,
-        bytecode_version=args.bytecode_version,
     )
     return 0
 

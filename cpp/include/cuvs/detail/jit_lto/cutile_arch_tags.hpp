@@ -51,10 +51,10 @@ inline bool is_embedded_cubin_arch(int, int) { return false; }
 
 #endif
 
-/** SM86 SASS is forward compatible with every SM86-or-newer GPU architecture. */
-inline constexpr bool can_launch_sm86_cubin(int cc_major, int cc_minor)
+/** SM89 is binary compatible with the embedded SM86 SASS. */
+inline constexpr bool can_use_sm86_compat_cubin(int cc_major, int cc_minor)
 {
-  return cc_major > 8 || (cc_major == 8 && cc_minor >= 6);
+  return cc_major == 8 && cc_minor == 9;
 }
 
 }  // namespace cuvs::detail::jit_lto

@@ -260,40 +260,6 @@
           "arch_tag": "cutile_arch_12_0"
         }
       ]
-    },
-    {
-      "output_format": "tileir_bytecode",
-      "artifact_ext": "tilebc",
-      "artifact_basename": "@data_type@_@index_abbrev@_@abi_abbrev@",
-      "register": "tileir",
-      "gpu_code": "sm_80",
-      "arch_tag": "tileir",
-      "bytecode_version": "13.1",
-      "tile_m": 128,
-      "tile_n": 128,
-      "tile_k": 32,
-      "_data": [
-        {
-          "data_type": "half",
-          "data_abbrev": "h"
-        },
-        {
-          "data_type": "float",
-          "data_abbrev": "f"
-        }
-      ],
-      "_abi": [
-        {
-          "matrix_layout": "relaxed",
-          "abi_abbrev": "relaxed",
-          "abi_tag": "cutile_abi_relaxed"
-        },
-        {
-          "matrix_layout": "strict",
-          "abi_abbrev": "strict",
-          "abi_tag": "cutile_abi_strict"
-        }
-      ]
     }
   ]
 }

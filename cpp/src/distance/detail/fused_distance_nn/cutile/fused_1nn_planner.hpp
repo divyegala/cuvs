@@ -112,21 +112,6 @@ struct Fused1nnTilePlanner : cuvs::detail::jit_lto::TileAlgorithmPlanner {
     this->add_static_fragment<
       fragment_tag_fused_1nn_cubin<DataTag, IndexTag, Tile120, AbiTag, cutile_arch_12_0>>();
   }
-
-  void add_tileir_fallback()
-  {
-    constexpr bool is_relaxed = std::is_same_v<AbiTag, cutile_abi_relaxed>;
-    constexpr bool is_float   = std::is_same_v<DataTag, cuvs::neighbors::detail::tag_f>;
-    using TileIr              = std::conditional_t<is_float,
-                                                   std::conditional_t<is_relaxed,
-                                                                      fused_1nn_matrix_tile_f_tileir_relaxed,
-                                                                      fused_1nn_matrix_tile_f_tileir_strict>,
-                                                   std::conditional_t<is_relaxed,
-                                                                      fused_1nn_matrix_tile_h_tileir_relaxed,
-                                                                      fused_1nn_matrix_tile_h_tileir_strict>>;
-    this->add_static_tileir_fragment<
-      fragment_tag_fused_1nn_tileir<DataTag, IndexTag, TileIr, AbiTag>>();
-  }
 };
 
 }  // namespace cuvs::distance::detail
