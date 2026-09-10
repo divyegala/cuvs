@@ -49,6 +49,8 @@ std::size_t validate_views(std::span<const cuvs::core::roaring_allowlist_view> a
 float estimate_filtering_rate(std::span<const cuvs::core::roaring_allowlist_view> allowlists,
                               std::size_t dataset_rows)
 {
+  // CAGRA accepts one filtering-rate hint for the entire batch. Use the sparsest allowlist so no
+  // query is under-provisioned; callers can override the hint when throughput is more important.
   auto minimum_cardinality = dataset_rows;
   for (auto const& allowlist : allowlists) {
     minimum_cardinality = std::min(minimum_cardinality, allowlist.cardinality());

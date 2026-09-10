@@ -202,6 +202,7 @@ TEST(RoaringFilter, ReusesViewsUpdatesMappingsAndRejectsInvalidInputs)
   EXPECT_EQ(filter.dataset_rows(), 16);
   EXPECT_EQ(filter.cardinality(0), 2);
   EXPECT_EQ(filter.cardinality(1), 3);
+  // The automatic batch hint follows the sparsest row: 1 - 2 / 16.
   EXPECT_FLOAT_EQ(filter.filtering_rate(), 0.875f);
 
   auto const* payload = filter.device_payload();

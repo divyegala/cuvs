@@ -414,6 +414,29 @@ TEST_P(CagraUdfFilterTest, TenantContextHonorsQuerySpecificMetadata)
   auto roaring_result = search(roaring_filter, 2.0f / 3.0f);
   expect_same_results(result, roaring_result);
 
+  // Exercise both device tables: first mark one query empty, then repoint that same slot to a
+  // different reusable owner and verify CAGRA consumes the updated mapping.
+  auto empty_allowlist = cuvs::core::roaring_allowlist::from_ids(
+    res, n_rows, raft::make_host_vector_view<const std::uint32_t, std::int64_t>(nullptr, 0));
+  roaring_filter.set_allowlist(res, 1, empty_allowlist.view());
+  auto empty_result = search(roaring_filter, 0.999f);
+  for (std::int64_t i = 0; i < k; ++i) {
+    auto const source_id = empty_result.neighbors[static_cast<std::size_t>(k + i)];
+    EXPECT_GE(source_id, static_cast<std::uint32_t>(n_rows));
+  }
+
+  roaring_filter.set_allowlist(res, 1, tenant_allowlists.front().view());
+  auto updated_result = search(roaring_filter, 2.0f / 3.0f);
+  for (std::int64_t query = 0; query < n_queries; ++query) {
+    auto const expected_tenant =
+      query == 1 ? std::uint32_t{0} : host_query_tenants[static_cast<std::size_t>(query)];
+    for (std::int64_t i = 0; i < k; ++i) {
+      auto const source_id = updated_result.neighbors[static_cast<std::size_t>(query * k + i)];
+      ASSERT_LT(source_id, static_cast<std::uint32_t>(n_rows));
+      EXPECT_EQ(host_row_tenants[source_id], expected_tenant);
+    }
+  }
+
   if (GetParam() == cagra::search_algo::SINGLE_CTA) {
     auto wrong_queries = cuvs::core::roaring_allowlist::from_ids(
       res, n_rows, raft::make_host_vector_view<const std::uint32_t, std::int64_t>(nullptr, 0));

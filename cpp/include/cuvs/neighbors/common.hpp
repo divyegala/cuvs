@@ -1529,6 +1529,10 @@ struct bloom_filter : public base_filter {
  * and device payload, but not the referenced owners, which must outlive the filter and all searches
  * using it. Copies are cheap shared handles required by CAGRA query-offset wrappers.
  *
+ * Roaring filters currently support direct @c cagra::search only. Dynamic batching can combine
+ * requests into a different query-row layout, and tiered search applies one filter to partitions
+ * with different row domains; both paths reject this filter type.
+ *
  * @see cuvs::core::roaring_allowlist
  * @see https://github.com/RoaringBitmap/RoaringFormatSpec
  */
@@ -1556,9 +1560,12 @@ struct roaring_filter : public base_filter {
   [[nodiscard]] bool empty(std::size_t query_id) const;
 
   /**
-   * @brief Maximum rejected fraction among all query allowlists.
+   * @brief Conservative maximum rejected fraction among all query allowlists.
    *
-   * CAGRA uses this precomputed value when `search_params::filtering_rate` is unset.
+   * CAGRA uses this precomputed value when `search_params::filtering_rate` is unset. Basing one
+   * batch-wide scalar on the sparsest query avoids under-provisioning that query, but a very sparse
+   * or empty allowlist can increase the search work performed for every query in the batch. Callers
+   * may set `search_params::filtering_rate` explicitly when another tradeoff is preferable.
    */
   [[nodiscard]] float filtering_rate() const noexcept;
 

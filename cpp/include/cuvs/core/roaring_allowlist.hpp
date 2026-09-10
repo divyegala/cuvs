@@ -89,7 +89,8 @@ class CUVS_EXPORT roaring_allowlist {
    *
    * Host IDs are copied to the construction stream and then use the same device builder as the
    * device overload. IDs must be smaller than dataset_rows; this precondition is not checked.
-   * Empty input is valid and rejects every candidate.
+   * Empty input is valid and rejects every candidate. The returned object is ready for same-stream
+   * use; cross-stream use requires an explicit dependency on the construction stream.
    */
   static roaring_allowlist from_ids(raft::resources const& res,
                                     std::size_t dataset_rows,
@@ -102,6 +103,8 @@ class CUVS_EXPORT roaring_allowlist {
    * The input must remain valid until the construction stream reaches the enqueued work. IDs must
    * be smaller than dataset_rows; this precondition is not checked.
    * Temporary memory is O(cardinality + container count); no dataset-sized dense bitmap is used.
+   * The returned object is ready for same-stream use; cross-stream use requires an explicit
+   * dependency on the construction stream.
    */
   static roaring_allowlist from_ids(raft::resources const& res,
                                     std::size_t dataset_rows,
