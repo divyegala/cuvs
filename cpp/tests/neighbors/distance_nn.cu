@@ -151,7 +151,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
                                               backend);
       };
       if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
-        if constexpr (cuvs::distance::detail::is_fused_1nn_cutile_data_v<DataT>) {
+        if constexpr (std::is_same_v<DataT, float> || std::is_same_v<DataT, half>) {
           run_top_1_nn(cuvs::distance::Top1nnOutput<IdxT, AccT>{cutile_idx.data_handle(),
                                                                 cutile_dist.data_handle()});
         } else {
