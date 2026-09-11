@@ -65,7 +65,8 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
       ref_dist{raft::make_device_vector<AccT, IdxT>(handle, m)},
       selected_dist{raft::make_device_vector<AccT, IdxT>(handle, m)},
       cutile_idx{raft::make_device_vector<IdxT, IdxT>(handle, m)},
-      cutile_dist{raft::make_device_vector<AccT, IdxT>(handle, m)}
+      cutile_dist{raft::make_device_vector<DataT, IdxT>(handle, m)},
+      cutile_dist_acc{raft::make_device_vector<AccT, IdxT>(handle, m)}
   {
   }
 
@@ -125,41 +126,42 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
       handle, ref_out.data_handle(), x.data_handle(), y.data_handle(), m, n, k, sqrt, metric);
 
     if constexpr (impl == ImplType::fused) {
-      if constexpr (std::is_same_v<DataT, float>) {
-        if (backend == cuvs::distance::detail::Top1nnBackend::Cutile &&
-            !cuvs::distance::detail::is_top_1_nn_backend_available(
-              backend, x.data_handle(), y.data_handle(), m, n, k, metric)) {
-          GTEST_SKIP() << "cuTile is not available for this device/input";
-        }
-        auto run_top_1_nn = [&](auto output) {
-          cuvs::distance::top_1_nn<DataT, IdxT>(handle,
-                                                output,
-                                                x.data_handle(),
-                                                y.data_handle(),
-                                                x_norm.data_handle(),
-                                                y_norm.data_handle(),
-                                                m,
-                                                n,
-                                                k,
-                                                tuning,
-                                                (void*)workspace.data_handle(),
-                                                workspace_size,
-                                                sqrt,
-                                                true,
-                                                true,
-                                                metric,
-                                                0.0,
-                                                backend);
-        };
-        if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
+      if (backend == cuvs::distance::detail::Top1nnBackend::Cutile &&
+          !cuvs::distance::detail::is_top_1_nn_backend_available(
+            backend, x.data_handle(), y.data_handle(), m, n, k, metric)) {
+        GTEST_SKIP() << "cuTile is not available for this device/input";
+      }
+      auto run_top_1_nn = [&](auto output) {
+        cuvs::distance::top_1_nn<DataT, IdxT>(handle,
+                                              output,
+                                              x.data_handle(),
+                                              y.data_handle(),
+                                              x_norm.data_handle(),
+                                              y_norm.data_handle(),
+                                              m,
+                                              n,
+                                              k,
+                                              tuning,
+                                              (void*)workspace.data_handle(),
+                                              workspace_size,
+                                              sqrt,
+                                              true,
+                                              true,
+                                              metric,
+                                              0.0,
+                                              backend);
+      };
+      if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
+        if constexpr (cuvs::distance::detail::is_fused_1nn_cutile_data_v<DataT>) {
           run_top_1_nn(cuvs::distance::Top1nnOutput<IdxT, DataT>{cutile_idx.data_handle(),
                                                                  cutile_dist.data_handle()});
         } else {
-          run_top_1_nn(out.data_handle());
+          RAFT_FAIL("cuTile top_1_nn test requires FP16 or FP32 data");
         }
+      } else if constexpr (std::is_same_v<DataT, float>) {
+        run_top_1_nn(out.data_handle());
       } else {
-        static_assert(sizeof(DataT) == 0,
-                      "fusedDistanceNNMinReduce is not implemented for datatype other than float");
+        RAFT_FAIL("Legacy fused top_1_nn test requires FP32 data");
       }
     } else if constexpr (impl == ImplType::unfused) {
       cuvs::distance::unfusedDistanceNNMinReduce<DataT, AccT, OutT, IdxT>(
@@ -185,9 +187,9 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   {
     if constexpr (impl == ImplType::fused) {
       if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
-        // FP32 cuTile MMA uses TF32-rounded inputs, so nearly tied candidates can produce a
-        // different index from the scalar FP32 reference. Validate that the returned index selects
-        // a candidate within the same numerical tolerance of the true minimum.
+        // cuTile MMA arithmetic can produce a different index for nearly tied candidates.
+        // Validate that the returned index selects a candidate within the same numerical tolerance
+        // of the true optimum.
         raft::linalg::unaryOp(
           ref_dist.data_handle(), ref_out.data_handle(), m, raft::value_op{}, stream);
         ref_nn_selected<DataT, AccT, IdxT>(handle,
@@ -205,8 +207,13 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
                                       m,
                                       cuvs::CompareApproxNoScaling<AccT>{AccT(params_.tol)},
                                       stream));
+        raft::linalg::unaryOp(cutile_dist_acc.data_handle(),
+                              cutile_dist.data_handle(),
+                              m,
+                              raft::cast_op<AccT>{},
+                              stream);
         ASSERT_TRUE(cuvs::devArrMatch(ref_dist.data_handle(),
-                                      cutile_dist.data_handle(),
+                                      cutile_dist_acc.data_handle(),
                                       m,
                                       cuvs::CompareApproxNoScaling<AccT>{AccT(params_.tol)},
                                       stream));
@@ -240,7 +247,8 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   raft::device_vector<AccT, IdxT> ref_dist;
   raft::device_vector<AccT, IdxT> selected_dist;
   raft::device_vector<IdxT, IdxT> cutile_idx;
-  raft::device_vector<AccT, IdxT> cutile_dist;
+  raft::device_vector<DataT, IdxT> cutile_dist;
+  raft::device_vector<AccT, IdxT> cutile_dist_acc;
   size_t workspace_size;
 };
 
@@ -272,6 +280,15 @@ const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
     input.backend = cuvs::distance::detail::Top1nnBackend::Cutile;
     inputs.push_back(input);
   }
+  // Non-vector-aligned k selects the relaxed ABI; InnerProduct exercises its argmax path.
+  inputs.push_back({257,
+                    263,
+                    65,
+                    DistanceType::InnerProduct,
+                    false,
+                    uint64_t(31415926),
+                    0.1,
+                    cuvs::distance::detail::Top1nnBackend::Cutile});
 #endif
   return inputs;
 }();
@@ -323,8 +340,40 @@ const std::vector<NNInputs<IdxT>> input_fp16 = {
   {4096, 16384, 128, DistanceType::CosineExpanded, true, uint64_t(31415926), 0.1},
 };
 
+#if CUVS_CUTILE_ENABLED
+template <typename IdxT>
+// k=64 and k=65 select the strict and relaxed FP16 ABI variants, respectively.
+const std::vector<NNInputs<IdxT>> input_fp16_cutile = {
+  {257,
+   263,
+   64,
+   DistanceType::L2Expanded,
+   false,
+   uint64_t(31415926),
+   0.1,
+   cuvs::distance::detail::Top1nnBackend::Cutile},
+  {257,
+   263,
+   65,
+   DistanceType::CosineExpanded,
+   false,
+   uint64_t(31415926),
+   0.1,
+   cuvs::distance::detail::Top1nnBackend::Cutile},
+};
+
+using NNTest_fp16_fused = NNTest<half, float, int32_t, ImplType::fused>;
+TEST_P(NNTest_fp16_fused, test)
+{
+  this->compute_1nn();
+  this->compare();
+}
+
+INSTANTIATE_TEST_CASE_P(NNTest, NNTest_fp16_fused, ::testing::ValuesIn(input_fp16_cutile<int>));
+#endif
+
 // Test unfused implementation with fp16, int8
-// Fused implementation has no support for fp16, int8 so no test for it
+// Legacy fused implementation has no support for fp16, int8
 typedef NNTest<half, float, int32_t, ImplType::unfused> NNTest_fp16_unfused;
 TEST_P(NNTest_fp16_unfused, test)
 {
