@@ -65,8 +65,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
       ref_dist{raft::make_device_vector<AccT, IdxT>(handle, m)},
       selected_dist{raft::make_device_vector<AccT, IdxT>(handle, m)},
       cutile_idx{raft::make_device_vector<IdxT, IdxT>(handle, m)},
-      cutile_dist{raft::make_device_vector<DataT, IdxT>(handle, m)},
-      cutile_dist_acc{raft::make_device_vector<AccT, IdxT>(handle, m)}
+      cutile_dist{raft::make_device_vector<AccT, IdxT>(handle, m)}
   {
   }
 
@@ -153,8 +152,8 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
       };
       if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
         if constexpr (cuvs::distance::detail::is_fused_1nn_cutile_data_v<DataT>) {
-          run_top_1_nn(cuvs::distance::Top1nnOutput<IdxT, DataT>{cutile_idx.data_handle(),
-                                                                 cutile_dist.data_handle()});
+          run_top_1_nn(cuvs::distance::Top1nnOutput<IdxT, AccT>{cutile_idx.data_handle(),
+                                                                cutile_dist.data_handle()});
         } else {
           RAFT_FAIL("cuTile top_1_nn test requires FP16 or FP32 data");
         }
@@ -207,13 +206,8 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
                                       m,
                                       cuvs::CompareApproxNoScaling<AccT>{AccT(params_.tol)},
                                       stream));
-        raft::linalg::unaryOp(cutile_dist_acc.data_handle(),
-                              cutile_dist.data_handle(),
-                              m,
-                              raft::cast_op<AccT>{},
-                              stream);
         ASSERT_TRUE(cuvs::devArrMatch(ref_dist.data_handle(),
-                                      cutile_dist_acc.data_handle(),
+                                      cutile_dist.data_handle(),
                                       m,
                                       cuvs::CompareApproxNoScaling<AccT>{AccT(params_.tol)},
                                       stream));
@@ -247,8 +241,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   raft::device_vector<AccT, IdxT> ref_dist;
   raft::device_vector<AccT, IdxT> selected_dist;
   raft::device_vector<IdxT, IdxT> cutile_idx;
-  raft::device_vector<DataT, IdxT> cutile_dist;
-  raft::device_vector<AccT, IdxT> cutile_dist_acc;
+  raft::device_vector<AccT, IdxT> cutile_dist;
   size_t workspace_size;
 };
 

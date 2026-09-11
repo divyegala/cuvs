@@ -30,6 +30,10 @@ inline constexpr bool is_fused_1nn_cutile_data_v =
 template <typename DataT>
 using fused_1nn_cutile_norm_t = float;
 
+// Both FP16 and FP32 MMA paths accumulate and reconstruct distances in FP32.
+template <typename DataT>
+using fused_1nn_cutile_distance_t = float;
+
 template <typename DataT>
 inline constexpr int64_t fused_1nn_cutile_max_batch_m = [] {
   constexpr int64_t max_i32         = std::numeric_limits<int>::max();
@@ -67,7 +71,7 @@ template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
 void launch_fused_1nn_tile(raft::resources const& handle,
                            IdxT* nearest_idx,
-                           DataT* nearest_dist,
+                           fused_1nn_cutile_distance_t<DataT>* nearest_dist,
                            const DataT* x,
                            const DataT* y,
                            const fused_1nn_cutile_norm_t<DataT>* xn,

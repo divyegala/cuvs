@@ -52,7 +52,6 @@ def make_kernel(
 
     acc_dtype = ct.float32
     idx_dtype = _idx_dtype(index_type)
-    out_dist_dtype = ct.float16 if data_type == "half" else ct.float32
     core_shape = (tile_m, tile_n)
     best_shape = (tile_m, 1)
     kernel_options = {}
@@ -173,7 +172,7 @@ def make_kernel(
         ct.store(
             OutDist,
             index=(bidm,),
-            tile=out_dist.reshape((tm,)).astype(out_dist_dtype),
+            tile=out_dist.reshape((tm,)),
         )
 
     return fused_1nn_kernel

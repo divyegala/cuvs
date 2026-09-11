@@ -12,6 +12,8 @@
 #include <raft/core/kvp.hpp>
 #include <raft/core/resources.hpp>
 
+#include <type_traits>
+
 namespace cuvs::distance {
 
 /** Separate index and distance arrays used by backends with structure-of-arrays output. */
@@ -23,11 +25,14 @@ struct Top1nnOutput {
 
 namespace detail {
 
+template <typename DataT>
+using top_1_nn_distance_t = std::conditional_t<std::is_same_v<DataT, half>, float, DataT>;
+
 template <typename DataT, typename IdxT>
 struct Top1nnOutputTypes {
   using kvp      = raft::KeyValuePair<IdxT, DataT>*;
   using scalar   = DataT*;
-  using separate = Top1nnOutput<IdxT, DataT>;
+  using separate = Top1nnOutput<IdxT, top_1_nn_distance_t<DataT>>;
 };
 
 }  // namespace detail

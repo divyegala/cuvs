@@ -159,7 +159,7 @@ def _kernel_signature(
         alias_groups=("read_only_inputs",),
     )
     idx_array = _cuvs_vector_constraint(idx_dtype, index_dtype=idx_dtype)
-    dist_array = _cuvs_vector_constraint(elem, index_dtype=idx_dtype)
+    dist_array = _cuvs_vector_constraint(ct.float32, index_dtype=idx_dtype)
 
     abbrev = _data_abbrev(data_type)
     symbol = kernel_symbol(

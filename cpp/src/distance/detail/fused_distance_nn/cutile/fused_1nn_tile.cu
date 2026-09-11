@@ -63,7 +63,7 @@ bool has_fused_1nn_tile_launcher()
 template <typename DataT, typename IdxT, typename AbiTag>
 void launch_fused_1nn_tile_impl(raft::resources const& handle,
                                 IdxT* nearest_idx,
-                                DataT* nearest_dist,
+                                fused_1nn_cutile_distance_t<DataT>* nearest_dist,
                                 const DataT* x,
                                 const DataT* y,
                                 const fused_1nn_cutile_norm_t<DataT>* xn,
@@ -192,7 +192,7 @@ void launch_fused_1nn_tile_impl(raft::resources const& handle,
 
 template <typename DataT, typename IdxT>
 void validate_fused_1nn_tile_launch(IdxT* nearest_idx,
-                                    DataT* nearest_dist,
+                                    fused_1nn_cutile_distance_t<DataT>* nearest_dist,
                                     const DataT* x,
                                     const DataT* y,
                                     const fused_1nn_cutile_norm_t<DataT>* xn,
@@ -219,7 +219,7 @@ void validate_fused_1nn_tile_launch(IdxT* nearest_idx,
 
   const auto x_bytes    = checked_tensor_bytes(m, k, sizeof(DataT));
   const auto y_bytes    = checked_tensor_bytes(n, k, sizeof(DataT));
-  const auto dist_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(DataT));
+  const auto dist_bytes = checked_tensor_bytes(m, IdxT{1}, sizeof(*nearest_dist));
   const auto idx_bytes  = checked_tensor_bytes(m, IdxT{1}, sizeof(IdxT));
   const auto xn_bytes   = checked_tensor_bytes(m, IdxT{1}, sizeof(*xn));
   const auto yn_bytes   = checked_tensor_bytes(n, IdxT{1}, sizeof(*yn));
@@ -285,7 +285,7 @@ template <typename DataT, typename IdxT>
   requires is_fused_1nn_cutile_data_v<DataT>
 void launch_fused_1nn_tile(raft::resources const& handle,
                            IdxT* nearest_idx,
-                           DataT* nearest_dist,
+                           fused_1nn_cutile_distance_t<DataT>* nearest_dist,
                            const DataT* x,
                            const DataT* y,
                            const fused_1nn_cutile_norm_t<DataT>* xn,
@@ -374,7 +374,7 @@ CUVS_INST_IS_FUSED_1NN_TILE_AVAILABLE(half, int64_t);
   template CUVS_EXPORT void launch_fused_1nn_tile<DataT, IdxT>( \
     raft::resources const&,                                     \
     IdxT*,                                                      \
-    DataT*,                                                     \
+    fused_1nn_cutile_distance_t<DataT>*,                        \
     const DataT*,                                               \
     const DataT*,                                               \
     const fused_1nn_cutile_norm_t<DataT>*,                      \
