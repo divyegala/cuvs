@@ -9,6 +9,7 @@
 #include "../../src/distance/fused_distance_nn.cuh"
 #include "../../src/distance/unfused_distance_nn.cuh"
 
+#include <cuda/stream>
 #include <raft/core/operators.hpp>
 #include <raft/core/resource/cuda_stream.hpp>
 #include <raft/linalg/norm.cuh>
@@ -190,7 +191,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
         // Validate that the returned index selects a candidate within the same numerical tolerance
         // of the true optimum.
         raft::linalg::unaryOp(
-          ref_dist.data_handle(), ref_out.data_handle(), m, raft::value_op{}, stream);
+          ref_dist.data_handle(), ref_out.data_handle(), m, raft::value_op{}, stream.get());
         ref_nn_selected<DataT, AccT, IdxT>(handle,
                                            selected_dist.data_handle(),
                                            cutile_idx.data_handle(),
@@ -205,12 +206,12 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
                                       selected_dist.data_handle(),
                                       m,
                                       cuvs::CompareApproxNoScaling<AccT>{AccT(params_.tol)},
-                                      stream));
+                                      stream.get()));
         ASSERT_TRUE(cuvs::devArrMatch(ref_dist.data_handle(),
                                       cutile_dist.data_handle(),
                                       m,
                                       cuvs::CompareApproxNoScaling<AccT>{AccT(params_.tol)},
-                                      stream));
+                                      stream.get()));
         return;
       }
       vector_compare(handle, ref_out.data_handle(), out.data_handle(), m, summary);
@@ -222,7 +223,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
 
  private:
   raft::resources handle;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   NNInputs<IdxT> params_;
   ComparisonSummary summary;
   IdxT m;
