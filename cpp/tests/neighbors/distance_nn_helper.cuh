@@ -134,7 +134,7 @@ void ref_nn(raft::resources const& handle,
 {
   const auto stream = raft::resource::get_cuda_stream(handle);
   ref_nn_kernel<DataT, AccT, OutT, IdxT>
-    <<<(m + 127) / 128, 128, 0, stream>>>(out, A, B, m, n, k, sqrt, metric);
+    <<<(m + 127) / 128, 128, 0, stream.get()>>>(out, A, B, m, n, k, sqrt, metric);
 
   RAFT_CUDA_TRY(cudaGetLastError());
   return;
@@ -185,7 +185,7 @@ void ref_nn_selected(raft::resources const& handle,
 {
   const auto stream = raft::resource::get_cuda_stream(handle);
   ref_nn_selected_kernel<DataT, AccT, IdxT>
-    <<<(m + 127) / 128, 128, 0, stream>>>(out, selected_indices, A, B, m, n, k, sqrt, metric);
+    <<<(m + 127) / 128, 128, 0, stream.get()>>>(out, selected_indices, A, B, m, n, k, sqrt, metric);
   RAFT_CUDA_TRY(cudaGetLastError());
 }
 
