@@ -155,7 +155,7 @@ void launch_fused_1nn_tile_impl(raft::resources const& handle,
                                          IdxT,
                                          IdxT,
                                          int);
-  launcher->template dispatch<fused_1nn_cutile_kernel_t>(stream,
+  launcher->template dispatch<fused_1nn_cutile_kernel_t>(stream.get(),
                                                          grid,
                                                          block,
                                                          0,
@@ -352,7 +352,7 @@ void launch_fused_1nn_tile(raft::resources const& handle,
 
       if (nearest_idx != nullptr) {
         raft::linalg::unaryOp(
-          nearest_idx + offset, tmp_idx, batch_m, raft::cast_op<int64_t>{}, stream);
+          nearest_idx + offset, tmp_idx, batch_m, raft::cast_op<int64_t>{}, stream.get());
       }
       offset += batch_m64;
     }
