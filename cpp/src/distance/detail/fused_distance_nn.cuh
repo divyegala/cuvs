@@ -126,23 +126,23 @@ void fusedDistanceNNImpl(raft::resources const& handle,
   constexpr auto maxVal = std::numeric_limits<DataT>::max();
   typedef raft::KeyValuePair<IdxT, DataT> KVPair;
 
-  RAFT_CUDA_TRY(cudaMemsetAsync(workspace, 0, sizeof(int) * m, stream));
+  RAFT_CUDA_TRY(cudaMemsetAsync(workspace, 0, sizeof(int) * m, stream.get()));
   if (initOutBuffer) {
     initKernel<DataT, OutT, IdxT, ReduceOpT>
-      <<<nblks, P::Nthreads, 0, stream>>>(min, m, maxVal, redOp);
+      <<<nblks, P::Nthreads, 0, stream.get()>>>(min, m, maxVal, redOp);
     RAFT_CUDA_TRY(cudaGetLastError());
   }
 
   switch (metric) {
     case cuvs::distance::DistanceType::CosineExpanded:
       fusedCosineNN<DataT, OutT, IdxT, P, ReduceOpT, KVPReduceOpT>(
-        min, x, y, xn, yn, m, n, k, workspace, redOp, pairRedOp, sqrt, stream);
+        min, x, y, xn, yn, m, n, k, workspace, redOp, pairRedOp, sqrt, stream.get());
       break;
     case cuvs::distance::DistanceType::L2SqrtExpanded:
     case cuvs::distance::DistanceType::L2Expanded:
       // initOutBuffer is take care by fusedDistanceNNImpl() so we set it false to fusedL2NNImpl.
       fusedL2NNImpl<DataT, OutT, IdxT, P, ReduceOpT, KVPReduceOpT>(
-        min, x, y, xn, yn, m, n, k, workspace, redOp, pairRedOp, sqrt, false, stream);
+        min, x, y, xn, yn, m, n, k, workspace, redOp, pairRedOp, sqrt, false, stream.get());
       break;
     default: RAFT_FAIL("Only cosine and L2 metrics are supported by fusedDistanceNN");
   }

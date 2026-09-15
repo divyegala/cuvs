@@ -158,7 +158,7 @@ void reduce_min(raft::resources const& handle,
 
   int blocks = m;
   reduce_min_kernel<DataT, AccT, OutT, IdxT, TPB, metric>
-    <<<blocks, TPB, 0, stream>>>(out, z, x_norm, y_norm, m, n, is_sqrt, initOutBuffer);
+    <<<blocks, TPB, 0, stream.get()>>>(out, z, x_norm, y_norm, m, n, is_sqrt, initOutBuffer);
   RAFT_CUDA_TRY(cudaGetLastError());
 }
 
@@ -215,7 +215,7 @@ void pairwise_distance_gemm(raft::resources const& handle,
   const AccT beta  = static_cast<AccT>(0);
 
   auto cublas_h = raft::resource::get_cublas_handle(handle);
-  RAFT_CUBLAS_TRY(cublasSetStream(cublas_h, stream));
+  RAFT_CUBLAS_TRY(cublasSetStream(cublas_h, stream.get()));
 
   RAFT_CUBLAS_TRY(cublasGemmEx(cublas_h,
                                CUBLAS_OP_T,
