@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "detail/roaring_filter_data.cuh"
+#include "detail/roaring_bitmap_filter_data.cuh"
 
 #include <cuvs/core/roaring_allowlist.hpp>
 #include <cuvs/neighbors/common.hpp>
@@ -26,23 +26,23 @@
 namespace cuvs::neighbors::filtering {
 namespace {
 
-using data_type = cuvs::neighbors::detail::roaring_filter_data_t<std::uint32_t>;
+using data_type = cuvs::neighbors::detail::roaring_bitmap_filter_data_t<std::uint32_t>;
 using ref_type  = data_type::ref_type;
 
 std::size_t validate_views(std::span<const cuvs::core::roaring_allowlist_view> allowlists)
 {
-  RAFT_EXPECTS(!allowlists.empty(), "roaring_filter requires at least one query allowlist.");
-  RAFT_EXPECTS(allowlists.front().valid(), "roaring_filter requires valid allowlist views.");
+  RAFT_EXPECTS(!allowlists.empty(), "roaring_bitmap_filter requires at least one query allowlist.");
+  RAFT_EXPECTS(allowlists.front().valid(), "roaring_bitmap_filter requires valid allowlist views.");
   auto const dataset_rows = allowlists.front().dataset_rows();
   for (auto const& allowlist : allowlists) {
-    RAFT_EXPECTS(allowlist.valid(), "roaring_filter requires valid allowlist views.");
+    RAFT_EXPECTS(allowlist.valid(), "roaring_bitmap_filter requires valid allowlist views.");
     RAFT_EXPECTS(allowlist.dataset_rows() == dataset_rows,
-                 "Every roaring_filter allowlist must have the same dataset_rows.");
+                 "Every roaring_bitmap_filter allowlist must have the same dataset_rows.");
     RAFT_EXPECTS(allowlist.empty() || allowlist.device_reference() != nullptr,
                  "A nonempty Roaring allowlist must carry a device reference.");
   }
   RAFT_EXPECTS(allowlists.size() <= std::numeric_limits<std::uint32_t>::max(),
-               "roaring_filter has too many query allowlists.");
+               "roaring_bitmap_filter has too many query allowlists.");
   return dataset_rows;
 }
 
@@ -62,7 +62,7 @@ float estimate_filtering_rate(std::span<const cuvs::core::roaring_allowlist_view
 
 }  // namespace
 
-struct roaring_filter::impl {
+struct roaring_bitmap_filter::impl {
   std::vector<cuvs::core::roaring_allowlist_view> allowlists;
   rmm::device_uvector<ref_type const*> refs;
   rmm::device_uvector<std::uint8_t> empty_rows;
@@ -108,39 +108,39 @@ struct roaring_filter::impl {
   }
 };
 
-roaring_filter::roaring_filter(raft::resources const& res,
-                               std::span<const cuvs::core::roaring_allowlist_view> allowlists)
+roaring_bitmap_filter::roaring_bitmap_filter(
+  raft::resources const& res, std::span<const cuvs::core::roaring_allowlist_view> allowlists)
   : impl_(std::make_shared<impl>(res, allowlists))
 {
 }
 
-bool roaring_filter::valid() const noexcept { return impl_ != nullptr; }
+bool roaring_bitmap_filter::valid() const noexcept { return impl_ != nullptr; }
 
-std::size_t roaring_filter::num_queries() const noexcept
+std::size_t roaring_bitmap_filter::num_queries() const noexcept
 {
   return valid() ? impl_->allowlists.size() : 0;
 }
 
-std::size_t roaring_filter::dataset_rows() const noexcept
+std::size_t roaring_bitmap_filter::dataset_rows() const noexcept
 {
   return valid() ? impl_->dataset_rows_ : 0;
 }
 
-std::size_t roaring_filter::cardinality(std::size_t query_id) const
+std::size_t roaring_bitmap_filter::cardinality(std::size_t query_id) const
 {
-  RAFT_EXPECTS(valid(), "roaring_filter is not initialized.");
-  RAFT_EXPECTS(query_id < num_queries(), "roaring_filter query_id is out of range.");
+  RAFT_EXPECTS(valid(), "roaring_bitmap_filter is not initialized.");
+  RAFT_EXPECTS(query_id < num_queries(), "roaring_bitmap_filter query_id is out of range.");
   return impl_->allowlists[query_id].cardinality();
 }
 
-bool roaring_filter::empty(std::size_t query_id) const { return cardinality(query_id) == 0; }
+bool roaring_bitmap_filter::empty(std::size_t query_id) const { return cardinality(query_id) == 0; }
 
-float roaring_filter::filtering_rate() const noexcept
+float roaring_bitmap_filter::filtering_rate() const noexcept
 {
   return valid() ? impl_->filtering_rate_ : 0.0f;
 }
 
-std::size_t roaring_filter::size_bytes() const noexcept
+std::size_t roaring_bitmap_filter::size_bytes() const noexcept
 {
   if (!valid()) { return 0; }
   return impl_->refs.size() * sizeof(ref_type const*) +
@@ -148,13 +148,14 @@ std::size_t roaring_filter::size_bytes() const noexcept
          impl_->payload.size() * sizeof(data_type);
 }
 
-void roaring_filter::set_allowlist(raft::resources const& res,
-                                   std::size_t query_id,
-                                   cuvs::core::roaring_allowlist_view replacement)
+void roaring_bitmap_filter::set_allowlist(raft::resources const& res,
+                                          std::size_t query_id,
+                                          cuvs::core::roaring_allowlist_view replacement)
 {
-  RAFT_EXPECTS(valid(), "roaring_filter is not initialized.");
-  RAFT_EXPECTS(query_id < num_queries(), "roaring_filter query_id is out of range.");
-  RAFT_EXPECTS(replacement.valid(), "roaring_filter requires a valid replacement allowlist view.");
+  RAFT_EXPECTS(valid(), "roaring_bitmap_filter is not initialized.");
+  RAFT_EXPECTS(query_id < num_queries(), "roaring_bitmap_filter query_id is out of range.");
+  RAFT_EXPECTS(replacement.valid(),
+               "roaring_bitmap_filter requires a valid replacement allowlist view.");
   RAFT_EXPECTS(replacement.dataset_rows() == dataset_rows(),
                "Replacement Roaring allowlist must have the filter's dataset_rows.");
   RAFT_EXPECTS(replacement.empty() || replacement.device_reference() != nullptr,
@@ -171,7 +172,7 @@ void roaring_filter::set_allowlist(raft::resources const& res,
   impl_->recompute_filtering_rate();
 }
 
-void* roaring_filter::device_payload() const noexcept
+void* roaring_bitmap_filter::device_payload() const noexcept
 {
   return valid() ? const_cast<data_type*>(impl_->payload.data()) : nullptr;
 }

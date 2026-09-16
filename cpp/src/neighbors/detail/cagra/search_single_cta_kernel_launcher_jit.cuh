@@ -84,7 +84,7 @@ std::uint64_t cagra_sample_filter_type_id(const SampleFilterT& sample_filter)
     return 3;
   } else if constexpr (is_bloom_filter<DecayedFilter>::value) {
     return 2;
-  } else if constexpr (is_roaring_filter<DecayedFilter>::value) {
+  } else if constexpr (is_roaring_bitmap_filter<DecayedFilter>::value) {
     return 4;
   } else if constexpr (is_bitset_filter<DecayedFilter>::value) {
     return 1;

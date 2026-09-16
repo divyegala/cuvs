@@ -196,7 +196,7 @@ TEST(RoaringFilter, ReusesViewsUpdatesMappingsAndRejectsInvalidInputs)
   auto empty  = from_ids(res, 16, {});
 
   std::array views{first.view(), second.view(), first.view()};
-  cuvs::neighbors::filtering::roaring_filter filter(res, views);
+  cuvs::neighbors::filtering::roaring_bitmap_filter filter(res, views);
   EXPECT_TRUE(filter.valid());
   EXPECT_EQ(filter.num_queries(), 3);
   EXPECT_EQ(filter.dataset_rows(), 16);
@@ -212,12 +212,13 @@ TEST(RoaringFilter, ReusesViewsUpdatesMappingsAndRejectsInvalidInputs)
   EXPECT_TRUE(filter.empty(1));
   EXPECT_FLOAT_EQ(filter.filtering_rate(), 0.999f);
 
-  EXPECT_THROW(cuvs::neighbors::filtering::roaring_filter(
+  EXPECT_THROW(cuvs::neighbors::filtering::roaring_bitmap_filter(
                  res, std::span<const cuvs::core::roaring_allowlist_view>{}),
                raft::logic_error);
   auto different_shape = from_ids(res, 17, {1});
   std::array mismatched{first.view(), different_shape.view()};
-  EXPECT_THROW(cuvs::neighbors::filtering::roaring_filter(res, mismatched), raft::logic_error);
+  EXPECT_THROW(cuvs::neighbors::filtering::roaring_bitmap_filter(res, mismatched),
+               raft::logic_error);
   EXPECT_THROW(filter.set_allowlist(res, 3, first.view()), raft::logic_error);
   EXPECT_THROW(filter.set_allowlist(res, 0, different_shape.view()), raft::logic_error);
 }

@@ -61,8 +61,8 @@ class CUVS_EXPORT roaring_allowlist_view {
  * @brief Owning immutable exact Roaring allowlist over CAGRA dataset-row IDs.
  *
  * Build an allowlist through @ref from_ids, then pass its zero-copy @ref view to a
- * cuvs::neighbors::filtering::roaring_filter. A filter maps one such view to each query; owners
- * remain independent and can therefore be reused across filters and queries.
+ * cuvs::neighbors::filtering::roaring_bitmap_filter. A filter maps one such view to each query;
+ * owners remain independent and can therefore be reused across filters and queries.
  *
  * Construction sorts IDs on the GPU unless @p pre_sorted is true. Setting @p pre_sorted promises
  * that IDs are already in strictly increasing order; this promise is not verified. IDs must be
@@ -91,6 +91,15 @@ class CUVS_EXPORT roaring_allowlist {
    * device overload. IDs must be smaller than dataset_rows; this precondition is not checked.
    * Empty input is valid and rejects every candidate. The returned object is ready for same-stream
    * use; cross-stream use requires an explicit dependency on the construction stream.
+   *
+   * @param[in] res RAFT resources containing the construction CUDA stream and memory resource.
+   * @param[in] dataset_rows Number of rows in the dataset whose IDs this allowlist addresses. Must
+   * be in the range [1, 2^32].
+   * @param[in] ids Host IDs to include in the allowlist. IDs must be unique and smaller than
+   * `dataset_rows`.
+   * @param[in] pre_sorted Whether `ids` are already in strictly increasing order. If false, the IDs
+   * are sorted during construction.
+   * @return An owning device-resident Roaring allowlist.
    */
   static roaring_allowlist from_ids(raft::resources const& res,
                                     std::size_t dataset_rows,
@@ -105,6 +114,16 @@ class CUVS_EXPORT roaring_allowlist {
    * Temporary memory is O(cardinality + container count); no dataset-sized dense bitmap is used.
    * The returned object is ready for same-stream use; cross-stream use requires an explicit
    * dependency on the construction stream.
+   *
+   * @param[in] res RAFT resources containing the construction CUDA stream and memory resource.
+   * @param[in] dataset_rows Number of rows in the dataset whose IDs this allowlist addresses. Must
+   * be in the range [1, 2^32].
+   * @param[in] ids Device IDs to include in the allowlist. IDs must be unique and smaller than
+   * `dataset_rows`; the storage must remain valid until the construction stream reaches the
+   * enqueued work.
+   * @param[in] pre_sorted Whether `ids` are already in strictly increasing order. If false, the IDs
+   * are sorted during construction.
+   * @return An owning device-resident Roaring allowlist.
    */
   static roaring_allowlist from_ids(raft::resources const& res,
                                     std::size_t dataset_rows,

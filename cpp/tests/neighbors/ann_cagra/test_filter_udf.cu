@@ -410,23 +410,23 @@ TEST_P(CagraUdfFilterTest, TenantContextHonorsQuerySpecificMetadata)
   for (auto const& allowlist : tenant_allowlists) {
     tenant_views.push_back(allowlist.view());
   }
-  cuvs::neighbors::filtering::roaring_filter roaring_filter(res, tenant_views);
-  auto roaring_result = search(roaring_filter, 2.0f / 3.0f);
+  cuvs::neighbors::filtering::roaring_bitmap_filter roaring_bitmap_filter(res, tenant_views);
+  auto roaring_result = search(roaring_bitmap_filter, 2.0f / 3.0f);
   expect_same_results(result, roaring_result);
 
   // Exercise both device tables: first mark one query empty, then repoint that same slot to a
   // different reusable owner and verify CAGRA consumes the updated mapping.
   auto empty_allowlist = cuvs::core::roaring_allowlist::from_ids(
     res, n_rows, raft::make_host_vector_view<const std::uint32_t, std::int64_t>(nullptr, 0));
-  roaring_filter.set_allowlist(res, 1, empty_allowlist.view());
-  auto empty_result = search(roaring_filter, 0.999f);
+  roaring_bitmap_filter.set_allowlist(res, 1, empty_allowlist.view());
+  auto empty_result = search(roaring_bitmap_filter, 0.999f);
   for (std::int64_t i = 0; i < k; ++i) {
     auto const source_id = empty_result.neighbors[static_cast<std::size_t>(k + i)];
     EXPECT_GE(source_id, static_cast<std::uint32_t>(n_rows));
   }
 
-  roaring_filter.set_allowlist(res, 1, tenant_allowlists.front().view());
-  auto updated_result = search(roaring_filter, 2.0f / 3.0f);
+  roaring_bitmap_filter.set_allowlist(res, 1, tenant_allowlists.front().view());
+  auto updated_result = search(roaring_bitmap_filter, 2.0f / 3.0f);
   for (std::int64_t query = 0; query < n_queries; ++query) {
     auto const expected_tenant =
       query == 1 ? std::uint32_t{0} : host_query_tenants[static_cast<std::size_t>(query)];
@@ -441,14 +441,14 @@ TEST_P(CagraUdfFilterTest, TenantContextHonorsQuerySpecificMetadata)
     auto wrong_queries = cuvs::core::roaring_allowlist::from_ids(
       res, n_rows, raft::make_host_vector_view<const std::uint32_t, std::int64_t>(nullptr, 0));
     std::array wrong_query_views{wrong_queries.view()};
-    cuvs::neighbors::filtering::roaring_filter wrong_query_filter(res, wrong_query_views);
+    cuvs::neighbors::filtering::roaring_bitmap_filter wrong_query_filter(res, wrong_query_views);
     EXPECT_THROW(search(wrong_query_filter), raft::logic_error);
 
     auto wrong_columns = cuvs::core::roaring_allowlist::from_ids(
       res, n_rows + 1, raft::make_host_vector_view<const std::uint32_t, std::int64_t>(nullptr, 0));
     std::vector<cuvs::core::roaring_allowlist_view> wrong_column_views(
       static_cast<std::size_t>(n_queries), wrong_columns.view());
-    cuvs::neighbors::filtering::roaring_filter wrong_column_filter(res, wrong_column_views);
+    cuvs::neighbors::filtering::roaring_bitmap_filter wrong_column_filter(res, wrong_column_views);
     EXPECT_THROW(search(wrong_column_filter), raft::logic_error);
   }
 }

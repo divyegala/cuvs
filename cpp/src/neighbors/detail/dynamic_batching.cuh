@@ -849,7 +849,7 @@ inline auto validate_sample_filter(cuvs::neighbors::filtering::base_filter const
   RAFT_EXPECTS(
     sample_filter == nullptr ||
       sample_filter->get_filter_type() != cuvs::neighbors::filtering::FilterType::Roaring,
-    "dynamic_batching does not support roaring_filter; use direct cagra::search instead.");
+    "dynamic_batching does not support roaring_bitmap_filter; use direct cagra::search instead.");
   return sample_filter;
 }
 

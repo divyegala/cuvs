@@ -69,7 +69,7 @@ int main()
   for (auto const& owner : owners) {
     views.push_back(owner.view());
   }
-  cuvs::neighbors::filtering::roaring_filter filter(res, views);
+  cuvs::neighbors::filtering::roaring_bitmap_filter filter(res, views);
   auto const* prepared_payload = filter.device_payload();
 
   auto neighbors = raft::make_device_matrix<std::uint32_t, std::int64_t>(res, n_queries, k);

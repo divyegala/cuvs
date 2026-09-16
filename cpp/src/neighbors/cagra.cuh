@@ -444,8 +444,8 @@ void search(raft::resources const& res,
 
   try {
     auto& sample_filter =
-      dynamic_cast<const cuvs::neighbors::filtering::roaring_filter&>(sample_filter_ref);
-    RAFT_EXPECTS(sample_filter.valid(), "roaring_filter must be initialized before search.");
+      dynamic_cast<const cuvs::neighbors::filtering::roaring_bitmap_filter&>(sample_filter_ref);
+    RAFT_EXPECTS(sample_filter.valid(), "roaring_bitmap_filter must be initialized before search.");
     RAFT_EXPECTS(sample_filter.num_queries() == static_cast<std::size_t>(queries.extent(0)),
                  "Roaring filter query rows must equal the number of search queries.");
     RAFT_EXPECTS(sample_filter.dataset_rows() == static_cast<std::size_t>(idx.dataset().n_rows()),

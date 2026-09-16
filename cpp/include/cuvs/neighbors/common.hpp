@@ -1522,7 +1522,7 @@ struct bloom_filter : public base_filter {
  *   raft::make_host_vector_view<const std::uint32_t, std::int64_t>(second_ids.data(),
  *                                                                    second_ids.size()));
  * std::array views{first.view(), second.view()};
- * auto filter = cuvs::neighbors::filtering::roaring_filter(res, views);
+ * auto filter = cuvs::neighbors::filtering::roaring_bitmap_filter(res, views);
  * @endcode
  *
  * Owners and views can be reused across filters and queries. This filter owns its mapping tables
@@ -1536,13 +1536,13 @@ struct bloom_filter : public base_filter {
  * @see cuvs::core::roaring_allowlist
  * @see https://github.com/RoaringBitmap/RoaringFormatSpec
  */
-struct roaring_filter : public base_filter {
+struct roaring_bitmap_filter : public base_filter {
  private:
   struct impl;
 
  public:
   /** @brief Construct an invalid handle. It cannot be passed to CAGRA search. */
-  roaring_filter() = default;
+  roaring_bitmap_filter() = default;
 
   /**
    * @brief Materialize the query-to-allowlist device pointer table.
@@ -1550,8 +1550,8 @@ struct roaring_filter : public base_filter {
    * @p allowlists must be nonempty, every view must be valid, and every view must have the same
    * `dataset_rows()`. Query count is inferred from the span length.
    */
-  explicit roaring_filter(raft::resources const& res,
-                          std::span<const cuvs::core::roaring_allowlist_view> allowlists);
+  explicit roaring_bitmap_filter(raft::resources const& res,
+                                 std::span<const cuvs::core::roaring_allowlist_view> allowlists);
 
   [[nodiscard]] bool valid() const noexcept;
   [[nodiscard]] std::size_t num_queries() const noexcept;

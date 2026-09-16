@@ -7,7 +7,7 @@
 
 #include "extern_device_functions.cuh"
 
-#include "../../roaring_filter_data.cuh"
+#include "../../roaring_bitmap_filter_data.cuh"
 #include "../../sample_filter_data.cuh"
 
 #include <cuco/bloom_filter_ref.cuh>
@@ -59,7 +59,7 @@ __device__ bool sample_filter_roaring_impl(uint32_t query_id,
 {
   if (filter_data == nullptr) { return false; }
 
-  auto const* data = static_cast<roaring_filter_data_t<Key> const*>(filter_data);
+  auto const* data = static_cast<roaring_bitmap_filter_data_t<Key> const*>(filter_data);
   if (query_id >= data->num_queries || static_cast<std::uint64_t>(node_id) >= data->dataset_rows ||
       data->empty_rows[query_id] != 0) {
     return false;
