@@ -63,16 +63,35 @@ void compute_tf32_norms(raft::resources const& handle,
   }
 }
 
+template <typename DataT, typename IndexT>
+MinClusterAndDistanceResult<DataT, IndexT> make_native_result(
+  const cuvs::distance::detail::Top1nnPlan<IndexT>& plan,
+  IndexT size,
+  rmm::device_uvector<char>& output_storage,
+  cuda::stream_ref stream)
+{
+  auto* storage = static_cast<char*>(
+    reserve_aligned_workspace(output_storage, 0, plan.output_bytes, plan.output_alignment, stream));
+  MinClusterAndDistanceResult<DataT, IndexT> result{};
+  result.plan = plan;
+  result.size = size;
+  if (storage == nullptr) { return result; }
+  if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
+    result.indices   = reinterpret_cast<IndexT*>(storage);
+    result.distances = reinterpret_cast<DataT*>(storage + plan.distance_offset);
+  } else {
+    result.key_values = reinterpret_cast<raft::KeyValuePair<IndexT, DataT>*>(storage);
+  }
+  return result;
+}
 }  // namespace
 // Calculates the nearest centroid and distance for every sample using the backend selected by AUTO.
 template <typename DataT, typename IndexT>
-cuvs::distance::detail::Top1nnPlan<IndexT> minClusterAndDistanceCompute(
+MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
   raft::resources const& handle,
   raft::device_matrix_view<const DataT, IndexT> X,
   raft::device_matrix_view<const DataT, IndexT> centroids,
-  raft::KeyValuePair<IndexT, DataT>* kvp_output,
-  IndexT* index_output,
-  DataT* distance_output,
+  rmm::device_uvector<char>& output_storage,
   raft::device_vector_view<const DataT, IndexT> L2NormX,
   rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,
   cuvs::distance::DistanceType metric,
@@ -142,6 +161,8 @@ cuvs::distance::detail::Top1nnPlan<IndexT> minClusterAndDistanceCompute(
       y_norm = L2NormBuf_OR_DistBuf.data();
     }
 
+    auto result = make_native_result<DataT, IndexT>(plan, n_samples, output_storage, stream);
+
     auto* backend_workspace = reserve_aligned_workspace(
       workspace, 0, plan.workspace_bytes, plan.workspace_alignment, stream);
     auto launch = [&](auto output) {
@@ -165,23 +186,29 @@ cuvs::distance::detail::Top1nnPlan<IndexT> minClusterAndDistanceCompute(
                                               plan);
     };
     if constexpr (std::is_same_v<DataT, float>) {
-      if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
-        RAFT_EXPECTS(index_output != nullptr && distance_output != nullptr,
-                     "cuTile KMeans assignment requires separate outputs");
-        launch(cuvs::distance::Top1nnOutput<IndexT, DataT>{index_output, distance_output});
-      } else {
-        RAFT_EXPECTS(kvp_output != nullptr, "KMeans assignment requires a native KVP output");
-        launch(kvp_output);
-      }
+      result.visit_native(
+        [&](IndexT* indices, DataT* distances) {
+          launch(cuvs::distance::Top1nnOutput<IndexT, DataT>{indices, distances});
+        },
+        [&](raft::KeyValuePair<IndexT, DataT>* key_values) { launch(key_values); });
     } else {
-      RAFT_EXPECTS(kvp_output != nullptr, "KMeans assignment requires a native KVP output");
-      launch(kvp_output);
+      RAFT_EXPECTS(result.key_values != nullptr, "KMeans assignment requires KVP output");
+      launch(result.key_values);
     }
-    return plan;
+    return result;
   }
 
-  RAFT_EXPECTS(kvp_output != nullptr, "Generic KMeans assignment requires a KVP output");
-  auto dataBatchSize      = getDataBatchSize(batch_samples, n_samples);
+  using KeyValueT = raft::KeyValuePair<IndexT, DataT>;
+  RAFT_EXPECTS(n_samples >= 0, "KMeans sample count must not be negative");
+  const auto output_size = static_cast<std::size_t>(n_samples);
+  RAFT_EXPECTS(output_size <= std::numeric_limits<std::size_t>::max() / sizeof(KeyValueT),
+               "KMeans assignment output size overflows size_t");
+  plan.output_layout    = cuvs::distance::detail::Top1nnOutputLayout::KeyValuePair;
+  plan.output_alignment = alignof(KeyValueT);
+  plan.output_bytes     = output_size * sizeof(KeyValueT);
+  auto result        = make_native_result<DataT, IndexT>(plan, n_samples, output_storage, stream);
+  auto* kvp_output   = result.key_values;
+  auto dataBatchSize = getDataBatchSize(batch_samples, n_samples);
   auto centroidsBatchSize = getCentroidsBatchSize(batch_centroids, n_clusters);
   L2NormBuf_OR_DistBuf.resize(dataBatchSize * centroidsBatchSize, stream);
   auto pairwiseDistance = raft::make_device_matrix_view<DataT, IndexT>(
@@ -220,17 +247,15 @@ cuvs::distance::detail::Top1nnPlan<IndexT> minClusterAndDistanceCompute(
         raft::identity_op{});
     }
   }
-  return plan;
+  return result;
 }
 
 #define INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(DataT, IndexT)                                        \
-  template cuvs::distance::detail::Top1nnPlan<IndexT> minClusterAndDistanceCompute<DataT, IndexT>( \
+  template MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute<DataT, IndexT>( \
     raft::resources const&,                                                                        \
     raft::device_matrix_view<const DataT, IndexT>,                                                 \
     raft::device_matrix_view<const DataT, IndexT>,                                                 \
-    raft::KeyValuePair<IndexT, DataT>*,                                                            \
-    IndexT*,                                                                                       \
-    DataT*,                                                                                        \
+    rmm::device_uvector<char>&,                                                                    \
     raft::device_vector_view<const DataT, IndexT>,                                                 \
     rmm::device_uvector<DataT>&,                                                                   \
     cuvs::distance::DistanceType,                                                                  \

@@ -409,57 +409,6 @@ void cluster_cost(
 }
 
 /**
- * @brief Calculates a <key, value> pair for every sample in input 'X' where key is an
- * index of one of the 'centroids' (index of the nearest centroid) and 'value'
- * is the distance between the sample and the 'centroid[key]'
- *
- * @tparam DataT the type of data used for weights, distances.
- * @tparam IndexT the type of data used for indexing.
- *
- * @param[in]  handle                The raft handle
- * @param[in]  X                     The data in row-major format
- *                                   [dim = n_samples x n_features]
- * @param[in]  centroids             Centroids data
- *                                   [dim = n_cluster x n_features]
- * @param[out] minClusterAndDistance Distance vector that contains for every sample, the nearest
- *                                   centroid and it's distance
- *                                   [dim = n_samples]
- * @param[in]  L2NormX               L2 norm of X : ||x||^2
- *                                   [dim = n_samples]
- * @param[out] L2NormBuf_OR_DistBuf  Resizable buffer to store L2 norm of centroids or distance
- *                                   matrix
- * @param[in] metric                 distance metric
- * @param[in] batch_samples          batch size of data samples
- * @param[in] batch_centroids        batch size of centroids
- * @param[in] workspace              Temporary workspace buffer which can get resized
- *
- */
-template <typename DataT, typename IndexT>
-void min_cluster_and_distance(
-  raft::resources const& handle,
-  raft::device_matrix_view<const DataT, IndexT> X,
-  raft::device_matrix_view<const DataT, IndexT> centroids,
-  raft::device_vector_view<raft::KeyValuePair<IndexT, DataT>, IndexT> minClusterAndDistance,
-  raft::device_vector_view<DataT, IndexT> L2NormX,
-  rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,
-  cuvs::distance::DistanceType metric,
-  int batch_samples,
-  int batch_centroids,
-  rmm::device_uvector<char>& workspace)
-{
-  cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<DataT, IndexT>(handle,
-                                                                             X,
-                                                                             centroids,
-                                                                             minClusterAndDistance,
-                                                                             L2NormX,
-                                                                             L2NormBuf_OR_DistBuf,
-                                                                             metric,
-                                                                             batch_samples,
-                                                                             batch_centroids,
-                                                                             workspace);
-}
-
-/**
  * @brief Shuffle and randomly select 'n_samples_to_gather' from input 'in' and stores
  * in 'out' does not modify the input
  *

@@ -98,18 +98,13 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
         raft::make_device_matrix_view<const MathT, IdxT>(centers, n_clusters, dim);
       auto X_norm_view = raft::make_device_vector_view<const MathT, IdxT>(dataset_norm, n_rows);
 
-      auto minClusterAndDistance = raft::make_device_mdarray<raft::KeyValuePair<IdxT, MathT>, IdxT>(
-        handle, mr, raft::make_extents<IdxT>(n_rows));
-      auto nearest_idx  = raft::make_device_vector<IdxT, IdxT>(handle, n_rows);
-      auto nearest_dist = raft::make_device_vector<MathT, IdxT>(handle, n_rows);
+      rmm::device_uvector<char> assignment_output(0, stream, mr);
 
-      const auto plan = cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<MathT, IdxT>(
+      const auto result = cuvs::cluster::kmeans::detail::minClusterAndDistanceCompute<MathT, IdxT>(
         handle,
         X_view,
         centroids_view,
-        minClusterAndDistance.data_handle(),
-        nearest_idx.data_handle(),
-        nearest_dist.data_handle(),
+        assignment_output,
         X_norm_view,
         L2NormBuf_OR_DistBuf,
         params.metric,
@@ -117,18 +112,7 @@ inline std::enable_if_t<std::is_floating_point_v<MathT>> predict_core(
         0,  // default top_1_nn candidate tuning
         workspace);
 
-      auto labels_view = raft::make_device_vector_view<LabelT, IdxT>(labels, n_rows);
-      if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
-        raft::linalg::map(handle,
-                          raft::make_const_mdspan(nearest_idx.view()),
-                          labels_view,
-                          raft::cast_op<LabelT>{});
-      } else {
-        raft::linalg::map(handle,
-                          raft::make_const_mdspan(minClusterAndDistance.view()),
-                          labels_view,
-                          raft::compose_op<raft::cast_op<LabelT>, raft::key_op>());
-      }
+      cuvs::cluster::kmeans::detail::copyClusterLabels(handle, result, labels);
       break;
     }
     case cuvs::distance::DistanceType::InnerProduct: {

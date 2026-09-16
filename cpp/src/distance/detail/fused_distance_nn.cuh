@@ -68,13 +68,16 @@ struct Top1nnPlan {
   Top1nnOutputLayout output_layout{Top1nnOutputLayout::KeyValuePair};
   Top1nnNormPolicy norm_policy{Top1nnNormPolicy::Native};
   std::size_t norm_alignment{1};
+  /** Bytes and alignment required for the backend-native output storage. */
   std::size_t output_bytes{};
   std::size_t output_alignment{};
+  /** Byte offset of distances in Separate output storage; zero for KeyValuePair output. */
   std::size_t distance_offset{};
   std::size_t workspace_bytes{};
   std::size_t workspace_alignment{};
   const void* x{};
   const void* y{};
+  /** GEMM-equivalent dimensions: query rows, candidate rows, and feature columns. */
   IdxT m{};
   IdxT n{};
   IdxT k{};
