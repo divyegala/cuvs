@@ -54,7 +54,6 @@
 #include <ctime>
 #include <optional>
 #include <random>
-#include <utility>
 
 namespace cuvs::cluster::kmeans::detail {
 
@@ -83,49 +82,24 @@ struct SamplingOp {
   }
 };
 
-template <typename IndexT, typename DataT>
-struct KeyValueIndexOp {
-  __host__ __device__ __forceinline__ IndexT
-  operator()(const raft::KeyValuePair<IndexT, DataT>& a) const
-  {
-    return a.key;
-  }
+template <typename DataT, typename IndexT>
+using MinClusterAndDistanceResult = cuvs::distance::Top1nnResultView<DataT, IndexT>;
+
+template <typename LabelT, typename IndexT, typename IndicesIterator>
+struct CopyClusterLabelOp {
+  IndicesIterator indices;
+
+  __device__ LabelT operator()(IndexT offset) const { return static_cast<LabelT>(indices[offset]); }
 };
 
-/** Backend-native nearest-centroid result.
- *
- * KMeans consumers use the visitors below and do not need to know whether the selected
- * top-1-NN backend produced key/value pairs or separate index and distance arrays.
- */
-template <typename DataT, typename IndexT>
-struct MinClusterAndDistanceResult {
-  using key_value_type = raft::KeyValuePair<IndexT, DataT>;
+template <typename DataT, typename IndexT, typename DistanceIterator>
+struct WeightedDistanceOp {
+  DistanceIterator distances;
+  const DataT* weights;
 
-  cuvs::distance::detail::Top1nnPlan<IndexT> plan{};
-  IndexT size{};
-  key_value_type* key_values{};
-  IndexT* indices{};
-  DataT* distances{};
-
-  template <typename Fn>
-  void visit_labels(Fn&& fn) const
+  __device__ DataT operator()(IndexT offset) const
   {
-    if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
-      std::forward<Fn>(fn)(indices);
-    } else {
-      cuda::transform_iterator labels(key_values, KeyValueIndexOp<IndexT, DataT>{});
-      std::forward<Fn>(fn)(labels);
-    }
-  }
-
-  template <typename SeparateFn, typename KeyValueFn>
-  void visit_native(SeparateFn&& separate_fn, KeyValueFn&& key_value_fn) const
-  {
-    if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
-      std::forward<SeparateFn>(separate_fn)(indices, distances);
-    } else {
-      std::forward<KeyValueFn>(key_value_fn)(key_values);
-    }
+    return static_cast<DataT>(distances[offset]) * weights[offset];
   }
 };
 
@@ -134,26 +108,12 @@ void copyClusterLabels(raft::resources const& handle,
                        const MinClusterAndDistanceResult<DataT, IndexT>& result,
                        LabelT* labels)
 {
-  auto labels_view = raft::make_device_vector_view<LabelT, IndexT>(labels, result.size);
-  result.visit_native(
-    [&](IndexT* indices, DataT*) {
-      if constexpr (std::is_same_v<LabelT, IndexT>) {
-        raft::copy(labels, indices, result.size, raft::resource::get_cuda_stream(handle));
-      } else {
-        auto indices_view =
-          raft::make_device_vector_view<const IndexT, IndexT>(indices, result.size);
-        raft::linalg::map(handle, indices_view, labels_view, raft::cast_op<LabelT>{});
-      }
-    },
-    [&](raft::KeyValuePair<IndexT, DataT>* key_values) {
-      auto key_value_view =
-        raft::make_device_vector_view<const raft::KeyValuePair<IndexT, DataT>, IndexT>(key_values,
-                                                                                       result.size);
-      raft::linalg::map(handle,
-                        key_value_view,
-                        labels_view,
-                        raft::compose_op<raft::cast_op<LabelT>, raft::key_op>());
-    });
+  auto labels_view = raft::make_device_vector_view<LabelT, IndexT>(labels, result.size());
+  result.visit_indices([&](auto indices) {
+    using IndicesIterator = decltype(indices);
+    raft::linalg::map_offset(
+      handle, labels_view, CopyClusterLabelOp<LabelT, IndexT, IndicesIterator>{indices});
+  });
 }
 
 // Computes the intensity histogram from a sequence of labels
@@ -247,6 +207,44 @@ IndexT getCentroidsBatchSize(int batch_centroids, IndexT n_local_clusters)
   return (minVal == 0) ? n_local_clusters : minVal;
 }
 
+template <typename InputIterator,
+          typename OutputT,
+          typename MainOpT,
+          typename ReductionOpT,
+          typename IndexT = int>
+void computeClusterCost(raft::resources const& handle,
+                        InputIterator input,
+                        IndexT size,
+                        rmm::device_uvector<char>& workspace,
+                        raft::device_scalar_view<OutputT> clusterCost,
+                        MainOpT main_op,
+                        ReductionOpT reduction_op)
+{
+  cudaStream_t stream = raft::resource::get_cuda_stream(handle).get();
+  cuda::transform_iterator itr(input, main_op);
+
+  size_t temp_storage_bytes = 0;
+  RAFT_CUDA_TRY(cub::DeviceReduce::Reduce(nullptr,
+                                          temp_storage_bytes,
+                                          itr,
+                                          clusterCost.data_handle(),
+                                          size,
+                                          reduction_op,
+                                          OutputT(),
+                                          stream));
+
+  workspace.resize(temp_storage_bytes, stream);
+
+  RAFT_CUDA_TRY(cub::DeviceReduce::Reduce(workspace.data(),
+                                          temp_storage_bytes,
+                                          itr,
+                                          clusterCost.data_handle(),
+                                          size,
+                                          reduction_op,
+                                          OutputT(),
+                                          stream));
+}
+
 template <typename InputT,
           typename OutputT,
           typename MainOpT,
@@ -259,30 +257,13 @@ void computeClusterCost(raft::resources const& handle,
                         MainOpT main_op,
                         ReductionOpT reduction_op)
 {
-  cudaStream_t stream = raft::resource::get_cuda_stream(handle).get();
-
-  cuda::transform_iterator itr(minClusterDistance.data_handle(), main_op);
-
-  size_t temp_storage_bytes = 0;
-  RAFT_CUDA_TRY(cub::DeviceReduce::Reduce(nullptr,
-                                          temp_storage_bytes,
-                                          itr,
-                                          clusterCost.data_handle(),
-                                          minClusterDistance.size(),
-                                          reduction_op,
-                                          OutputT(),
-                                          stream));
-
-  workspace.resize(temp_storage_bytes, stream);
-
-  RAFT_CUDA_TRY(cub::DeviceReduce::Reduce(workspace.data(),
-                                          temp_storage_bytes,
-                                          itr,
-                                          clusterCost.data_handle(),
-                                          minClusterDistance.size(),
-                                          reduction_op,
-                                          OutputT(),
-                                          stream));
+  computeClusterCost(handle,
+                     minClusterDistance.data_handle(),
+                     minClusterDistance.size(),
+                     workspace,
+                     clusterCost,
+                     main_op,
+                     reduction_op);
 }
 
 template <typename DataT, typename IndexT>
@@ -292,33 +273,19 @@ void weightAndComputeClusterCost(raft::resources const& handle,
                                  rmm::device_uvector<char>& workspace,
                                  raft::device_scalar_view<DataT> cluster_cost)
 {
-  result.visit_native(
-    [&](IndexT*, DataT* distances) {
-      auto distance_view = raft::make_device_vector_view<DataT, IndexT>(distances, result.size);
-      raft::linalg::map(
-        handle,
-        distance_view,
-        [] __device__(DataT distance, DataT weight) { return distance * weight; },
-        raft::make_const_mdspan(distance_view),
-        weights);
-      computeClusterCost(
-        handle, distance_view, workspace, cluster_cost, raft::identity_op{}, raft::add_op{});
-    },
-    [&](raft::KeyValuePair<IndexT, DataT>* key_values) {
-      auto key_value_view =
-        raft::make_device_vector_view<raft::KeyValuePair<IndexT, DataT>, IndexT>(key_values,
-                                                                                 result.size);
-      raft::linalg::map(
-        handle,
-        key_value_view,
-        [] __device__(const raft::KeyValuePair<IndexT, DataT> kvp, DataT weight) {
-          return raft::KeyValuePair<IndexT, DataT>{kvp.key, kvp.value * weight};
-        },
-        raft::make_const_mdspan(key_value_view),
-        weights);
-      computeClusterCost(
-        handle, key_value_view, workspace, cluster_cost, raft::value_op{}, raft::add_op{});
-    });
+  result.visit_distances([&](auto distances) {
+    using DistanceIterator  = decltype(distances);
+    auto weighted_distances = cuda::transform_iterator(
+      cuda::counting_iterator<IndexT>(0),
+      WeightedDistanceOp<DataT, IndexT, DistanceIterator>{distances, weights.data_handle()});
+    computeClusterCost(handle,
+                       weighted_distances,
+                       result.size(),
+                       workspace,
+                       cluster_cost,
+                       raft::identity_op{},
+                       raft::add_op{});
+  });
 }
 
 template <typename DataT, typename IndexT>
@@ -552,7 +519,7 @@ void countSamplesInCluster(raft::resources const& handle,
     params.batch_centroids,
     workspace);
 
-  result.visit_labels([&](auto labels) {
+  result.visit_indices([&](auto labels) {
     countLabels(
       handle, labels, sampleCountInCluster.data_handle(), n_samples, n_clusters, workspace);
   });
@@ -786,7 +753,7 @@ void process_batch(raft::resources const& handle,
                                  batch_workspace,
                                  /*reset_sums=*/false);
   };
-  result.visit_labels(update_centroids);
+  result.visit_indices(update_centroids);
   weightAndComputeClusterCost(handle, result, batch_weights, workspace, batch_cost.view());
   raft::linalg::add(clustering_cost.data_handle(),
                     clustering_cost.data_handle(),

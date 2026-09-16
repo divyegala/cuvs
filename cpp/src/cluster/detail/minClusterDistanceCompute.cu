@@ -70,19 +70,9 @@ MinClusterAndDistanceResult<DataT, IndexT> make_native_result(
   rmm::device_uvector<char>& output_storage,
   cuda::stream_ref stream)
 {
-  auto* storage = static_cast<char*>(
-    reserve_aligned_workspace(output_storage, 0, plan.output_bytes, plan.output_alignment, stream));
-  MinClusterAndDistanceResult<DataT, IndexT> result{};
-  result.plan = plan;
-  result.size = size;
-  if (storage == nullptr) { return result; }
-  if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
-    result.indices   = reinterpret_cast<IndexT*>(storage);
-    result.distances = reinterpret_cast<DataT*>(storage + plan.distance_offset);
-  } else {
-    result.key_values = reinterpret_cast<raft::KeyValuePair<IndexT, DataT>*>(storage);
-  }
-  return result;
+  auto* storage =
+    reserve_aligned_workspace(output_storage, 0, plan.output_bytes, plan.output_alignment, stream);
+  return cuvs::distance::bind_top_1_nn_result_view<DataT>(plan, size, storage, plan.output_bytes);
 }
 }  // namespace
 // Calculates the nearest centroid and distance for every sample using the backend selected by AUTO.
@@ -192,8 +182,8 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
         },
         [&](raft::KeyValuePair<IndexT, DataT>* key_values) { launch(key_values); });
     } else {
-      RAFT_EXPECTS(result.key_values != nullptr, "KMeans assignment requires KVP output");
-      launch(result.key_values);
+      RAFT_EXPECTS(result.key_values() != nullptr, "KMeans assignment requires KVP output");
+      launch(result.key_values());
     }
     return result;
   }
@@ -203,11 +193,12 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
   const auto output_size = static_cast<std::size_t>(n_samples);
   RAFT_EXPECTS(output_size <= std::numeric_limits<std::size_t>::max() / sizeof(KeyValueT),
                "KMeans assignment output size overflows size_t");
+  plan.m                = n_samples;
   plan.output_layout    = cuvs::distance::detail::Top1nnOutputLayout::KeyValuePair;
   plan.output_alignment = alignof(KeyValueT);
   plan.output_bytes     = output_size * sizeof(KeyValueT);
   auto result        = make_native_result<DataT, IndexT>(plan, n_samples, output_storage, stream);
-  auto* kvp_output   = result.key_values;
+  auto* kvp_output   = result.key_values();
   auto dataBatchSize = getDataBatchSize(batch_samples, n_samples);
   auto centroidsBatchSize = getCentroidsBatchSize(batch_centroids, n_clusters);
   L2NormBuf_OR_DistBuf.resize(dataBatchSize * centroidsBatchSize, stream);

@@ -9,7 +9,6 @@
 #include <raft/core/copy.cuh>
 #include <raft/core/device_mdspan.hpp>
 #include <raft/core/host_mdspan.hpp>
-#include <raft/core/kvp.hpp>
 #include <raft/core/mdarray.hpp>
 #include <raft/core/operators.hpp>
 #include <raft/core/resource/comms.hpp>
@@ -25,13 +24,6 @@ namespace cuvs::cluster::kmeans {
  */
 template <typename DataT, typename IndexT>
 using SamplingOp = cuvs::cluster::kmeans::detail::SamplingOp<DataT, IndexT>;
-
-/**
- * Functor used to extract the index from a KeyValue pair
- * storing both index and a distance.
- */
-template <typename IndexT, typename DataT>
-using KeyValueIndexOp = cuvs::cluster::kmeans::detail::KeyValueIndexOp<IndexT, DataT>;
 
 /**
  * @brief Find clusters with k-means algorithm.

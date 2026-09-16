@@ -390,6 +390,67 @@ TEST(Top1nnPlan, ExplicitUnavailableBackendIsStrict)
                                                   DistanceType::L2Expanded,
                                                   cuvs::distance::detail::Top1nnBackend::Unfused));
 }
+
+TEST(Top1nnResultView, BindsCallerAllocatedOutputs)
+{
+  using Kvp = raft::KeyValuePair<int, float>;
+  cuvs::distance::detail::Top1nnPlan<int> plan{};
+  plan.output_layout    = cuvs::distance::detail::Top1nnOutputLayout::KeyValuePair;
+  plan.output_alignment = alignof(Kvp);
+  plan.output_bytes     = 2 * sizeof(Kvp);
+  plan.m                = 2;
+
+  Kvp key_values[2];
+  auto kvp_result = cuvs::distance::make_top_1_nn_result_view<float>(plan, 2, key_values);
+  kvp_result.visit_native([](int*, float*) { FAIL() << "KVP result visited as separate output"; },
+                          [&](Kvp* output) { EXPECT_EQ(output, key_values); });
+
+  int indices[2];
+  float distances[2];
+  plan.output_layout    = cuvs::distance::detail::Top1nnOutputLayout::Separate;
+  plan.output_alignment = alignof(float);
+  plan.distance_offset  = 2 * sizeof(int);
+  plan.output_bytes     = plan.distance_offset + 2 * sizeof(float);
+  auto separate_result  = cuvs::distance::make_top_1_nn_result_view<float>(
+    plan, 2, cuvs::distance::Top1nnOutput<int, float>{indices, distances});
+  separate_result.visit_native(
+    [&](int* output_indices, float* output_distances) {
+      EXPECT_EQ(output_indices, indices);
+      EXPECT_EQ(output_distances, distances);
+    },
+    [](Kvp*) { FAIL() << "Separate result visited as KVP output"; });
+
+  EXPECT_ANY_THROW(cuvs::distance::make_top_1_nn_result_view<float>(plan, 2, key_values));
+}
+
+TEST(Top1nnResultView, BindsAlignedCallerStorage)
+{
+  constexpr int size                    = 2;
+  constexpr std::size_t alignment       = 16;
+  constexpr std::size_t distance_offset = alignment;
+  constexpr std::size_t output_bytes    = distance_offset + size * sizeof(float);
+  alignas(alignment) char storage[output_bytes];
+
+  cuvs::distance::detail::Top1nnPlan<int> plan{};
+  plan.output_layout    = cuvs::distance::detail::Top1nnOutputLayout::Separate;
+  plan.output_alignment = alignment;
+  plan.distance_offset  = distance_offset;
+  plan.output_bytes     = output_bytes;
+  plan.m                = size;
+
+  auto result =
+    cuvs::distance::bind_top_1_nn_result_view<float>(plan, size, storage, sizeof(storage));
+  result.visit_native(
+    [&](int* indices, float* distances) {
+      EXPECT_EQ(static_cast<void*>(indices), static_cast<void*>(storage));
+      EXPECT_EQ(static_cast<void*>(distances), static_cast<void*>(storage + distance_offset));
+    },
+    [](raft::KeyValuePair<int, float>*) { FAIL() << "Separate storage bound as KVP output"; });
+
+  EXPECT_ANY_THROW(
+    cuvs::distance::bind_top_1_nn_result_view<float>(plan, size, storage, output_bytes - 1));
+}
+
 #if CUVS_CUTILE_ENABLED
 const std::vector<NNInputs<int64_t>> input_fp32_cutile_i64 = [] {
   auto input    = input_fp32<int64_t>.front();
