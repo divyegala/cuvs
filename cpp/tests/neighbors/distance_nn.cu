@@ -6,7 +6,7 @@
 #include "../test_utils.cuh"
 #include "distance_nn_helper.cuh"
 
-#include "../../src/distance/fused_distance_nn.cuh"
+#include "../../src/distance/top_1_nn.cuh"
 #include "../../src/distance/unfused_distance_nn.cuh"
 
 #include <cuda/stream>
@@ -99,7 +99,16 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
     }
 
     if constexpr (impl == ImplType::fused) {
-      workspace_size = cuvs::distance::top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, backend);
+      if (backend == cuvs::distance::detail::Top1nnBackend::Cutile &&
+          !cuvs::distance::detail::is_top_1_nn_backend_available(
+            backend, x.data_handle(), y.data_handle(), m, n, k, metric)) {
+        backend_unavailable = true;
+      } else {
+        plan = cuvs::distance::probe_top_1_nn(
+          handle, x.data_handle(), y.data_handle(), m, n, k, tuning, metric, backend);
+        backend_unavailable = !plan.available;
+        workspace_size      = plan.workspace_bytes;
+      }
     } else if constexpr (impl == ImplType::unfused) {
       workspace_size = m * n * sizeof(AccT);
     }
@@ -126,11 +135,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
       handle, ref_out.data_handle(), x.data_handle(), y.data_handle(), m, n, k, sqrt, metric);
 
     if constexpr (impl == ImplType::fused) {
-      if (backend == cuvs::distance::detail::Top1nnBackend::Cutile &&
-          !cuvs::distance::detail::is_top_1_nn_backend_available(
-            backend, x.data_handle(), y.data_handle(), m, n, k, metric)) {
-        GTEST_SKIP() << "cuTile is not available for this device/input";
-      }
+      if (backend_unavailable) { GTEST_SKIP() << "Requested top_1_nn path is unavailable"; }
       auto run_top_1_nn = [&](auto output) {
         cuvs::distance::top_1_nn<DataT, IdxT>(handle,
                                               output,
@@ -149,9 +154,9 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
                                               true,
                                               metric,
                                               0.0,
-                                              backend);
+                                              plan);
       };
-      if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
+      if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
         if constexpr (std::is_same_v<DataT, float> || std::is_same_v<DataT, half>) {
           run_top_1_nn(cuvs::distance::Top1nnOutput<IdxT, AccT>{cutile_idx.data_handle(),
                                                                 cutile_dist.data_handle()});
@@ -186,7 +191,7 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   void compare()
   {
     if constexpr (impl == ImplType::fused) {
-      if (backend == cuvs::distance::detail::Top1nnBackend::Cutile) {
+      if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
         // cuTile MMA arithmetic can produce a different index for nearly tied candidates.
         // Validate that the returned index selects a candidate within the same numerical tolerance
         // of the true optimum.
@@ -241,6 +246,8 @@ class NNTest : public ::testing::TestWithParam<NNInputs<IdxT>> {
   raft::device_vector<OutT, IdxT> ref_out;
   raft::device_vector<AccT, IdxT> ref_dist;
   raft::device_vector<AccT, IdxT> selected_dist;
+  cuvs::distance::detail::Top1nnPlan<IdxT> plan{};
+  bool backend_unavailable{};
   raft::device_vector<IdxT, IdxT> cutile_idx;
   raft::device_vector<AccT, IdxT> cutile_dist;
   size_t workspace_size;
@@ -265,6 +272,18 @@ const std::vector<NNInputs<IdxT>> input_fp32 = {
 template <typename IdxT>
 const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
   auto inputs = input_fp32<IdxT>;
+  for (auto input : input_fp32<IdxT>) {
+    input.backend = cuvs::distance::detail::Top1nnBackend::Auto;
+    inputs.push_back(input);
+  }
+  inputs.push_back({30,
+                    20,
+                    10,
+                    DistanceType::L2Expanded,
+                    false,
+                    uint64_t(31415926),
+                    0.1,
+                    cuvs::distance::detail::Top1nnBackend::Auto});
   for (auto input : input_fp32<IdxT>) {
     input.backend = cuvs::distance::detail::Top1nnBackend::Unfused;
     inputs.push_back(input);
@@ -297,6 +316,80 @@ TEST_P(NNTest_fp32_fused, test)
 
 INSTANTIATE_TEST_CASE_P(NNTest, NNTest_fp32_fused, ::testing::ValuesIn(input_fp32_fused<int>));
 
+TEST(Top1nnAutoSelection, LegacyHeuristic)
+{
+  using Backend = cuvs::distance::detail::Top1nnBackend;
+  EXPECT_EQ(cuvs::distance::detail::legacy_top_1_nn_backend(7, 32, 32, DistanceType::L2Expanded),
+            Backend::Unfused);
+  EXPECT_EQ(cuvs::distance::detail::legacy_top_1_nn_backend(8, 32, 32, DistanceType::L2Expanded),
+            Backend::Cutlass);
+  EXPECT_EQ(
+    cuvs::distance::detail::legacy_top_1_nn_backend(9, 4096, 32, DistanceType::CosineExpanded),
+    Backend::Cutlass);
+  EXPECT_EQ(cuvs::distance::detail::legacy_top_1_nn_backend(9, 32, 32, DistanceType::L2Expanded),
+            Backend::Unfused);
+  EXPECT_EQ(
+    cuvs::distance::detail::legacy_top_1_nn_backend(10, 8192, 8192, DistanceType::L2Expanded),
+    Backend::Unfused);
+}
+
+TEST(Top1nnPlan, RejectsMismatchedLaunch)
+{
+  raft::resources handle;
+  constexpr int m = 2;
+  constexpr int n = 2;
+  constexpr int k = 2;
+  auto x          = raft::make_device_matrix<float, int>(handle, m, k + 1);
+  auto y          = raft::make_device_matrix<float, int>(handle, n, k + 1);
+  auto x_norm     = raft::make_device_vector<float, int>(handle, m);
+  auto y_norm     = raft::make_device_vector<float, int>(handle, n);
+  auto output     = raft::make_device_vector<raft::KeyValuePair<int, float>, int>(handle, m);
+  cuvs::distance::detail::Top1nnTuning tuning{};
+  const auto plan = cuvs::distance::probe_top_1_nn(handle,
+                                                   x.data_handle(),
+                                                   y.data_handle(),
+                                                   m,
+                                                   n,
+                                                   k,
+                                                   tuning,
+                                                   DistanceType::L2Expanded,
+                                                   cuvs::distance::detail::Top1nnBackend::Unfused);
+  auto workspace  = raft::make_device_vector<char, int>(handle, plan.workspace_bytes);
+  EXPECT_ANY_THROW((cuvs::distance::top_1_nn<float, int>(handle,
+                                                         output.data_handle(),
+                                                         x.data_handle(),
+                                                         y.data_handle(),
+                                                         x_norm.data_handle(),
+                                                         y_norm.data_handle(),
+                                                         m,
+                                                         n,
+                                                         k + 1,
+                                                         tuning,
+                                                         workspace.data_handle(),
+                                                         workspace.size(),
+                                                         false,
+                                                         true,
+                                                         true,
+                                                         DistanceType::L2Expanded,
+                                                         0.0f,
+                                                         plan)));
+}
+
+TEST(Top1nnPlan, ExplicitUnavailableBackendIsStrict)
+{
+  raft::resources handle;
+  auto x = raft::make_device_matrix<half, int>(handle, 2, 2);
+  auto y = raft::make_device_matrix<half, int>(handle, 2, 2);
+  EXPECT_ANY_THROW(cuvs::distance::probe_top_1_nn(handle,
+                                                  x.data_handle(),
+                                                  y.data_handle(),
+                                                  2,
+                                                  2,
+                                                  2,
+                                                  cuvs::distance::detail::Top1nnTuning{},
+                                                  DistanceType::L2Expanded,
+                                                  cuvs::distance::detail::Top1nnBackend::Unfused));
+}
 #if CUVS_CUTILE_ENABLED
 const std::vector<NNInputs<int64_t>> input_fp32_cutile_i64 = [] {
   auto input    = input_fp32<int64_t>.front();
@@ -354,6 +447,22 @@ const std::vector<NNInputs<IdxT>> input_fp16_cutile = {
    uint64_t(31415926),
    0.1,
    cuvs::distance::detail::Top1nnBackend::Cutile},
+  {257,
+   263,
+   64,
+   DistanceType::L2Expanded,
+   false,
+   uint64_t(31415926),
+   0.1,
+   cuvs::distance::detail::Top1nnBackend::Auto},
+  {257,
+   263,
+   65,
+   DistanceType::CosineExpanded,
+   false,
+   uint64_t(31415926),
+   0.1,
+   cuvs::distance::detail::Top1nnBackend::Auto},
 };
 
 using NNTest_fp16_fused = NNTest<half, float, int32_t, ImplType::fused>;
