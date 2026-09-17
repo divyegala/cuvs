@@ -8,7 +8,7 @@
 
 namespace {
 
-using data_t          = @data_type @;
+using data_t          = @data_type@;
 using bitset_filter_t = cuvs::neighbors::cagra::detail::CagraSampleFilterWithQueryIdOffset<
   cuvs::neighbors::filtering::bitset_filter<uint32_t, int64_t>>;
 using bloom_filter_t = cuvs::neighbors::cagra::detail::CagraSampleFilterWithQueryIdOffset<

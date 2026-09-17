@@ -1575,9 +1575,10 @@ struct roaring_bitmap_filter : public base_filter {
   /**
    * @brief Replace one query's allowlist pointer outside the search path.
    *
-   * The replacement must have the same `dataset_rows()`. The method copies one pointer and one
-   * empty flag to the device and synchronizes @p res before returning. Do not call it concurrently
-   * with a search, and keep the replacement owner alive for all subsequent searches.
+   * The replacement must have the same `dataset_rows()`. Copies share the underlying mapping, so
+   * the replacement is visible through every copy of this filter. The method copies one pointer
+   * and one empty flag to the device and synchronizes @p res before returning. Do not call it
+   * concurrently with a search, and keep the replacement owner alive for all subsequent searches.
    */
   void set_allowlist(raft::resources const& res,
                      std::size_t query_id,

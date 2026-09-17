@@ -77,11 +77,10 @@ device_build_result build_from_device_ids(
   if (size == 0) { return {}; }
 
   cuco_bitmap_allocator allocator{};
-  cuda::stream_ref cuco_stream{stream.value()};
   auto bitmap            = pre_sorted ? cuco_bitmap_type::from_sorted_unique_indices(
-                               ids.data_handle(), ids.data_handle() + size, allocator, cuco_stream)
+                               ids.data_handle(), ids.data_handle() + size, allocator, stream)
                                       : cuco_bitmap_type::from_indices(
-                               ids.data_handle(), ids.data_handle() + size, allocator, cuco_stream);
+                               ids.data_handle(), ids.data_handle() + size, allocator, stream);
   auto owner             = std::make_unique<cuco_bitmap_type>(std::move(bitmap));
   auto const cardinality = static_cast<std::size_t>(owner->size());
   return {std::move(owner), cardinality};

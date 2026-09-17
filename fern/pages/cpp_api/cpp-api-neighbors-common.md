@@ -492,7 +492,7 @@ std::size_t query_id,
 cuvs::core::roaring_allowlist_view replacement);
 ```
 
-The replacement must have the same `dataset_rows()`. The method copies one pointer and one empty flag to the device and synchronizes `res` before returning. Do not call it concurrently with a search, and keep the replacement owner alive for all subsequent searches.
+The replacement must have the same `dataset_rows()`. Copies share the underlying mapping, so the replacement is visible through every copy of this filter. The method copies one pointer and one empty flag to the device and synchronizes `res` before returning. Do not call it concurrently with a search, and keep the replacement owner alive for all subsequent searches.
 
 **Parameters**
 

@@ -419,7 +419,7 @@ TEST_P(CagraUdfFilterTest, TenantContextHonorsQuerySpecificMetadata)
   auto empty_allowlist = cuvs::core::roaring_allowlist::from_ids(
     res, n_rows, raft::make_host_vector_view<const std::uint32_t, std::int64_t>(nullptr, 0));
   roaring_bitmap_filter.set_allowlist(res, 1, empty_allowlist.view());
-  auto empty_result = search(roaring_bitmap_filter, 0.999f);
+  auto empty_result = search(roaring_bitmap_filter);
   for (std::int64_t i = 0; i < k; ++i) {
     auto const source_id = empty_result.neighbors[static_cast<std::size_t>(k + i)];
     EXPECT_GE(source_id, static_cast<std::uint32_t>(n_rows));
