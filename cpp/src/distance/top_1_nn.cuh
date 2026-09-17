@@ -255,7 +255,7 @@ CUVS_EXPORT std::size_t top_1_nn_workspace_size(IdxT m,
                                                 detail::Top1nnBackend backend,
                                                 bool store_indices = true);
 
-/** Resolve one exact invocation and return its native storage requirements. */
+/** Resolve one exact invocation or automatic policy and return its native storage requirements. */
 template <typename DataT, typename IdxT>
 CUVS_EXPORT detail::Top1nnPlan<IdxT> probe_top_1_nn(
   raft::resources const& handle,
@@ -290,7 +290,7 @@ CUVS_EXPORT void top_1_nn(raft::resources const& handle,
                           float metric_arg,
                           const detail::Top1nnPlan<IdxT>& plan);
 
-/** Convenience overload for an explicit backend or AUTO request. */
+/** Convenience overload for an explicit backend or automatic selection policy. */
 template <typename DataT, typename IdxT, typename OutputT, typename NormT = DataT>
 void top_1_nn(raft::resources const& handle,
               OutputT output,

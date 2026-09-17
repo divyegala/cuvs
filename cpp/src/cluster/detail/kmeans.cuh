@@ -1094,15 +1094,20 @@ void kmeans_predict(raft::resources const& handle,
 
   cuvs::cluster::kmeans::detail::copyClusterLabels(handle, result, labels.data_handle());
 
-  rmm::device_scalar<DataT> clusterCostD(stream);
-  cuvs::cluster::kmeans::detail::weightAndComputeClusterCost(
-    handle,
-    result,
-    raft::make_const_mdspan(weight.view()),
-    workspace,
-    raft::make_device_scalar_view(clusterCostD.data()));
-
-  inertia[0] = clusterCostD.value(stream);
+  if (result.plan().backend != cuvs::distance::detail::Top1nnBackend::Cutile) {
+    rmm::device_scalar<DataT> clusterCostD(stream);
+    cuvs::cluster::kmeans::detail::weightAndComputeClusterCost(
+      handle,
+      result,
+      raft::make_const_mdspan(weight.view()),
+      workspace,
+      raft::make_device_scalar_view(clusterCostD.data()));
+    inertia[0] = clusterCostD.value(stream);
+  } else {
+    auto stable_weights = std::optional<raft::device_vector_view<const DataT, IndexT>>{
+      raft::make_const_mdspan(weight.view())};
+    cuvs::cluster::kmeans::cluster_cost(handle, X, centroids, inertia, stable_weights);
+  }
 }
 
 template <typename DataT, typename IndexT = int>

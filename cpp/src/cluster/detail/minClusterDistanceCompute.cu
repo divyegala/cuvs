@@ -75,7 +75,7 @@ MinClusterAndDistanceResult<DataT, IndexT> make_native_result(
   return cuvs::distance::bind_top_1_nn_result_view<DataT>(plan, size, storage, plan.output_bytes);
 }
 }  // namespace
-// Calculates the nearest centroid and distance for every sample using the backend selected by AUTO.
+// Calculates the nearest centroid and distance for every sample using the requested backend.
 template <typename DataT, typename IndexT>
 MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
   raft::resources const& handle,
@@ -87,7 +87,8 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
   cuvs::distance::DistanceType metric,
   int batch_samples,
   int batch_centroids,
-  rmm::device_uvector<char>& workspace)
+  rmm::device_uvector<char>& workspace,
+  cuvs::distance::detail::Top1nnBackend backend)
 {
   auto stream       = raft::resource::get_cuda_stream(handle);
   auto n_samples    = X.extent(0);
@@ -112,8 +113,9 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
                                           n_clusters,
                                           n_features,
                                           tuning,
-                                          metric);
-    RAFT_EXPECTS(plan.available, "AUTO top_1_nn is unavailable for KMeans assignment");
+                                          metric,
+                                          backend);
+    RAFT_EXPECTS(plan.available, "Requested top_1_nn backend is unavailable for KMeans assignment");
 
     const DataT* x_norm  = L2NormX.data_handle();
     const DataT* y_norm  = nullptr;
@@ -261,7 +263,8 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
     cuvs::distance::DistanceType,                                                                  \
     int,                                                                                           \
     int,                                                                                           \
-    rmm::device_uvector<char>&);
+    rmm::device_uvector<char>&,                                                                    \
+    cuvs::distance::detail::Top1nnBackend);
 
 INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(float, int64_t)
 INSTANTIATE_MIN_CLUSTER_AND_DISTANCE(double, int64_t)
@@ -280,7 +283,8 @@ void minClusterDistanceCompute(raft::resources const& handle,
                                cuvs::distance::DistanceType metric,
                                int batch_samples,
                                int batch_centroids,
-                               rmm::device_uvector<char>& workspace)
+                               rmm::device_uvector<char>& workspace,
+                               cuvs::distance::detail::Top1nnBackend backend)
 {
   auto stream       = raft::resource::get_cuda_stream(handle);
   auto n_samples    = X.extent(0);
@@ -307,9 +311,10 @@ void minClusterDistanceCompute(raft::resources const& handle,
                                                      n_features,
                                                      tuning,
                                                      metric,
-                                                     cuvs::distance::detail::Top1nnBackend::Auto,
+                                                     backend,
                                                      false);
-    RAFT_EXPECTS(plan.available, "AUTO top_1_nn is unavailable for KMeans distance reduction");
+    RAFT_EXPECTS(plan.available,
+                 "Requested top_1_nn backend is unavailable for KMeans distance reduction");
 
     const DataT* x_norm  = L2NormX.data_handle();
     const DataT* y_norm  = nullptr;
@@ -429,7 +434,8 @@ void minClusterDistanceCompute(raft::resources const& handle,
     cuvs::distance::DistanceType metric,                        \
     int batch_samples,                                          \
     int batch_centroids,                                        \
-    rmm::device_uvector<char>& workspace);
+    rmm::device_uvector<char>& workspace,                       \
+    cuvs::distance::detail::Top1nnBackend backend);
 
 INSTANTIATE_MIN_CLUSTER_DISTANCE(float, int64_t)
 INSTANTIATE_MIN_CLUSTER_DISTANCE(double, int64_t)

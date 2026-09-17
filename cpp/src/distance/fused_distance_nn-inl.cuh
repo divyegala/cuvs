@@ -506,7 +506,8 @@ void top_1_nn_unfused(raft::resources const& handle,
                       bool init_out_buffer,
                       bool is_row_major,
                       cuvs::distance::DistanceType metric,
-                      float metric_arg)
+                      float metric_arg,
+                      bool strict_fp32)
 {
   using OutputTypes               = Top1nnOutputTypes<DataT, IdxT>;
   using NativeOutputT             = std::remove_pointer_t<OutputT>;
@@ -555,7 +556,8 @@ void top_1_nn_unfused(raft::resources const& handle,
           candidate_offset != 0 || init_out_buffer,
           is_row_major,
           metric,
-          metric_arg);
+          metric_arg,
+          strict_fp32);
         if (candidate_offset != 0) {
           auto candidate_output =
             raft::make_device_vector_view<const NativeOutputT, IdxT>(candidate_min, rows);
@@ -596,7 +598,9 @@ std::size_t top_1_nn_workspace_size(IdxT m,
   [[maybe_unused]] const auto candidates = detail::checked_top_1_nn_extent(n);
   [[maybe_unused]] const auto features   = detail::checked_top_1_nn_extent(k);
   switch (backend) {
-    case detail::Top1nnBackend::Auto: RAFT_FAIL("AUTO top_1_nn workspace requires probe_top_1_nn");
+    case detail::Top1nnBackend::Auto:
+    case detail::Top1nnBackend::Stable:
+      RAFT_FAIL("Automatic top_1_nn workspace selection requires probe_top_1_nn");
     case detail::Top1nnBackend::Cutile:
 #if CUVS_CUTILE_ENABLED
       if constexpr (std::is_same_v<IdxT, int64_t>) {
@@ -646,9 +650,11 @@ detail::Top1nnPlan<IdxT> probe_top_1_nn(raft::resources const& handle,
   plan.store_indices     = store_indices;
 
   auto resolved = requested_backend;
-  if (requested_backend == detail::Top1nnBackend::Auto) {
+  if (requested_backend == detail::Top1nnBackend::Auto ||
+      requested_backend == detail::Top1nnBackend::Stable) {
 #if CUDART_VERSION >= 13000
-    if (detail::is_top_1_nn_backend_available(
+    if (requested_backend == detail::Top1nnBackend::Auto &&
+        detail::is_top_1_nn_backend_available(
           detail::Top1nnBackend::Cutile, x, y, m, n, k, metric)) {
       resolved = detail::Top1nnBackend::Cutile;
     } else
@@ -749,7 +755,9 @@ void top_1_nn(raft::resources const& handle,
   RAFT_EXPECTS(workspace_bytes >= plan.workspace_bytes,
                "top_1_nn workspace is too small for the selected backend");
   switch (plan.backend) {
-    case detail::Top1nnBackend::Auto: RAFT_FAIL("top_1_nn plan did not resolve AUTO");
+    case detail::Top1nnBackend::Auto:
+    case detail::Top1nnBackend::Stable:
+      RAFT_FAIL("top_1_nn plan did not resolve its automatic backend policy");
     case detail::Top1nnBackend::Cutile:
 #if CUVS_CUTILE_ENABLED
       detail::top_1_nn_cutile(
@@ -792,7 +800,8 @@ void top_1_nn(raft::resources const& handle,
                                init_out_buffer,
                                is_row_major,
                                metric,
-                               metric_arg);
+                               metric_arg,
+                               plan.requested_backend == detail::Top1nnBackend::Stable);
       return;
   }
   RAFT_FAIL("Unknown top_1_nn backend");

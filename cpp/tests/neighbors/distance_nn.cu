@@ -12,6 +12,7 @@
 #include <cuda/stream>
 #include <raft/core/operators.hpp>
 #include <raft/core/resource/cuda_stream.hpp>
+#include <raft/core/resource/device_properties.hpp>
 #include <raft/linalg/norm.cuh>
 #include <raft/linalg/unary_op.cuh>
 #include <raft/matrix/init.cuh>
@@ -278,6 +279,10 @@ const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
     input.backend = cuvs::distance::detail::Top1nnBackend::Auto;
     inputs.push_back(input);
   }
+  for (auto input : input_fp32<IdxT>) {
+    input.backend = cuvs::distance::detail::Top1nnBackend::Stable;
+    inputs.push_back(input);
+  }
   inputs.push_back({30,
                     20,
                     10,
@@ -286,6 +291,14 @@ const std::vector<NNInputs<IdxT>> input_fp32_fused = [] {
                     uint64_t(31415926),
                     0.1,
                     cuvs::distance::detail::Top1nnBackend::Auto});
+  inputs.push_back({30,
+                    20,
+                    10,
+                    DistanceType::L2Expanded,
+                    false,
+                    uint64_t(31415926),
+                    0.1,
+                    cuvs::distance::detail::Top1nnBackend::Stable});
   for (auto input : input_fp32<IdxT>) {
     input.backend = cuvs::distance::detail::Top1nnBackend::Unfused;
     inputs.push_back(input);
@@ -333,6 +346,33 @@ TEST(Top1nnAutoSelection, LegacyHeuristic)
   EXPECT_EQ(
     cuvs::distance::detail::legacy_top_1_nn_backend(10, 8192, 8192, DistanceType::L2Expanded),
     Backend::Unfused);
+}
+
+TEST(Top1nnStableSelection, ExcludesCutile)
+{
+  using Backend = cuvs::distance::detail::Top1nnBackend;
+  raft::resources handle;
+  constexpr int m       = 32;
+  constexpr int n       = 32;
+  constexpr int k       = 4;
+  auto x                = raft::make_device_matrix<float, int>(handle, m, k);
+  auto y                = raft::make_device_matrix<float, int>(handle, n, k);
+  const auto plan       = cuvs::distance::probe_top_1_nn(handle,
+                                                   x.data_handle(),
+                                                   y.data_handle(),
+                                                   m,
+                                                   n,
+                                                   k,
+                                                   cuvs::distance::detail::Top1nnTuning{},
+                                                   DistanceType::L2Expanded,
+                                                   Backend::Stable);
+  const auto properties = raft::resource::get_device_properties(handle);
+  EXPECT_TRUE(plan.available);
+  EXPECT_EQ(plan.requested_backend, Backend::Stable);
+  EXPECT_EQ(plan.backend,
+            cuvs::distance::detail::legacy_top_1_nn_backend(
+              properties.major, m, n, DistanceType::L2Expanded));
+  EXPECT_NE(plan.backend, Backend::Cutile);
 }
 
 #if CUVS_CUTILE_ENABLED

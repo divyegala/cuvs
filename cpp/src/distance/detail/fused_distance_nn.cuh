@@ -34,9 +34,11 @@ namespace distance {
 
 namespace detail {
 
-/** Explicit implementation selected for the top-1 nearest-neighbor primitive. */
+/** Implementation or automatic selection policy for the top-1 nearest-neighbor primitive. */
 enum class Top1nnBackend : std::uint8_t {
   Auto,
+  /** Select between CUTLASS and unfused without using reduced-precision cuTile computation. */
+  Stable,
   Cutile,
   /** Legacy fused dispatcher: CUTLASS on SM80+, with its existing SIMT path before SM80. */
   Cutlass,
@@ -106,6 +108,7 @@ inline constexpr bool is_top_1_nn_metric_supported(Top1nnBackend backend, Distan
     case Top1nnBackend::Cutile:
       return metric == DistanceType::InnerProduct || metric == DistanceType::L2Expanded ||
              metric == DistanceType::L2SqrtExpanded || metric == DistanceType::CosineExpanded;
+    case Top1nnBackend::Stable:
     case Top1nnBackend::Cutlass:
     case Top1nnBackend::Unfused:
       return metric == DistanceType::L2Expanded || metric == DistanceType::L2SqrtExpanded ||
@@ -128,7 +131,7 @@ bool is_top_1_nn_backend_available(Top1nnBackend backend,
                                    IdxT k,
                                    cuvs::distance::DistanceType metric)
 {
-  if (backend == Top1nnBackend::Auto) { return false; }
+  if (backend == Top1nnBackend::Auto || backend == Top1nnBackend::Stable) { return false; }
   if (!is_top_1_nn_metric_supported(backend, metric)) { return false; }
   if (x == nullptr || y == nullptr || m <= IdxT{0} || n <= IdxT{0} || k <= IdxT{0}) {
     return false;

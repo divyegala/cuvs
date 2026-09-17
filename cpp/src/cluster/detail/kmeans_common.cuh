@@ -434,7 +434,8 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
   cuvs::distance::DistanceType metric,
   int batch_samples,
   int batch_centroids,
-  rmm::device_uvector<char>& workspace);
+  rmm::device_uvector<char>& workspace,
+  cuvs::distance::detail::Top1nnBackend backend = cuvs::distance::detail::Top1nnBackend::Auto);
 
 #define EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(DataT, IndexT)                              \
   extern template MinClusterAndDistanceResult<DataT, IndexT>                                 \
@@ -447,7 +448,8 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
                                               cuvs::distance::DistanceType,                  \
                                               int,                                           \
                                               int,                                           \
-                                              rmm::device_uvector<char>&);
+                                              rmm::device_uvector<char>&,                    \
+                                              cuvs::distance::detail::Top1nnBackend);
 
 EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(float, int64_t)
 EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(float, int)
@@ -457,16 +459,18 @@ EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(double, int)
 #undef EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE
 
 template <typename DataT, typename IndexT>
-void minClusterDistanceCompute(raft::resources const& handle,
-                               raft::device_matrix_view<const DataT, IndexT> X,
-                               raft::device_matrix_view<DataT, IndexT> centroids,
-                               raft::device_vector_view<DataT, IndexT> minClusterDistance,
-                               raft::device_vector_view<DataT, IndexT> L2NormX,
-                               rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,
-                               cuvs::distance::DistanceType metric,
-                               int batch_samples,
-                               int batch_centroids,
-                               rmm::device_uvector<char>& workspace);
+void minClusterDistanceCompute(
+  raft::resources const& handle,
+  raft::device_matrix_view<const DataT, IndexT> X,
+  raft::device_matrix_view<DataT, IndexT> centroids,
+  raft::device_vector_view<DataT, IndexT> minClusterDistance,
+  raft::device_vector_view<DataT, IndexT> L2NormX,
+  rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,
+  cuvs::distance::DistanceType metric,
+  int batch_samples,
+  int batch_centroids,
+  rmm::device_uvector<char>& workspace,
+  cuvs::distance::detail::Top1nnBackend backend = cuvs::distance::detail::Top1nnBackend::Auto);
 
 #define EXTERN_TEMPLATE_MIN_CLUSTER_DISTANCE(DataT, IndexT)      \
   extern template void minClusterDistanceCompute<DataT, IndexT>( \
@@ -479,7 +483,8 @@ void minClusterDistanceCompute(raft::resources const& handle,
     cuvs::distance::DistanceType metric,                         \
     int batch_samples,                                           \
     int batch_centroids,                                         \
-    rmm::device_uvector<char>& workspace);
+    rmm::device_uvector<char>& workspace,                        \
+    cuvs::distance::detail::Top1nnBackend backend);
 
 EXTERN_TEMPLATE_MIN_CLUSTER_DISTANCE(float, int64_t)
 EXTERN_TEMPLATE_MIN_CLUSTER_DISTANCE(double, int64_t)
