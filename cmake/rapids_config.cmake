@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -27,6 +27,9 @@ if(NOT _rapids_branch)
       "Could not determine branch name to use for checking out rapids-cmake. The file \"${CMAKE_CURRENT_LIST_DIR}/../RAPIDS_BRANCH\" is missing."
   )
 endif()
+
+# Temporary override for https://github.com/rapidsai/rapids-cmake/pull/1095.
+set(rapids-cmake-sha "9b800fbadf693850a90f6502eee72550df030867")
 
 if(NOT rapids-cmake-version)
   set(rapids-cmake-version "${RAPIDS_VERSION_MAJOR_MINOR}")
