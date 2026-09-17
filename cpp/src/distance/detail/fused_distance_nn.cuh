@@ -75,6 +75,8 @@ struct Top1nnPlan {
   std::size_t distance_offset{};
   std::size_t workspace_bytes{};
   std::size_t workspace_alignment{};
+  /** Whether this invocation stores nearest-neighbor indices. */
+  bool store_indices{true};
   const void* x{};
   const void* y{};
   /** GEMM-equivalent dimensions: query rows, candidate rows, and feature columns. */

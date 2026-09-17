@@ -124,11 +124,14 @@ class Top1nnResultView {
                      "top-1 NN KVP output does not satisfy the plan alignment");
         result.key_values_ = output;
       } else {
-        RAFT_EXPECTS(size == 0 || (output.nearest_idx != nullptr && output.nearest_dist != nullptr),
-                     "top-1 NN separate result requires non-null outputs");
+        RAFT_EXPECTS(size == 0 || output.nearest_dist != nullptr,
+                     "top-1 NN separate result requires a non-null distance output");
+        RAFT_EXPECTS(size == 0 || (output.nearest_idx != nullptr) == plan.store_indices,
+                     "top-1 NN index output does not match the plan");
         RAFT_EXPECTS(
-          output.nearest_idx == nullptr ||
-            (reinterpret_cast<std::uintptr_t>(output.nearest_idx) % plan.output_alignment == 0 &&
+          (output.nearest_idx == nullptr ||
+           reinterpret_cast<std::uintptr_t>(output.nearest_idx) % plan.output_alignment == 0) &&
+            (output.nearest_dist == nullptr ||
              reinterpret_cast<std::uintptr_t>(output.nearest_dist) % plan.output_alignment == 0),
           "top-1 NN separate output does not satisfy the plan alignment");
         result.separate_ = output;
@@ -160,8 +163,9 @@ class Top1nnResultView {
       auto* bytes = static_cast<char*>(storage);
       auto* distances =
         bytes == nullptr ? nullptr : reinterpret_cast<distance_type*>(bytes + plan.distance_offset);
-      return from_output(
-        plan, size, separate_output_type{reinterpret_cast<IdxT*>(bytes), distances});
+      auto* indices =
+        bytes == nullptr || !plan.store_indices ? nullptr : reinterpret_cast<IdxT*>(bytes);
+      return from_output(plan, size, separate_output_type{indices, distances});
     }
     return from_output(plan, size, reinterpret_cast<key_value_output_type>(storage));
   }
@@ -246,8 +250,10 @@ Top1nnResultView<DataT, IdxT> bind_top_1_nn_result_view(const detail::Top1nnPlan
 template <typename DataT, typename IdxT>
 CUVS_EXPORT std::size_t top_1_nn_workspace_size(IdxT m,
                                                 IdxT n,
+                                                IdxT k,
                                                 const detail::Top1nnTuning& tuning,
-                                                detail::Top1nnBackend backend);
+                                                detail::Top1nnBackend backend,
+                                                bool store_indices = true);
 
 /** Resolve one exact invocation and return its native storage requirements. */
 template <typename DataT, typename IdxT>
@@ -260,7 +266,8 @@ CUVS_EXPORT detail::Top1nnPlan<IdxT> probe_top_1_nn(
   IdxT k,
   const detail::Top1nnTuning& tuning,
   DistanceType metric,
-  detail::Top1nnBackend backend = detail::Top1nnBackend::Auto);
+  detail::Top1nnBackend backend = detail::Top1nnBackend::Auto,
+  bool store_indices            = true);
 
 /** Dispatch 1-NN using the native output representation recorded in a reusable plan. */
 template <typename DataT, typename IdxT, typename OutputT, typename NormT = DataT>
@@ -304,7 +311,14 @@ void top_1_nn(raft::resources const& handle,
               float metric_arg,
               detail::Top1nnBackend backend)
 {
-  const auto plan = probe_top_1_nn(handle, x, y, m, n, k, tuning, metric, backend);
+  using output_type = std::remove_cvref_t<OutputT>;
+  constexpr bool is_separate_output =
+    std::is_same_v<output_type, typename detail::Top1nnOutputTypes<DataT, IdxT>::separate>;
+  constexpr bool is_kvp_output =
+    std::is_same_v<output_type, typename detail::Top1nnOutputTypes<DataT, IdxT>::kvp>;
+  bool store_indices = is_kvp_output;
+  if constexpr (is_separate_output) { store_indices = output.nearest_idx != nullptr; }
+  const auto plan = probe_top_1_nn(handle, x, y, m, n, k, tuning, metric, backend, store_indices);
   RAFT_EXPECTS(plan.available, "No top_1_nn backend is available for this invocation");
   top_1_nn(handle,
            output,
@@ -327,7 +341,7 @@ void top_1_nn(raft::resources const& handle,
 }
 #define CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(DataT, IdxT)            \
   extern template std::size_t top_1_nn_workspace_size<DataT, IdxT>( \
-    IdxT, IdxT, const detail::Top1nnTuning&, detail::Top1nnBackend)
+    IdxT, IdxT, IdxT, const detail::Top1nnTuning&, detail::Top1nnBackend, bool)
 
 CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(float, int);
 CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(float, int64_t);
@@ -348,7 +362,8 @@ CUVS_EXTERN_TOP_1_NN_WORKSPACE_SIZE(half, int64_t);
     IdxT,                                                               \
     const detail::Top1nnTuning&,                                        \
     DistanceType,                                                       \
-    detail::Top1nnBackend)
+    detail::Top1nnBackend,                                              \
+    bool)
 
 CUVS_EXTERN_PROBE_TOP_1_NN(float, int);
 CUVS_EXTERN_PROBE_TOP_1_NN(float, int64_t);

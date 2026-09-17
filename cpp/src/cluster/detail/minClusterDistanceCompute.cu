@@ -153,6 +153,15 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
 
     auto result = make_native_result<DataT, IndexT>(plan, n_samples, output_storage, stream);
 
+    bool init_out_buffer = true;
+    if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::KeyValuePair) {
+      auto output = raft::make_device_vector_view<raft::KeyValuePair<IndexT, DataT>, IndexT>(
+        result.key_values(), n_samples);
+      raft::matrix::fill(
+        handle, output, raft::KeyValuePair<IndexT, DataT>{0, std::numeric_limits<DataT>::max()});
+      init_out_buffer = false;
+    }
+
     auto* backend_workspace = reserve_aligned_workspace(
       workspace, 0, plan.workspace_bytes, plan.workspace_alignment, stream);
     auto launch = [&](auto output) {
@@ -169,7 +178,7 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
                                               backend_workspace,
                                               plan.workspace_bytes,
                                               metric != cuvs::distance::DistanceType::L2Expanded,
-                                              true,
+                                              init_out_buffer,
                                               true,
                                               metric,
                                               0.0f,
@@ -297,7 +306,9 @@ void minClusterDistanceCompute(raft::resources const& handle,
                                                      n_clusters,
                                                      n_features,
                                                      tuning,
-                                                     metric);
+                                                     metric,
+                                                     cuvs::distance::detail::Top1nnBackend::Auto,
+                                                     false);
     RAFT_EXPECTS(plan.available, "AUTO top_1_nn is unavailable for KMeans distance reduction");
 
     const DataT* x_norm  = L2NormX.data_handle();
@@ -336,17 +347,9 @@ void minClusterDistanceCompute(raft::resources const& handle,
       y_norm = L2NormBuf_OR_DistBuf.data();
     }
 
-    void* backend_workspace = workspace.data();
-    IndexT* ignored_indices = nullptr;
-    if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
-      const auto index_bytes = sizeof(IndexT) * static_cast<std::size_t>(n_samples);
-      backend_workspace      = reserve_aligned_workspace(
-        workspace, index_bytes, plan.workspace_bytes, plan.workspace_alignment, stream);
-      ignored_indices = reinterpret_cast<IndexT*>(workspace.data());
-    } else {
-      backend_workspace = reserve_aligned_workspace(
-        workspace, 0, plan.workspace_bytes, plan.workspace_alignment, stream);
-    }
+    std::size_t backend_workspace_bytes = plan.workspace_bytes;
+    void* backend_workspace             = reserve_aligned_workspace(
+      workspace, 0, backend_workspace_bytes, plan.workspace_alignment, stream);
 
     auto launch = [&](auto output) {
       cuvs::distance::top_1_nn<DataT, IndexT>(handle,
@@ -360,7 +363,7 @@ void minClusterDistanceCompute(raft::resources const& handle,
                                               n_features,
                                               tuning,
                                               backend_workspace,
-                                              plan.workspace_bytes,
+                                              backend_workspace_bytes,
                                               metric != cuvs::distance::DistanceType::L2Expanded,
                                               true,
                                               true,
@@ -370,8 +373,8 @@ void minClusterDistanceCompute(raft::resources const& handle,
     };
     if constexpr (std::is_same_v<DataT, float>) {
       if (plan.output_layout == cuvs::distance::detail::Top1nnOutputLayout::Separate) {
-        launch(cuvs::distance::Top1nnOutput<IndexT, DataT>{ignored_indices,
-                                                           minClusterDistance.data_handle()});
+        launch(
+          cuvs::distance::Top1nnOutput<IndexT, DataT>{nullptr, minClusterDistance.data_handle()});
       } else {
         launch(minClusterDistance.data_handle());
       }

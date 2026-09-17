@@ -16,6 +16,8 @@
 #include <raft/linalg/unary_op.cuh>
 #include <raft/matrix/init.cuh>
 
+#include <limits>
+
 namespace cuvs::neighbors {
 
 enum class ImplType { fused, unfused };
@@ -332,6 +334,34 @@ TEST(Top1nnAutoSelection, LegacyHeuristic)
     cuvs::distance::detail::legacy_top_1_nn_backend(10, 8192, 8192, DistanceType::L2Expanded),
     Backend::Unfused);
 }
+
+#if CUVS_CUTILE_ENABLED
+TEST(Top1nnWorkspace, CutileInt64IndexConversionContract)
+{
+  using Backend = cuvs::distance::detail::Top1nnBackend;
+  cuvs::distance::detail::Top1nnTuning tuning{};
+  constexpr int64_t m       = 257;
+  constexpr int64_t n       = 31;
+  constexpr int64_t k       = 16;
+  const auto workspace_size = [&](
+                                int64_t rows, int64_t candidates, int64_t features, bool indices) {
+    return cuvs::distance::top_1_nn_workspace_size<float, int64_t>(
+      rows, candidates, features, tuning, Backend::Cutile, indices);
+  };
+
+  EXPECT_EQ(workspace_size(m, n, k, true), static_cast<std::size_t>(m) * sizeof(int));
+  EXPECT_EQ(workspace_size(m, n, k, false), 0);
+
+  constexpr int64_t batched_m = cuvs::distance::detail::fused_1nn_cutile_max_batch_m<float> + 17;
+  EXPECT_EQ(workspace_size(batched_m, n, k, true),
+            static_cast<std::size_t>(cuvs::distance::detail::fused_1nn_cutile_max_batch_m<float>) *
+              sizeof(int));
+
+  constexpr int64_t too_large = static_cast<int64_t>(std::numeric_limits<int>::max()) + 1;
+  EXPECT_ANY_THROW(workspace_size(m, too_large, k, true));
+  EXPECT_ANY_THROW(workspace_size(m, n, too_large, true));
+}
+#endif
 
 TEST(Top1nnPlan, RejectsMismatchedLaunch)
 {

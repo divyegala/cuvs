@@ -9,7 +9,7 @@ namespace cuvs::distance {
 
 #define CUVS_INSTANTIATE_TOP_1_NN_WORKSPACE_SIZE(DataT, IdxT)            \
   template CUVS_EXPORT std::size_t top_1_nn_workspace_size<DataT, IdxT>( \
-    IdxT, IdxT, const detail::Top1nnTuning&, detail::Top1nnBackend)
+    IdxT, IdxT, IdxT, const detail::Top1nnTuning&, detail::Top1nnBackend, bool)
 
 CUVS_INSTANTIATE_TOP_1_NN_WORKSPACE_SIZE(float, int);
 CUVS_INSTANTIATE_TOP_1_NN_WORKSPACE_SIZE(float, int64_t);
@@ -30,7 +30,8 @@ CUVS_INSTANTIATE_TOP_1_NN_WORKSPACE_SIZE(half, int64_t);
     IdxT,                                                                    \
     const detail::Top1nnTuning&,                                             \
     DistanceType,                                                            \
-    detail::Top1nnBackend)
+    detail::Top1nnBackend,                                                   \
+    bool)
 
 CUVS_INSTANTIATE_PROBE_TOP_1_NN(float, int);
 CUVS_INSTANTIATE_PROBE_TOP_1_NN(float, int64_t);

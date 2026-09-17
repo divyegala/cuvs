@@ -299,7 +299,7 @@ void fusedDistanceNNMinReduce(raft::resources const& handle,
     "fusedDistanceNNMinReduce supports KVP or scalar distance output");
   detail::Top1nnTuning tuning{};
   const auto workspace_bytes =
-    top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, detail::Top1nnBackend::Cutlass);
+    top_1_nn_workspace_size<DataT, IdxT>(m, n, k, tuning, detail::Top1nnBackend::Cutlass);
   top_1_nn<DataT, IdxT>(handle,
                         min,
                         x,
@@ -587,18 +587,26 @@ void top_1_nn_unfused(raft::resources const& handle,
 template <typename DataT, typename IdxT>
 std::size_t top_1_nn_workspace_size(IdxT m,
                                     IdxT n,
+                                    IdxT k,
                                     const detail::Top1nnTuning& tuning,
-                                    detail::Top1nnBackend backend)
+                                    detail::Top1nnBackend backend,
+                                    [[maybe_unused]] bool store_indices)
 {
-  const auto rows = detail::checked_top_1_nn_extent(m);
-  detail::checked_top_1_nn_extent(n);
+  const auto rows                        = detail::checked_top_1_nn_extent(m);
+  [[maybe_unused]] const auto candidates = detail::checked_top_1_nn_extent(n);
+  [[maybe_unused]] const auto features   = detail::checked_top_1_nn_extent(k);
   switch (backend) {
     case detail::Top1nnBackend::Auto: RAFT_FAIL("AUTO top_1_nn workspace requires probe_top_1_nn");
     case detail::Top1nnBackend::Cutile:
 #if CUVS_CUTILE_ENABLED
       if constexpr (std::is_same_v<IdxT, int64_t>) {
-        return detail::checked_top_1_nn_workspace_multiply(
-          detail::fused_1nn_cutile_index_workspace_rows<DataT>(m), sizeof(int));
+        constexpr auto max_i32 = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        RAFT_EXPECTS(candidates <= max_i32 && features <= max_i32,
+                     "cuTile top_1_nn can batch int64 rows, but n and k must fit in int32");
+        if (store_indices) {
+          return detail::checked_top_1_nn_workspace_multiply(
+            detail::fused_1nn_cutile_index_workspace_rows<DataT>(m), sizeof(int));
+        }
       }
 #endif
       return 0;
@@ -619,7 +627,8 @@ detail::Top1nnPlan<IdxT> probe_top_1_nn(raft::resources const& handle,
                                         IdxT k,
                                         const detail::Top1nnTuning& tuning,
                                         DistanceType metric,
-                                        detail::Top1nnBackend requested_backend)
+                                        detail::Top1nnBackend requested_backend,
+                                        bool store_indices)
 {
   detail::checked_top_1_nn_extent(m);
   detail::checked_top_1_nn_extent(n);
@@ -634,6 +643,7 @@ detail::Top1nnPlan<IdxT> probe_top_1_nn(raft::resources const& handle,
   plan.k                 = k;
   plan.metric            = metric;
   plan.tuning            = tuning;
+  plan.store_indices     = store_indices;
 
   auto resolved = requested_backend;
   if (requested_backend == detail::Top1nnBackend::Auto) {
@@ -653,9 +663,10 @@ detail::Top1nnPlan<IdxT> probe_top_1_nn(raft::resources const& handle,
                  "Requested top_1_nn backend is unavailable for this invocation");
   }
 
-  plan.available       = true;
-  plan.backend         = resolved;
-  plan.workspace_bytes = top_1_nn_workspace_size<DataT, IdxT>(m, n, tuning, resolved);
+  plan.available = true;
+  plan.backend   = resolved;
+  plan.workspace_bytes =
+    top_1_nn_workspace_size<DataT, IdxT>(m, n, k, tuning, resolved, store_indices);
   plan.workspace_alignment =
     resolved == detail::Top1nnBackend::Cutile
       ? std::size_t{16}
@@ -663,13 +674,17 @@ detail::Top1nnPlan<IdxT> probe_top_1_nn(raft::resources const& handle,
            ? std::max(alignof(DataT), alignof(raft::KeyValuePair<IdxT, DataT>))
            : alignof(int));
   if (resolved == detail::Top1nnBackend::Cutile) {
-    using DistanceT = detail::top_1_nn_distance_t<DataT>;
-    const auto index_bytes =
-      detail::checked_top_1_nn_workspace_multiply(detail::checked_top_1_nn_extent(m), sizeof(IdxT));
+    using DistanceT                 = detail::top_1_nn_distance_t<DataT>;
     constexpr std::size_t alignment = 16;
-    const auto padding              = (alignment - index_bytes % alignment) % alignment;
-    plan.distance_offset            = detail::checked_top_1_nn_workspace_add(index_bytes, padding);
-    plan.output_bytes               = detail::checked_top_1_nn_workspace_add(
+    if (store_indices) {
+      const auto index_bytes = detail::checked_top_1_nn_workspace_multiply(
+        detail::checked_top_1_nn_extent(m), sizeof(IdxT));
+      const auto padding   = (alignment - index_bytes % alignment) % alignment;
+      plan.distance_offset = detail::checked_top_1_nn_workspace_add(index_bytes, padding);
+    } else {
+      plan.distance_offset = 0;
+    }
+    plan.output_bytes = detail::checked_top_1_nn_workspace_add(
       plan.distance_offset,
       detail::checked_top_1_nn_workspace_multiply(detail::checked_top_1_nn_extent(m),
                                                   sizeof(DistanceT)));
@@ -720,6 +735,15 @@ void top_1_nn(raft::resources const& handle,
   RAFT_EXPECTS(
     metric == cuvs::distance::DistanceType::InnerProduct || (xn != nullptr && yn != nullptr),
     "top_1_nn requires non-null norm buffers for the requested metric");
+  using output_type = std::remove_cvref_t<OutputT>;
+  constexpr bool is_separate_output =
+    std::is_same_v<output_type, typename detail::Top1nnOutputTypes<DataT, IdxT>::separate>;
+  constexpr bool is_kvp_output =
+    std::is_same_v<output_type, typename detail::Top1nnOutputTypes<DataT, IdxT>::kvp>;
+  bool output_stores_indices = is_kvp_output;
+  if constexpr (is_separate_output) { output_stores_indices = output.nearest_idx != nullptr; }
+  RAFT_EXPECTS(output_stores_indices == plan.store_indices,
+               "top_1_nn output index requirement does not match the invocation plan");
   RAFT_EXPECTS(plan.workspace_bytes == 0 || workspace != nullptr,
                "top_1_nn requires a workspace buffer for the selected backend");
   RAFT_EXPECTS(workspace_bytes >= plan.workspace_bytes,
