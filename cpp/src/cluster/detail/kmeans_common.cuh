@@ -715,6 +715,7 @@ __device__ void check_convergence(raft::device_scalar_view<const DataT> clusteri
  * @param[inout]  centroid_sums        Running weighted sums [n_clusters x n_features] (added into)
  * @param[inout]  weight_per_cluster   Running weight counts [n_clusters] (added into)
  * @param[inout]  clustering_cost      Running cost scalar (device) (added into)
+ * @param[out]    batch_cost           Reusable scratch scalar for this batch's cost
  */
 template <typename DataT, typename IndexT>
 void process_batch(raft::resources const& handle,
@@ -731,7 +732,8 @@ void process_batch(raft::resources const& handle,
                    raft::device_matrix_view<DataT, IndexT> centroid_sums,
                    raft::device_vector_view<DataT, IndexT> weight_per_cluster,
                    raft::device_scalar_view<DataT> clustering_cost,
-                   rmm::device_uvector<char>& batch_workspace)
+                   rmm::device_uvector<char>& batch_workspace,
+                   raft::device_scalar_view<DataT> batch_cost)
 {
   cudaStream_t stream = raft::resource::get_cuda_stream(handle).get();
 
@@ -746,7 +748,6 @@ void process_batch(raft::resources const& handle,
                                                                   batch_centroids_param,
                                                                   workspace);
 
-  auto batch_cost       = raft::make_device_scalar<DataT>(handle, DataT{0});
   auto update_centroids = [&](auto labels) {
     compute_centroid_adjustments(handle,
                                  batch_data,
@@ -759,7 +760,7 @@ void process_batch(raft::resources const& handle,
                                  /*reset_sums=*/false);
   };
   result.visit_indices(update_centroids);
-  weightAndComputeClusterCost(handle, result, batch_weights, workspace, batch_cost.view());
+  weightAndComputeClusterCost(handle, result, batch_weights, workspace, batch_cost);
   raft::linalg::add(clustering_cost.data_handle(),
                     clustering_cost.data_handle(),
                     batch_cost.data_handle(),
