@@ -41,11 +41,7 @@ def test_kmeans_fit(n_rows, n_cols, n_clusters, dtype, hierarchical):
     # balanced kmeans doesn't return inertia
     if not hierarchical:
         assert inertia < original_inertia
-        # fit() reports the cost from the assignment backend it picked,
-        # which may use reduced precision, while cluster_cost() is
-        # pinned to the stable path
-        tol = 1e-3 if dtype == np.float32 else 1e-6
-        assert np.allclose(cluster_cost(X, centroids), inertia, rtol=tol)
+        assert np.allclose(cluster_cost(X, centroids), inertia, rtol=1e-6)
 
     # make sure the prediction for each centroid is the centroid itself
     labels, inertia = predict(params, centroids, centroids)
