@@ -86,7 +86,8 @@ void cluster_cost(
     cuvs::distance::DistanceType::L2Expanded,
     n_samples,
     centroids.extent(0),
-    workspace);
+    workspace,
+    cuvs::distance::detail::Top1nnBackend::Stable);
 
   if (sample_weight.has_value()) {
     raft::linalg::map(
