@@ -101,9 +101,11 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
 
   if (is_1nn) {
     cuvs::distance::detail::Top1nnTuning tuning{};
-    tuning.unfused.row_tile = static_cast<std::size_t>(getDataBatchSize(batch_samples, n_samples));
+    tuning.unfused.row_tile = static_cast<std::size_t>(std::min(
+      getDataBatchSize(batch_samples, n_samples), static_cast<IndexT>(tuning.unfused.row_tile)));
     tuning.unfused.candidate_tile =
-      static_cast<std::size_t>(getCentroidsBatchSize(batch_centroids, n_clusters));
+      static_cast<std::size_t>(std::min(getCentroidsBatchSize(batch_centroids, n_clusters),
+                                        static_cast<IndexT>(tuning.unfused.candidate_tile)));
     plan = cuvs::distance::probe_top_1_nn(handle,
                                           X.data_handle(),
                                           centroids.data_handle(),
@@ -294,9 +296,11 @@ void minClusterDistanceCompute(raft::resources const& handle,
 
   if (is_1nn) {
     cuvs::distance::detail::Top1nnTuning tuning{};
-    tuning.unfused.row_tile = static_cast<std::size_t>(getDataBatchSize(batch_samples, n_samples));
+    tuning.unfused.row_tile = static_cast<std::size_t>(std::min(
+      getDataBatchSize(batch_samples, n_samples), static_cast<IndexT>(tuning.unfused.row_tile)));
     tuning.unfused.candidate_tile =
-      static_cast<std::size_t>(getCentroidsBatchSize(batch_centroids, n_clusters));
+      static_cast<std::size_t>(std::min(getCentroidsBatchSize(batch_centroids, n_clusters),
+                                        static_cast<IndexT>(tuning.unfused.candidate_tile)));
     const auto centroids_const = raft::make_device_matrix_view<const DataT, IndexT>(
       centroids.data_handle(), n_clusters, n_features);
     const auto plan = cuvs::distance::probe_top_1_nn(handle,
