@@ -57,6 +57,21 @@
 
 namespace cuvs::cluster::kmeans::detail {
 
+#if defined(CUVS_CUTILE_ENABLED) && CUVS_CUTILE_ENABLED && CUDA_VERSION >= 13000
+template <typename DataT>
+inline constexpr bool kmeans_may_require_tf32_norms_v = std::is_same_v<DataT, float>;
+#else
+template <typename DataT>
+inline constexpr bool kmeans_may_require_tf32_norms_v = false;
+#endif
+
+template <typename IndexT>
+void compute_fp32_tf32_norms(raft::resources const& handle,
+                             raft::device_matrix_view<const float, IndexT> input,
+                             raft::device_vector_view<float, IndexT> fp32_norms,
+                             raft::device_vector_view<float, IndexT> tf32_norms,
+                             bool take_sqrt = false);
+
 template <typename DataT, typename IndexT>
 struct SamplingOp {
   DataT* rnd;
@@ -205,6 +220,38 @@ IndexT getCentroidsBatchSize(int batch_centroids, IndexT n_local_clusters)
 {
   auto minVal = std::min(static_cast<IndexT>(batch_centroids), n_local_clusters);
   return (minVal == 0) ? n_local_clusters : minVal;
+}
+
+template <typename DataT, typename IndexT>
+cuvs::distance::detail::Top1nnPlan<IndexT> probe_kmeans_top_1_nn(
+  raft::resources const& handle,
+  const DataT* X,
+  const DataT* centroids,
+  IndexT n_samples,
+  IndexT n_clusters,
+  IndexT n_features,
+  cuvs::distance::DistanceType metric,
+  int batch_samples,
+  int batch_centroids,
+  cuvs::distance::detail::Top1nnBackend backend,
+  bool store_indices = true)
+{
+  cuvs::distance::detail::Top1nnTuning tuning{};
+  tuning.unfused.row_tile = static_cast<std::size_t>(std::min(
+    getDataBatchSize(batch_samples, n_samples), static_cast<IndexT>(tuning.unfused.row_tile)));
+  tuning.unfused.candidate_tile =
+    static_cast<std::size_t>(std::min(getCentroidsBatchSize(batch_centroids, n_clusters),
+                                      static_cast<IndexT>(tuning.unfused.candidate_tile)));
+  return cuvs::distance::probe_top_1_nn(handle,
+                                        X,
+                                        centroids,
+                                        n_samples,
+                                        n_clusters,
+                                        n_features,
+                                        tuning,
+                                        metric,
+                                        backend,
+                                        store_indices);
 }
 
 template <typename InputIterator,
@@ -435,21 +482,24 @@ MinClusterAndDistanceResult<DataT, IndexT> minClusterAndDistanceCompute(
   int batch_samples,
   int batch_centroids,
   rmm::device_uvector<char>& workspace,
+  std::optional<raft::device_vector_view<const DataT, IndexT>> Tf32NormX = std::nullopt,
   cuvs::distance::detail::Top1nnBackend backend = cuvs::distance::detail::Top1nnBackend::Auto);
 
-#define EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(DataT, IndexT)                              \
-  extern template MinClusterAndDistanceResult<DataT, IndexT>                                 \
-  minClusterAndDistanceCompute<DataT, IndexT>(raft::resources const&,                        \
-                                              raft::device_matrix_view<const DataT, IndexT>, \
-                                              raft::device_matrix_view<const DataT, IndexT>, \
-                                              rmm::device_uvector<char>&,                    \
-                                              raft::device_vector_view<const DataT, IndexT>, \
-                                              rmm::device_uvector<DataT>&,                   \
-                                              cuvs::distance::DistanceType,                  \
-                                              int,                                           \
-                                              int,                                           \
-                                              rmm::device_uvector<char>&,                    \
-                                              cuvs::distance::detail::Top1nnBackend);
+#define EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(DataT, IndexT)   \
+  extern template MinClusterAndDistanceResult<DataT, IndexT>      \
+  minClusterAndDistanceCompute<DataT, IndexT>(                    \
+    raft::resources const&,                                       \
+    raft::device_matrix_view<const DataT, IndexT>,                \
+    raft::device_matrix_view<const DataT, IndexT>,                \
+    rmm::device_uvector<char>&,                                   \
+    raft::device_vector_view<const DataT, IndexT>,                \
+    rmm::device_uvector<DataT>&,                                  \
+    cuvs::distance::DistanceType,                                 \
+    int,                                                          \
+    int,                                                          \
+    rmm::device_uvector<char>&,                                   \
+    std::optional<raft::device_vector_view<const DataT, IndexT>>, \
+    cuvs::distance::detail::Top1nnBackend);
 
 EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(float, int64_t)
 EXTERN_TEMPLATE_MIN_CLUSTER_AND_DISTANCE(float, int)
@@ -464,26 +514,28 @@ void minClusterDistanceCompute(
   raft::device_matrix_view<const DataT, IndexT> X,
   raft::device_matrix_view<DataT, IndexT> centroids,
   raft::device_vector_view<DataT, IndexT> minClusterDistance,
-  raft::device_vector_view<DataT, IndexT> L2NormX,
+  raft::device_vector_view<const DataT, IndexT> L2NormX,
   rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,
   cuvs::distance::DistanceType metric,
   int batch_samples,
   int batch_centroids,
   rmm::device_uvector<char>& workspace,
+  std::optional<raft::device_vector_view<const DataT, IndexT>> Tf32NormX = std::nullopt,
   cuvs::distance::detail::Top1nnBackend backend = cuvs::distance::detail::Top1nnBackend::Auto);
 
-#define EXTERN_TEMPLATE_MIN_CLUSTER_DISTANCE(DataT, IndexT)      \
-  extern template void minClusterDistanceCompute<DataT, IndexT>( \
-    raft::resources const& handle,                               \
-    raft::device_matrix_view<const DataT, IndexT> X,             \
-    raft::device_matrix_view<DataT, IndexT> centroids,           \
-    raft::device_vector_view<DataT, IndexT> minClusterDistance,  \
-    raft::device_vector_view<DataT, IndexT> L2NormX,             \
-    rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,            \
-    cuvs::distance::DistanceType metric,                         \
-    int batch_samples,                                           \
-    int batch_centroids,                                         \
-    rmm::device_uvector<char>& workspace,                        \
+#define EXTERN_TEMPLATE_MIN_CLUSTER_DISTANCE(DataT, IndexT)       \
+  extern template void minClusterDistanceCompute<DataT, IndexT>(  \
+    raft::resources const& handle,                                \
+    raft::device_matrix_view<const DataT, IndexT> X,              \
+    raft::device_matrix_view<DataT, IndexT> centroids,            \
+    raft::device_vector_view<DataT, IndexT> minClusterDistance,   \
+    raft::device_vector_view<const DataT, IndexT> L2NormX,        \
+    rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,             \
+    cuvs::distance::DistanceType metric,                          \
+    int batch_samples,                                            \
+    int batch_centroids,                                          \
+    rmm::device_uvector<char>& workspace,                         \
+    std::optional<raft::device_vector_view<const DataT, IndexT>>, \
     cuvs::distance::detail::Top1nnBackend backend);
 
 EXTERN_TEMPLATE_MIN_CLUSTER_DISTANCE(float, int64_t)
@@ -727,6 +779,7 @@ void process_batch(raft::resources const& handle,
                    int batch_centroids_param,
                    rmm::device_uvector<char>& output_storage,
                    raft::device_vector_view<const DataT, IndexT> L2NormBatch,
+                   std::optional<raft::device_vector_view<const DataT, IndexT>> Tf32NormBatch,
                    rmm::device_uvector<DataT>& L2NormBuf_OR_DistBuf,
                    rmm::device_uvector<char>& workspace,
                    raft::device_matrix_view<DataT, IndexT> centroid_sums,
@@ -746,7 +799,8 @@ void process_batch(raft::resources const& handle,
                                                                   metric,
                                                                   batch_samples_param,
                                                                   batch_centroids_param,
-                                                                  workspace);
+                                                                  workspace,
+                                                                  Tf32NormBatch);
 
   auto update_centroids = [&](auto labels) {
     compute_centroid_adjustments(handle,
