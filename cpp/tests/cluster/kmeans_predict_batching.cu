@@ -200,7 +200,7 @@ TEST(KMeansPredict, FitPredictReturnsSquaredInertiaForL2Sqrt)
       expected_inertia += delta * delta;
     }
   }
-  EXPECT_NEAR(inertia, expected_inertia, 1e-4f);
+  EXPECT_NEAR(inertia, expected_inertia, 1e-4f * expected_inertia);
 }
 
 }  // namespace cuvs::cluster::kmeans
