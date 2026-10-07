@@ -1344,6 +1344,7 @@ void kmeans_predict(raft::resources const& handle,
     handle,
     result,
     raft::make_const_mdspan(weight.view()),
+    pams.metric,
     workspace,
     raft::make_device_scalar_view(clusterCostD.data()));
   inertia[0] = clusterCostD.value(stream);

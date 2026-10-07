@@ -54,6 +54,7 @@
 #include <ctime>
 #include <optional>
 #include <random>
+#include <type_traits>
 
 namespace cuvs::cluster::kmeans::detail {
 
@@ -107,14 +108,16 @@ struct CopyClusterLabelOp {
   __device__ LabelT operator()(IndexT offset) const { return static_cast<LabelT>(indices[offset]); }
 };
 
-template <typename DataT, typename IndexT, typename DistanceIterator>
+template <bool SquareDistance, typename DataT, typename IndexT, typename DistanceIterator>
 struct WeightedDistanceOp {
   DistanceIterator distances;
   const DataT* weights;
 
   __device__ DataT operator()(IndexT offset) const
   {
-    return static_cast<DataT>(distances[offset]) * weights[offset];
+    auto distance = static_cast<DataT>(distances[offset]);
+    if constexpr (SquareDistance) { distance *= distance; }
+    return distance * weights[offset];
   }
 };
 
@@ -317,21 +320,32 @@ template <typename DataT, typename IndexT>
 void weightAndComputeClusterCost(raft::resources const& handle,
                                  const MinClusterAndDistanceResult<DataT, IndexT>& result,
                                  raft::device_vector_view<const DataT, IndexT> weights,
+                                 cuvs::distance::DistanceType metric,
                                  rmm::device_uvector<char>& workspace,
                                  raft::device_scalar_view<DataT> cluster_cost)
 {
   result.visit_distances([&](auto distances) {
-    using DistanceIterator  = decltype(distances);
-    auto weighted_distances = cuda::transform_iterator(
-      cuda::counting_iterator<IndexT>(0),
-      WeightedDistanceOp<DataT, IndexT, DistanceIterator>{distances, weights.data_handle()});
-    computeClusterCost(handle,
-                       weighted_distances,
-                       result.size(),
-                       workspace,
-                       cluster_cost,
-                       raft::identity_op{},
-                       raft::add_op{});
+    auto compute_weighted_cost = [&](auto square_distance) {
+      constexpr bool kSquareDistance = decltype(square_distance)::value;
+      using DistanceIterator         = decltype(distances);
+      auto weighted_distances        = cuda::transform_iterator(
+        cuda::counting_iterator<IndexT>(0),
+        WeightedDistanceOp<kSquareDistance, DataT, IndexT, DistanceIterator>{
+          distances, weights.data_handle()});
+      computeClusterCost(handle,
+                         weighted_distances,
+                         result.size(),
+                         workspace,
+                         cluster_cost,
+                         raft::identity_op{},
+                         raft::add_op{});
+    };
+
+    if (metric == cuvs::distance::DistanceType::L2SqrtExpanded) {
+      compute_weighted_cost(std::true_type{});
+    } else {
+      compute_weighted_cost(std::false_type{});
+    }
   });
 }
 
@@ -814,7 +828,7 @@ void process_batch(raft::resources const& handle,
                                  /*reset_sums=*/false);
   };
   result.visit_indices(update_centroids);
-  weightAndComputeClusterCost(handle, result, batch_weights, workspace, batch_cost);
+  weightAndComputeClusterCost(handle, result, batch_weights, metric, workspace, batch_cost);
   raft::linalg::add(clustering_cost.data_handle(),
                     clustering_cost.data_handle(),
                     batch_cost.data_handle(),
