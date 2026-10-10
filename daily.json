@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "repo": "NVIDIA/cuvs",
+  "report_day": "2026-10-10",
+  "window_utc": {
+    "start": "2026-10-09T15:00:00Z",
+    "end": "2026-10-10T15:00:00Z"
+  },
+  "prepared_at_utc": "2026-10-10T15:02:40.168236+00:00",
+  "branch": "main",
+  "failed_nightly_jobs": 1,
+  "main_post": "🏎️ *Vector Pit Crew — main — October 10 8 AM Pacific cutoff: red flag*\n\n🔴 *Nightly:* 0/1 green · 0 green days · 1 failed job · <https://github.com/NVIDIA/cuvs/actions/runs/38031001183|nightly evidence> · latest 2026-10-10: red · <https://github.com/NVIDIA/cuvs/actions/runs/38031001183|latest cycle>\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nPeriod     CI       n  Min(h) Mean(h) Max(h) Std dev(h)\nCurrent    PR       4    0.76    1.83   4.51       1.56\nPrior 7d   Nightly  2    3.56    4.42   5.27       0.85\nPrior 7d   PR      34    0.60    1.75   5.04       1.09\n```\n\n🔧 *Pit stops:* 5 additional PR CI attempts across 5/14 CI-observed commits; late-stage 5/11 commits rerun.\n\n🏁 *Today's race plan*\n1. 🟨 *P1 · Yellow flag* — The Python 3.13 H100 lane failed two CLI tests, but the excerpt does not expose the underlying command error. Inspect the captured run and plot command output and fix the concrete failure. <https://github.com/NVIDIA/cuvs/actions/runs/38031001183/job/114151781821|Evidence>. *Finish line:* The cause is explained and the lane passes in a paired nightly cycle.\n2. 🔧 *P2 · Pit stop* — PR CI recorded 5 additional attempts across 5 of 14 observed commits; 5 of 11 late-stage commits reran. Measure the recurring rerun stages across comparable commits and test one workflow-wide retry reduction. <https://github.com/NVIDIA/cuvs/actions/workflows/pr.yaml?query=branch%3Amain|Evidence>. *Finish line:* The rerun fraction decreases across a comparable multi-day cohort.\n\n_Pit-crew call: Clear the H100 lane, then trim the pit stops._\n\n_Vector Pit Crew report ID: 2026-10-10_",
+  "watchlist_thread": "",
+  "report_id": "Vector Pit Crew report ID: 2026-10-10",
+  "release_report": {
+    "branch": "release/26.10",
+    "window_utc": {
+      "start": "2026-10-09T15:00:00Z",
+      "end": "2026-10-10T15:00:00Z"
+    },
+    "failed_nightly_jobs": 0,
+    "main_post": "🏎️ *Vector Pit Crew — release/26.10 — October 10 8 AM Pacific cutoff: coverage caution*\n\n🟡 *Nightly:* 0/0 green · 0 green days · coverage gap: no nightly cycle observed · <https://github.com/NVIDIA/cuvs/actions?query=branch%3Arelease%2F26.10|runs>\n⏱️ *Lap times:* No clean full-pass sample completed in this window, so there's no speed verdict.\n🔧 *Pit stops:* 0 additional PR CI attempts across 0/0 CI-observed commits; late-stage 0/0 commits rerun.\n\n🏁 *Today's race plan*\n• No evidence-backed actions in this window.\n\n_Pit-crew call: No observed nightly cycle or CI samples; no evidence-backed race-plan action._\n\n_Vector Pit Crew report ID: release/26.10:2026-10-10_",
+    "watchlist_thread": "",
+    "report_id": "Vector Pit Crew report ID: release/26.10:2026-10-10"
+  }
+}
