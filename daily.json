@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "repo": "NVIDIA/cuvs",
+  "report_day": "2026-10-16",
+  "window_utc": {
+    "start": "2026-10-15T15:00:00Z",
+    "end": "2026-10-16T15:00:00Z"
+  },
+  "prepared_at_utc": "2026-10-16T15:08:52.679382+00:00",
+  "branch": "main",
+  "failed_nightly_jobs": 9,
+  "main_post": "🏎️ *Vector Pit Crew — main — October 16 8 AM Pacific cutoff: red flag*\n\n🔴 *Nightly:* 0/1 green · 0 green days · 9 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/38860532725|nightly evidence> · latest 2026-10-16: red · <https://github.com/NVIDIA/cuvs/actions/runs/38860532725|latest cycle>\n🟡 *Coverage:* 2 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nPeriod     CI       n  Min(h) Mean(h) Max(h) Std dev(h)\nCurrent    PR       6    1.03    2.99   4.93       1.32\nPrior 7d   Nightly  2    1.98    2.18   2.37       0.19\nPrior 7d   PR      108    0.09    1.39   4.51       0.80\n```\n\n🔧 *Pit stops:* 8 additional PR CI attempts across 6/41 CI-observed commits; late-stage 6/13 commits rerun.\n\n🏁 *Today's race plan*\n1. 🟨 *P1 · Yellow flag · Clear the conda lanes* — Oldest-deps conda Python lanes on L4 still report module errors after retry; the supplied excerpts do not show the cause. Inspect the first error traceback in both matrices and identify the failing operation. <https://github.com/NVIDIA/cuvs/actions/runs/38860532725/job/116986415112|Evidence>. *Finish line:* The cause is explained, both lanes pass, and paired nightly recovery is verified.\n2. 🟨 *P1 · Yellow flag · Restore the wheel lanes* — Oldest-deps wheel tests on A100 arm64 and L4 amd64 still report module errors after retry; cause unknown. Inspect each matrix's first traceback and determine whether the wheel failures share the conda cause. <https://github.com/NVIDIA/cuvs/actions/runs/38860532725/job/116986414018|Evidence>. *Finish line:* The wheel failures are explained and both affected lanes pass.\n3. 🔧 *P2 · Pace warning · Inspect PR lap time* — Six clean PR passes averaged 2.99 hours versus 1.39 hours across 108 prior-seven-day samples, about 2.15 times longer; the slow stage is unknown. Compare stage durations across comparable clean PR passes and test a targeted fix for any confirmed workflow delay. <https://github.com/NVIDIA/cuvs/actions/workflows/pr.yaml?query=branch%3Amain|Evidence>. *Finish line:* The excess time is localized and a targeted change reduces it across comparable passes.\n\n*Trackside watchlist:* 1 groups / 1 jobs in thread; 0 still have unknown cause.\n\n_Pit-crew call: Red flag on main. Clear the two active lane groups; the recovered CLI job stays on recurrence watch._\n\n<https://raw.githubusercontent.com/divyegala/cuvs/068c471b0ead2a6d93d106ab4857e4ab0de59ac2/nightly-reset-c22680a4d87c5f081ad7af66d9c9899e0d82532e4bf7f7a65f0fa184d6bdd8e7.png|🪧 Green-streak reset meme>\n\n_Vector Pit Crew report ID: 2026-10-16_",
+  "watchlist_thread": "*Trackside watchlist — main — 2026-10-16 8 AM Pacific cutoff*\n• *H100 CLI tests recovered* — 1 job; 1 recovered. Run and plot CLI tests failed assertions on Ubuntu 24.04, Python 3.13, H100. Command output is absent, so cause and tolerance magnitude are unknown. The job recovered after retry. <https://github.com/NVIDIA/cuvs/actions/runs/38860532725/job/116841610521|Evidence>\n\n_Vector Pit Crew report ID: 2026-10-16 watchlist_",
+  "report_id": "Vector Pit Crew report ID: 2026-10-16",
+  "meme": {
+    "schema_version": 1,
+    "branch": "main",
+    "cutoff_utc": "2026-10-16T15:00:00Z",
+    "incident_opened_at": "2026-10-16T06:25:59Z",
+    "inner_value": 0,
+    "previous_green_days": 4,
+    "outer_value": "4",
+    "alt_text": "main: days without red nightly CI. Current streak: 0. Previous green streak: 4 days.",
+    "image_url": "https://raw.githubusercontent.com/divyegala/cuvs/068c471b0ead2a6d93d106ab4857e4ab0de59ac2/nightly-reset-c22680a4d87c5f081ad7af66d9c9899e0d82532e4bf7f7a65f0fa184d6bdd8e7.png"
+  },
+  "release_report": null,
+  "slack_blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🏎️ *Vector Pit Crew — main — October 16 8 AM Pacific cutoff: red flag*\n\n🔴 *Nightly:* 0/1 green · 0 green days · 9 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/38860532725|nightly evidence> · latest 2026-10-16: red · <https://github.com/NVIDIA/cuvs/actions/runs/38860532725|latest cycle>\n🟡 *Coverage:* 2 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nPeriod     CI       n  Min(h) Mean(h) Max(h) Std dev(h)\nCurrent    PR       6    1.03    2.99   4.93       1.32\nPrior 7d   Nightly  2    1.98    2.18   2.37       0.19\nPrior 7d   PR      108    0.09    1.39   4.51       0.80\n```\n\n🔧 *Pit stops:* 8 additional PR CI attempts across 6/41 CI-observed commits; late-stage 6/13 commits rerun.\n\n🏁 *Today's race plan*\n1. 🟨 *P1 · Yellow flag · Clear the conda lanes* — Oldest-deps conda Python lanes on L4 still report module errors after retry; the supplied excerpts do not show the cause. Inspect the first error traceback in both matrices and identify the failing operation. <https://github.com/NVIDIA/cuvs/actions/runs/38860532725/job/116986415112|Evidence>. *Finish line:* The cause is explained, both lanes pass, and paired nightly recovery is verified.\n2. 🟨 *P1 · Yellow flag · Restore the wheel lanes* — Oldest-deps wheel tests on A100 arm64 and L4 amd64 still report module errors after retry; cause unknown. Inspect each matrix's first traceback and determine whether the wheel failures share the conda cause. <https://github.com/NVIDIA/cuvs/actions/runs/38860532725/job/116986414018|Evidence>. *Finish line:* The wheel failures are explained and both affected lanes pass.\n3. 🔧 *P2 · Pace warning · Inspect PR lap time* — Six clean PR passes averaged 2.99 hours versus 1.39 hours across 108 prior-seven-day samples, about 2.15 times longer; the slow stage is unknown. Compare stage durations across comparable clean PR passes and test a targeted fix for any confirmed workflow delay. <https://github.com/NVIDIA/cuvs/actions/workflows/pr.yaml?query=branch%3Amain|Evidence>. *Finish line:* The excess time is localized and a targeted change reduces it across comparable passes.\n\n*Trackside watchlist:* 1 groups / 1 jobs in thread; 0 still have unknown cause.\n\n_Pit-crew call: Red flag on main. Clear the two active lane groups; the recovered CLI job stays on recurrence watch._\n\n<https://raw.githubusercontent.com/divyegala/cuvs/068c471b0ead2a6d93d106ab4857e4ab0de59ac2/nightly-reset-c22680a4d87c5f081ad7af66d9c9899e0d82532e4bf7f7a65f0fa184d6bdd8e7.png|🪧 Green-streak reset meme>\n\n_Vector Pit Crew report ID: 2026-10-16_"
+      }
+    },
+    {
+      "type": "image",
+      "image_url": "https://raw.githubusercontent.com/divyegala/cuvs/068c471b0ead2a6d93d106ab4857e4ab0de59ac2/nightly-reset-c22680a4d87c5f081ad7af66d9c9899e0d82532e4bf7f7a65f0fa184d6bdd8e7.png",
+      "alt_text": "main: days without red nightly CI. Current streak: 0. Previous green streak: 4 days.",
+      "title": {
+        "type": "plain_text",
+        "text": "main — green streak reset"
+      }
+    }
+  ]
+}
