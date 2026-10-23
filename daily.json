@@ -1,0 +1,304 @@
+{
+  "schema_version": 2,
+  "repo": "NVIDIA/cuvs",
+  "report_day": "2026-10-23",
+  "window_utc": {
+    "start": "2026-10-22T15:00:00Z",
+    "end": "2026-10-23T15:00:00Z"
+  },
+  "prepared_at_utc": "2026-10-23T15:06:47.208970+00:00",
+  "branch": "main",
+  "failed_nightly_jobs": 8,
+  "main_post": "🏎️ *Vector Pit Crew — main — October 23 8 AM Pacific cutoff: red flag*\n\n🔴 *Nightly:* 0/1 green · 0 green days · 8 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/39907479206|nightly evidence> · latest 2026-10-23: red · <https://github.com/NVIDIA/cuvs/actions/runs/39907479206|latest cycle>\n🟡 *Coverage:* 2 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nPeriod     CI       n  Min(h) Mean(h) Max(h) Std dev(h)\nCurrent    PR       2    0.63    1.09   1.55       0.46\nPrior 7d   Nightly  1    2.68    2.68   2.68       0.00\nPrior 7d   PR      23    0.60    1.69   4.93       1.10\n```\n\n🔧 *Pit stops:* 3 additional PR CI attempts across 3/25 CI-observed commits; late-stage 3/9 commits rerun.\n\n🏁 *Today's race plan*\n1. 🟥 *P0 · Red flag* — Compressed-size validation blocks four libcuvs wheel matrices across both architectures and CUDA versions, with eight failed executions and no recovery. Compare wheel contents and size budgets across all four affected matrices. Identify the excess payload, correct packaging or justify a revised budget, and rerun the affected builds. <https://github.com/NVIDIA/cuvs/actions/runs/39907479206/job/120434027204|Evidence>. *Finish line:* All four wheel lanes pass size validation and a paired nightly build-and-test cycle passes.\n\n*Trackside watchlist:* 3 groups / 6 jobs in thread; 0 still have unknown cause.\n\n_Pit-crew call: Main has a red flag. Clear the wheel-size gate and verify the full lap._\n\n🪶 *Vector Aero Room — ARM64 binary weigh-in*\nHolding weight.\n```\nCUDA | Previous MB | Current MB | Δ MB | Δ %\n  12 | 607.97 | 607.97 | +0.00 | +0.00%\n  13 | 323.93 | 323.93 | +0.00 | +0.00%\n```\nCUDA 12: <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda12_261023135132_f492bb36.conda|Oct 23 14:47 UTC> vs <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda12_261023054504_3dd62c14.conda|Oct 23 06:15 UTC>. 3 earlier publication(s) superseded.\nCUDA 13: <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda13_261023135132_f492bb36.conda|Oct 23 14:48 UTC> vs <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda13_261023054504_3dd62c14.conda|Oct 23 06:15 UTC>. 3 earlier publication(s) superseded.\nDevice targets — CUDA 12: sm_100, sm_120, sm_120a, sm_70, sm_75, sm_80, sm_86, sm_90a; CUDA 13: sm_100, sm_120, sm_120a, sm_75, sm_80, sm_86, sm_90a.\n\n*Wind-tunnel worklist — uncompressed code-size opportunities*\nEvidence: CUDA packages linked above. For each specialization, trace translation-unit copies and compare compilation inputs.\n1. 🔧 *P2 · Weight cut 1* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, true, float, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 10.714 MB, 40 copies (32 excess); CUDA 13: 8.452 MB, 35 copies (28 excess); identical code sections within each target.\n2. 🔧 *P2 · Weight cut 2* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, false, float, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 10.706 MB, 40 copies (32 excess); CUDA 13: 8.446 MB, 35 copies (28 excess); identical code sections within each target.\n3. 🔧 *P2 · Weight cut 3* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, true, int, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 8.020 MB, 32 copies (24 excess); CUDA 13: 6.324 MB, 28 copies (21 excess); identical code sections within each target.\n*Finish line for each cut:* fewer copies and a measured reduction in the rebuilt shared library.\n_MB = 1,000,000 bytes. Opportunities are uncompressed device-code estimates, not verified library savings. PTX-only and tile-IR duplication excluded._\n\n<https://raw.githubusercontent.com/divyegala/cuvs/2c55b91e1a8cab8236a9eb55dd37d7769625cb6d/nightly-reset-ba00b8d7d5352c29e71c9f4ce83767dd9a239b7ea1bef5563a8c587722766030.png|🪧 Green-streak reset meme>\n\n_Vector Pit Crew report ID: 2026-10-23_",
+  "watchlist_thread": "*Trackside watchlist — main — 2026-10-23 8 AM Pacific cutoff*\n• *CUDA 13.3.0 amd64 wheel exceeds size limit* — 2 jobs. The Python 3.14 Rocky Linux 8 wheel fails compressed-size validation: 0.236G exceeds 0.233G. Both executions failed; no recovery is recorded. <https://github.com/NVIDIA/cuvs/actions/runs/39907479206/job/120262722431|Evidence>\n• *CUDA 12.9.2 amd64 wheel exceeds size limit* — 2 jobs. The Python 3.14 Rocky Linux 8 wheel fails compressed-size validation: 0.385G exceeds 0.381G. Both executions failed; no recovery is recorded. <https://github.com/NVIDIA/cuvs/actions/runs/39907479206/job/120262722439|Evidence>\n• *CUDA 13.3.0 arm64 wheel exceeds size limit* — 2 jobs. The Python 3.14 Rocky Linux 8 wheel fails compressed-size validation: 0.234G exceeds 0.233G. Both executions failed; no recovery is recorded. <https://github.com/NVIDIA/cuvs/actions/runs/39907479206/job/120262722472|Evidence>\n\n_Vector Pit Crew report ID: 2026-10-23 watchlist_",
+  "report_id": "Vector Pit Crew report ID: 2026-10-23",
+  "meme": {
+    "schema_version": 1,
+    "branch": "main",
+    "cutoff_utc": "2026-10-23T15:00:00Z",
+    "incident_opened_at": "2026-10-21T06:03:48Z",
+    "inner_value": 0,
+    "previous_green_days": 1,
+    "outer_value": "1",
+    "alt_text": "main: days without red nightly CI. Current streak: 0. Previous green streak: 1 days.",
+    "image_url": "https://raw.githubusercontent.com/divyegala/cuvs/2c55b91e1a8cab8236a9eb55dd37d7769625cb6d/nightly-reset-ba00b8d7d5352c29e71c9f4ce83767dd9a239b7ea1bef5563a8c587722766030.png"
+  },
+  "aero": {
+    "schema_version": 1,
+    "branch": "main",
+    "window_utc": {
+      "start": "2026-10-22T15:00:00Z",
+      "end": "2026-10-23T15:00:00Z"
+    },
+    "status": "ready",
+    "variants": [
+      {
+        "current": {
+          "filename": "libcuvs-26.12.00a152-cuda12_261023135132_f492bb36.conda",
+          "sha256": "7bf44abea23b2c148b28e7e013d75e2b91175f6ecb5457b43b79b390e816faf8",
+          "version": "26.12.00a152",
+          "release_line": "26.12",
+          "build": "cuda12_261023135132_f492bb36",
+          "cuda": 12,
+          "source_prefix": "f492bb36",
+          "build_time": "2026-10-23T13:51:32+00:00",
+          "uploaded_at": "2026-10-23T14:47:52.011000Z",
+          "subdir": "linux-aarch64",
+          "url": "https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda12_261023135132_f492bb36.conda",
+          "branch": "main",
+          "source_sha": "f492bb36604e18c666b84e859dc91285f47ef6bc",
+          "build_run_url": "https://github.com/NVIDIA/cuvs/actions/runs/39964679757"
+        },
+        "previous": {
+          "filename": "libcuvs-26.12.00a151-cuda12_261023054504_3dd62c14.conda",
+          "sha256": "c0e1b2571542381fe514f3954a5a6dfc7e3e904f4d497304acf1c384ebdb72e6",
+          "version": "26.12.00a151",
+          "release_line": "26.12",
+          "build": "cuda12_261023054504_3dd62c14",
+          "cuda": 12,
+          "source_prefix": "3dd62c14",
+          "build_time": "2026-10-23T05:45:04+00:00",
+          "uploaded_at": "2026-10-23T06:15:01.935000Z",
+          "subdir": "linux-aarch64",
+          "url": "https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda12_261023054504_3dd62c14.conda",
+          "branch": "main",
+          "source_sha": "3dd62c143c78f3a019eecfee9fbae11cebe0d580",
+          "build_run_url": "https://github.com/NVIDIA/cuvs/actions/runs/39907479206"
+        },
+        "superseded": 3,
+        "current_bytes": 607973760,
+        "previous_bytes": 607973760,
+        "delta_bytes": 0,
+        "changes": [],
+        "coverage": {
+          "elf_images": 3408,
+          "kernel_entries": 80696,
+          "gpu_targets": [
+            "sm_100",
+            "sm_120",
+            "sm_120a",
+            "sm_70",
+            "sm_75",
+            "sm_80",
+            "sm_86",
+            "sm_90a"
+          ],
+          "tool_version": "cuobjdump: NVIDIA (R) fat binary listing tool\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Mon_May_19_08:52:09_PDT_2025\nCuda compilation tools, release 12.9, V12.9.82\nBuild cuda_12.9.r12.9/compiler.36001619_0"
+        }
+      },
+      {
+        "current": {
+          "filename": "libcuvs-26.12.00a152-cuda13_261023135132_f492bb36.conda",
+          "sha256": "411ac5fd3c46705723bddd8a0377c02409a5b94e02dfd9b803c30e634e1e99fc",
+          "version": "26.12.00a152",
+          "release_line": "26.12",
+          "build": "cuda13_261023135132_f492bb36",
+          "cuda": 13,
+          "source_prefix": "f492bb36",
+          "build_time": "2026-10-23T13:51:32+00:00",
+          "uploaded_at": "2026-10-23T14:48:45.019000Z",
+          "subdir": "linux-aarch64",
+          "url": "https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda13_261023135132_f492bb36.conda",
+          "branch": "main",
+          "source_sha": "f492bb36604e18c666b84e859dc91285f47ef6bc",
+          "build_run_url": "https://github.com/NVIDIA/cuvs/actions/runs/39964679757"
+        },
+        "previous": {
+          "filename": "libcuvs-26.12.00a151-cuda13_261023054504_3dd62c14.conda",
+          "sha256": "909334bdbb2f9fb0438c06f8a23534bc61438ac092510e644c61079e4a3d5f9e",
+          "version": "26.12.00a151",
+          "release_line": "26.12",
+          "build": "cuda13_261023054504_3dd62c14",
+          "cuda": 13,
+          "source_prefix": "3dd62c14",
+          "build_time": "2026-10-23T05:45:04+00:00",
+          "uploaded_at": "2026-10-23T06:15:48.756000Z",
+          "subdir": "linux-aarch64",
+          "url": "https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda13_261023054504_3dd62c14.conda",
+          "branch": "main",
+          "source_sha": "3dd62c143c78f3a019eecfee9fbae11cebe0d580",
+          "build_run_url": "https://github.com/NVIDIA/cuvs/actions/runs/39907479206"
+        },
+        "superseded": 3,
+        "current_bytes": 323931112,
+        "previous_bytes": 323931112,
+        "delta_bytes": 0,
+        "changes": [],
+        "coverage": {
+          "elf_images": 2989,
+          "kernel_entries": 70623,
+          "gpu_targets": [
+            "sm_100",
+            "sm_120",
+            "sm_120a",
+            "sm_75",
+            "sm_80",
+            "sm_86",
+            "sm_90a"
+          ],
+          "tool_version": "cuobjdump: NVIDIA (R) fat binary listing tool\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Tue_Sep_01_08:47:20_PDT_2026\nCuda compilation tools, release 13.4, V13.4.92\nBuild cuda_13.4.r13.4/compiler.38855100_0"
+        }
+      }
+    ],
+    "actions": [
+      {
+        "symbol": "_ZN4raft6matrix6detail6select8warpsort12block_kernelINS3_19warp_sort_immediateELi256ELb1EfjNS2_12dense_layoutIjEEEEvPKT2_PKT3_SD_mSB_iPS8_PSB_",
+        "variants": {
+          "12": {
+            "redundant_bytes": 10713600,
+            "copies": 40,
+            "extra_copies": 32,
+            "gpu_targets": [
+              "sm_100",
+              "sm_120",
+              "sm_120a",
+              "sm_70",
+              "sm_75",
+              "sm_80",
+              "sm_86",
+              "sm_90a"
+            ],
+            "libraries": [
+              "lib/libcuvs.so"
+            ],
+            "different_code": false
+          },
+          "13": {
+            "redundant_bytes": 8451584,
+            "copies": 35,
+            "extra_copies": 28,
+            "gpu_targets": [
+              "sm_100",
+              "sm_120",
+              "sm_120a",
+              "sm_75",
+              "sm_80",
+              "sm_86",
+              "sm_90a"
+            ],
+            "libraries": [
+              "lib/libcuvs.so"
+            ],
+            "different_code": false
+          }
+        },
+        "demangled": "void raft::matrix::detail::select::warpsort::block_kernel<raft::matrix::detail::select::warpsort::warp_sort_immediate, 256, true, float, unsigned int, raft::matrix::detail::select::dense_layout<unsigned int> >(float const*, unsigned int const*, unsigned int const*, unsigned long, unsigned int, int, float*, unsigned int*)"
+      },
+      {
+        "symbol": "_ZN4raft6matrix6detail6select8warpsort12block_kernelINS3_19warp_sort_immediateELi256ELb0EfjNS2_12dense_layoutIjEEEEvPKT2_PKT3_SD_mSB_iPS8_PSB_",
+        "variants": {
+          "12": {
+            "redundant_bytes": 10705920,
+            "copies": 40,
+            "extra_copies": 32,
+            "gpu_targets": [
+              "sm_100",
+              "sm_120",
+              "sm_120a",
+              "sm_70",
+              "sm_75",
+              "sm_80",
+              "sm_86",
+              "sm_90a"
+            ],
+            "libraries": [
+              "lib/libcuvs.so"
+            ],
+            "different_code": false
+          },
+          "13": {
+            "redundant_bytes": 8445952,
+            "copies": 35,
+            "extra_copies": 28,
+            "gpu_targets": [
+              "sm_100",
+              "sm_120",
+              "sm_120a",
+              "sm_75",
+              "sm_80",
+              "sm_86",
+              "sm_90a"
+            ],
+            "libraries": [
+              "lib/libcuvs.so"
+            ],
+            "different_code": false
+          }
+        },
+        "demangled": "void raft::matrix::detail::select::warpsort::block_kernel<raft::matrix::detail::select::warpsort::warp_sort_immediate, 256, false, float, unsigned int, raft::matrix::detail::select::dense_layout<unsigned int> >(float const*, unsigned int const*, unsigned int const*, unsigned long, unsigned int, int, float*, unsigned int*)"
+      },
+      {
+        "symbol": "_ZN4raft6matrix6detail6select8warpsort12block_kernelINS3_19warp_sort_immediateELi256ELb1EijNS2_12dense_layoutIjEEEEvPKT2_PKT3_SD_mSB_iPS8_PSB_",
+        "variants": {
+          "12": {
+            "redundant_bytes": 8019840,
+            "copies": 32,
+            "extra_copies": 24,
+            "gpu_targets": [
+              "sm_100",
+              "sm_120",
+              "sm_120a",
+              "sm_70",
+              "sm_75",
+              "sm_80",
+              "sm_86",
+              "sm_90a"
+            ],
+            "libraries": [
+              "lib/libcuvs.so"
+            ],
+            "different_code": false
+          },
+          "13": {
+            "redundant_bytes": 6324096,
+            "copies": 28,
+            "extra_copies": 21,
+            "gpu_targets": [
+              "sm_100",
+              "sm_120",
+              "sm_120a",
+              "sm_75",
+              "sm_80",
+              "sm_86",
+              "sm_90a"
+            ],
+            "libraries": [
+              "lib/libcuvs.so"
+            ],
+            "different_code": false
+          }
+        },
+        "demangled": "void raft::matrix::detail::select::warpsort::block_kernel<raft::matrix::detail::select::warpsort::warp_sort_immediate, 256, true, int, unsigned int, raft::matrix::detail::select::dense_layout<unsigned int> >(int const*, unsigned int const*, unsigned int const*, unsigned long, unsigned int, int, int*, unsigned int*)"
+      }
+    ],
+    "errors": [],
+    "section": "🪶 *Vector Aero Room — ARM64 binary weigh-in*\nHolding weight.\n```\nCUDA | Previous MB | Current MB | Δ MB | Δ %\n  12 | 607.97 | 607.97 | +0.00 | +0.00%\n  13 | 323.93 | 323.93 | +0.00 | +0.00%\n```\nCUDA 12: <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda12_261023135132_f492bb36.conda|Oct 23 14:47 UTC> vs <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda12_261023054504_3dd62c14.conda|Oct 23 06:15 UTC>. 3 earlier publication(s) superseded.\nCUDA 13: <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda13_261023135132_f492bb36.conda|Oct 23 14:48 UTC> vs <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda13_261023054504_3dd62c14.conda|Oct 23 06:15 UTC>. 3 earlier publication(s) superseded.\nDevice targets — CUDA 12: sm_100, sm_120, sm_120a, sm_70, sm_75, sm_80, sm_86, sm_90a; CUDA 13: sm_100, sm_120, sm_120a, sm_75, sm_80, sm_86, sm_90a.\n\n*Wind-tunnel worklist — uncompressed code-size opportunities*\nEvidence: CUDA packages linked above. For each specialization, trace translation-unit copies and compare compilation inputs.\n1. 🔧 *P2 · Weight cut 1* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, true, float, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 10.714 MB, 40 copies (32 excess); CUDA 13: 8.452 MB, 35 copies (28 excess); identical code sections within each target.\n2. 🔧 *P2 · Weight cut 2* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, false, float, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 10.706 MB, 40 copies (32 excess); CUDA 13: 8.446 MB, 35 copies (28 excess); identical code sections within each target.\n3. 🔧 *P2 · Weight cut 3* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, true, int, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 8.020 MB, 32 copies (24 excess); CUDA 13: 6.324 MB, 28 copies (21 excess); identical code sections within each target.\n*Finish line for each cut:* fewer copies and a measured reduction in the rebuilt shared library.\n_MB = 1,000,000 bytes. Opportunities are uncompressed device-code estimates, not verified library savings. PTX-only and tile-IR duplication excluded._"
+  },
+  "release_report": null,
+  "slack_blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🏎️ *Vector Pit Crew — main — October 23 8 AM Pacific cutoff: red flag*\n\n🔴 *Nightly:* 0/1 green · 0 green days · 8 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/39907479206|nightly evidence> · latest 2026-10-23: red · <https://github.com/NVIDIA/cuvs/actions/runs/39907479206|latest cycle>\n🟡 *Coverage:* 2 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nPeriod     CI       n  Min(h) Mean(h) Max(h) Std dev(h)\nCurrent    PR       2    0.63    1.09   1.55       0.46\nPrior 7d   Nightly  1    2.68    2.68   2.68       0.00\nPrior 7d   PR      23    0.60    1.69   4.93       1.10\n```\n\n🔧 *Pit stops:* 3 additional PR CI attempts across 3/25 CI-observed commits; late-stage 3/9 commits rerun.\n\n🏁 *Today's race plan*\n1. 🟥 *P0 · Red flag* — Compressed-size validation blocks four libcuvs wheel matrices across both architectures and CUDA versions, with eight failed executions and no recovery. Compare wheel contents and size budgets across all four affected matrices. Identify the excess payload, correct packaging or justify a revised budget, and rerun the affected builds. <https://github.com/NVIDIA/cuvs/actions/runs/39907479206/job/120434027204|Evidence>. *Finish line:* All four wheel lanes pass size validation and a paired nightly build-and-test cycle passes.\n\n*Trackside watchlist:* 3 groups / 6 jobs in thread; 0 still have unknown cause.\n\n_Pit-crew call: Main has a red flag. Clear the wheel-size gate and verify the full lap._\n\n🪶 *Vector Aero Room — ARM64 binary weigh-in*\nHolding weight.\n```\nCUDA | Previous MB | Current MB | Δ MB | Δ %\n  12 | 607.97 | 607.97 | +0.00 | +0.00%\n  13 | 323.93 | 323.93 | +0.00 | +0.00%\n```\nCUDA 12: <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda12_261023135132_f492bb36.conda|Oct 23 14:47 UTC> vs <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda12_261023054504_3dd62c14.conda|Oct 23 06:15 UTC>. 3 earlier publication(s) superseded.\nCUDA 13: <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a152-cuda13_261023135132_f492bb36.conda|Oct 23 14:48 UTC> vs <https://conda.anaconda.org/rapidsai-nightly/linux-aarch64/libcuvs-26.12.00a151-cuda13_261023054504_3dd62c14.conda|Oct 23 06:15 UTC>. 3 earlier publication(s) superseded.\nDevice targets — CUDA 12: sm_100, sm_120, sm_120a, sm_70, sm_75, sm_80, sm_86, sm_90a; CUDA 13: sm_100, sm_120, sm_120a, sm_75, sm_80, sm_86, sm_90a.\n\n*Wind-tunnel worklist — uncompressed code-size opportunities*\nEvidence: CUDA packages linked above. For each specialization, trace translation-unit copies and compare compilation inputs.\n"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "1. 🔧 *P2 · Weight cut 1* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, true, float, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 10.714 MB, 40 copies (32 excess); CUDA 13: 8.452 MB, 35 copies (28 excess); identical code sections within each target.\n2. 🔧 *P2 · Weight cut 2* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, false, float, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 10.706 MB, 40 copies (32 excess); CUDA 13: 8.446 MB, 35 copies (28 excess); identical code sections within each target.\n3. 🔧 *P2 · Weight cut 3* — `raft::matrix::detail::select::warpsort::block_kernel<warp_sort_immediate, 256, true, int, unsigned int, dense_layout<unsigned int> >` in libcuvs.so. CUDA 12: 8.020 MB, 32 copies (24 excess); CUDA 13: 6.324 MB, 28 copies (21 excess); identical code sections within each target.\n*Finish line for each cut:* fewer copies and a measured reduction in the rebuilt shared library.\n_MB = 1,000,000 bytes. Opportunities are uncompressed device-code estimates, not verified library savings. PTX-only and tile-IR duplication excluded._\n\n<https://raw.githubusercontent.com/divyegala/cuvs/2c55b91e1a8cab8236a9eb55dd37d7769625cb6d/nightly-reset-ba00b8d7d5352c29e71c9f4ce83767dd9a239b7ea1bef5563a8c587722766030.png|🪧 Green-streak reset meme>\n\n_Vector Pit Crew report ID: 2026-10-23_"
+      }
+    },
+    {
+      "type": "image",
+      "image_url": "https://raw.githubusercontent.com/divyegala/cuvs/2c55b91e1a8cab8236a9eb55dd37d7769625cb6d/nightly-reset-ba00b8d7d5352c29e71c9f4ce83767dd9a239b7ea1bef5563a8c587722766030.png",
+      "alt_text": "main: days without red nightly CI. Current streak: 0. Previous green streak: 1 days.",
+      "title": {
+        "type": "plain_text",
+        "text": "main — green streak reset"
+      }
+    }
+  ],
+  "slack_text": "🏎️ *Vector Pit Crew — main — October 23 8 AM Pacific cutoff: red flag*\nFull CI report and Vector Aero Room weigh-in in the message blocks.\nVector Pit Crew report ID: 2026-10-23"
+}
