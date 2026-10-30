@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "report_format_version": 2,
+  "repo": "NVIDIA/cuvs",
+  "report_day": "2026-10-30",
+  "window_utc": {
+    "start": "2026-10-29T15:00:00Z",
+    "end": "2026-10-30T15:00:00Z"
+  },
+  "prepared_at_utc": "2026-10-30T15:04:03.740307+00:00",
+  "branch": "main",
+  "failed_nightly_jobs": 0,
+  "main_post": "🏎️ *Vector Pit Crew — main — October 30 8 AM Pacific cutoff: coverage caution*\n\n🟡 *Nightly:* 1/1 green · 1 green day · 0 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/41011607824|nightly evidence> · latest 2026-10-30: green · <https://github.com/NVIDIA/cuvs/actions/runs/41016522420|latest cycle>\n🟡 *Coverage:* 1 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:*\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Current    1    1.70    1.70    1.70   1.70\nPR      Current    5    1.01    1.16    1.21   2.19\nPR      Prior 7d  30    0.63    1.57    1.97   7.50\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                         4/18   22.2%\nPR commits from first rerun onward                  4/4  100.0%\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — PR retries affected 4/18 observed commits (22.2%) and 4/4 commits from first rerun onward (100%). Review aggregate rerun patterns across PRs for recurring workflow operations. Treat the second cohort as a CI-stabilization proxy; verify any shared cause independently of individual PR diffs. <https://github.com/NVIDIA/cuvs/actions/workflows/pr.yaml?query=branch%3Amain|Evidence>. *Finish line:* Account for all five retry attempts and confirm whether a recurring workflow cause exists.\n\n_Vector Pit Crew report ID: 2026-10-30_",
+  "watchlist_thread": "",
+  "report_id": "Vector Pit Crew report ID: 2026-10-30",
+  "meme": null,
+  "aero": null,
+  "release_report": null,
+  "aero_reports": [],
+  "slack_blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🏎️ *Vector Pit Crew — main — October 30 8 AM Pacific cutoff: coverage caution*\n\n🟡 *Nightly:* 1/1 green · 1 green day · 0 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/41011607824|nightly evidence> · latest 2026-10-30: green · <https://github.com/NVIDIA/cuvs/actions/runs/41016522420|latest cycle>\n🟡 *Coverage:* 1 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:*\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Current    1    1.70    1.70    1.70   1.70\nPR      Current    5    1.01    1.16    1.21   2.19\nPR      Prior 7d  30    0.63    1.57    1.97   7.50\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                         4/18   22.2%\nPR commits from first rerun onward                  4/4  100.0%\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — PR retries affected 4/18 observed commits (22.2%) and 4/4 commits from first rerun onward (100%). Review aggregate rerun patterns across PRs for recurring workflow operations. Treat the second cohort as a CI-stabilization proxy; verify any shared cause independently of individual PR diffs. <https://github.com/NVIDIA/cuvs/actions/workflows/pr.yaml?query=branch%3Amain|Evidence>. *Finish line:* Account for all five retry attempts and confirm whether a recurring workflow cause exists.\n\n_Vector Pit Crew report ID: 2026-10-30_"
+      }
+    }
+  ],
+  "slack_text": "🏎️ *Vector Pit Crew — main — October 30 8 AM Pacific cutoff: coverage caution*\nFull CI report in the message blocks.\nVector Pit Crew report ID: 2026-10-30"
+}
