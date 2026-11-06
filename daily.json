@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "report_format_version": 2,
+  "repo": "NVIDIA/cuvs",
+  "report_day": "2026-11-06",
+  "window_utc": {
+    "start": "2026-11-05T16:00:00Z",
+    "end": "2026-11-06T16:00:00Z"
+  },
+  "prepared_at_utc": "2026-11-06T16:03:34.496938+00:00",
+  "branch": "main",
+  "failed_nightly_jobs": 1,
+  "main_post": "🏎️ *Vector Pit Crew — main — November 6 8 AM Pacific cutoff: coverage caution*\n\n🟡 *Nightly:* 1/1 green · 2 green days · 1 failed job · <https://github.com/NVIDIA/cuvs/actions/runs/42173401133|nightly evidence> · 1 recovered after retry · latest 2026-11-06: recovered · <https://github.com/NVIDIA/cuvs/actions/runs/42173401133|latest cycle>\n🟡 *Coverage:* 1 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Prior 7d   4    1.70    2.16    2.34   2.61\nPR      Current    9    0.47    1.24    1.54   2.82\nPR      Prior 7d  36    0.68    1.31    1.61   2.34\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                         0/16    0.0%\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — The Lucene assertion failure recovered, leaving the latest nightly green; its cause and recurrence remain unresolved. Inspect Surefire reports for cuvs-lucene-10.2 to name the tests behind expected:<1> but was:<0>. Reproduce them in the recorded Rocky Linux 8, amd64, RTX PRO 6000 environment and compare the failed attempt with the successful retry. <https://github.com/NVIDIA/cuvs/actions/runs/42173401133/job/127746269924|Evidence>. *Finish line:* Record the test names and cause, with a passing targeted regression check or documented recurrence checks if reproduction fails.\n\n_Vector Pit Crew report ID: 2026-11-06_",
+  "watchlist_thread": "",
+  "report_id": "Vector Pit Crew report ID: 2026-11-06",
+  "meme": null,
+  "aero": null,
+  "release_report": null,
+  "aero_reports": [],
+  "slack_blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🏎️ *Vector Pit Crew — main — November 6 8 AM Pacific cutoff: coverage caution*\n\n🟡 *Nightly:* 1/1 green · 2 green days · 1 failed job · <https://github.com/NVIDIA/cuvs/actions/runs/42173401133|nightly evidence> · 1 recovered after retry · latest 2026-11-06: recovered · <https://github.com/NVIDIA/cuvs/actions/runs/42173401133|latest cycle>\n🟡 *Coverage:* 1 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Prior 7d   4    1.70    2.16    2.34   2.61\nPR      Current    9    0.47    1.24    1.54   2.82\nPR      Prior 7d  36    0.68    1.31    1.61   2.34\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                         0/16    0.0%\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — The Lucene assertion failure recovered, leaving the latest nightly green; its cause and recurrence remain unresolved. Inspect Surefire reports for cuvs-lucene-10.2 to name the tests behind expected:<1> but was:<0>. Reproduce them in the recorded Rocky Linux 8, amd64, RTX PRO 6000 environment and compare the failed attempt with the successful retry. <https://github.com/NVIDIA/cuvs/actions/runs/42173401133/job/127746269924|Evidence>. *Finish line:* Record the test names and cause, with a passing targeted regression check or documented recurrence checks if reproduction fails.\n\n_Vector Pit Crew report ID: 2026-11-06_"
+      }
+    }
+  ],
+  "slack_text": "🏎️ *Vector Pit Crew — main — November 6 8 AM Pacific cutoff: coverage caution*\nFull CI report in the message blocks.\nVector Pit Crew report ID: 2026-11-06"
+}
