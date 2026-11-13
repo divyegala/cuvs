@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "report_format_version": 2,
+  "repo": "NVIDIA/cuvs",
+  "report_day": "2026-11-13",
+  "window_utc": {
+    "start": "2026-11-12T16:00:00Z",
+    "end": "2026-11-13T16:00:00Z"
+  },
+  "prepared_at_utc": "2026-11-13T16:06:27.804981+00:00",
+  "branch": "main",
+  "failed_nightly_jobs": 2,
+  "main_post": "🏎️ *Vector Pit Crew — main — November 13 8 AM Pacific cutoff: coverage caution*\n\n🟡 *Nightly:* 1/1 green · 2 green days · 2 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/43378899798|nightly evidence> · 1 recovered after retry · latest 2026-11-13: recovered · <https://github.com/NVIDIA/cuvs/actions/runs/43378899798|latest cycle>\n🟡 *Coverage:* 1 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Prior 7d   4    1.87    2.48    3.02   3.39\nPR      Current    4    0.45    1.26    1.36   1.41\nPR      Prior 7d  29    0.47    1.29    1.63   2.82\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                         1/12    8.3%\nPR commits from first rerun onward                  1/1  100.0%\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — The GB300 C++ lane recovered from a ctest timeout; the green latest cycle has no current whole-cycle blocker. Inspect the interrupted ctest output on arm64 Ubuntu 26.04 GB300. Identify the active test and why it exceeded its timeout. <https://github.com/NVIDIA/cuvs/actions/runs/43378899798/job/131731875170|Evidence>. *Finish line:* Document the cause and verify the affected lane completes without the timeout in the next nightly.\n2. 🔧 *P2* — The Lucene vector-search test recovered; its underlying exception remains unknown. Read the Surefire report for TestCuVSRandomizedVectorSearch.testVectorSearch on amd64 Rocky Linux 8 RTX PRO 6000. Compare the failed and successful attempts to explain recurrence risk. <https://github.com/NVIDIA/cuvs/actions/runs/43378899798/job/131731857321|Evidence>. *Finish line:* Document the exception and cause, and verify the named test passes in the next nightly.\n\n_Vector Pit Crew report ID: 2026-11-13_",
+  "watchlist_thread": "",
+  "report_id": "Vector Pit Crew report ID: 2026-11-13",
+  "meme": null,
+  "aero": null,
+  "release_report": {
+    "branch": "release/26.12",
+    "window_utc": {
+      "start": "2026-11-12T16:00:00Z",
+      "end": "2026-11-13T16:00:00Z"
+    },
+    "failed_nightly_jobs": 1,
+    "main_post": "🏎️ *Vector Pit Crew — release/26.12 — November 13 8 AM Pacific cutoff: green flag*\n\n🟢 *Nightly:* 1/1 green · 2 green days · 1 failed job · <https://github.com/NVIDIA/cuvs/actions/runs/43377978004|nightly evidence> · 1 recovered after retry · latest 2026-11-13: recovered · <https://github.com/NVIDIA/cuvs/actions/runs/43377978004|latest cycle>\n⏱️ *Lap times:* No clean full-pass sample completed in this window, so there's no speed verdict.\n*Prior 7d clean full passes*\n```\nCI       n  Min(h)  P50(h)  P75(h) Max(h)\nNightly  1    4.59    4.59    4.59   4.59\nPR       3    0.96    1.33    1.80   2.27\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                          0/1    0.0%\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — The Lucene Cagra-to-HNSW serialization/search assertion recovered; its cause and recurrence remain unresolved. Inspect the assertion and Surefire report for TestCagraToHnswSerializationAndSearch.testCagraToHnswSerializationAndSearch. Repeat it on the recorded CUDA 12.9.2, Python 3.12, Rocky Linux 8, RTX PRO 6000 environment and compare the recovered execution. <https://github.com/NVIDIA/cuvs/actions/runs/43377978004/job/131728928810|Evidence>. *Finish line:* Record the failing assertion, establish its cause, and report recurrence counts across repeated runs.\n\n_Vector Pit Crew report ID: release/26.12:2026-11-13_",
+    "watchlist_thread": "",
+    "report_id": "Vector Pit Crew report ID: release/26.12:2026-11-13",
+    "meme": null,
+    "aero": null,
+    "slack_blocks": [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "🏎️ *Vector Pit Crew — release/26.12 — November 13 8 AM Pacific cutoff: green flag*\n\n🟢 *Nightly:* 1/1 green · 2 green days · 1 failed job · <https://github.com/NVIDIA/cuvs/actions/runs/43377978004|nightly evidence> · 1 recovered after retry · latest 2026-11-13: recovered · <https://github.com/NVIDIA/cuvs/actions/runs/43377978004|latest cycle>\n⏱️ *Lap times:* No clean full-pass sample completed in this window, so there's no speed verdict.\n*Prior 7d clean full passes*\n```\nCI       n  Min(h)  P50(h)  P75(h) Max(h)\nNightly  1    4.59    4.59    4.59   4.59\nPR       3    0.96    1.33    1.80   2.27\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                          0/1    0.0%\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — The Lucene Cagra-to-HNSW serialization/search assertion recovered; its cause and recurrence remain unresolved. Inspect the assertion and Surefire report for TestCagraToHnswSerializationAndSearch.testCagraToHnswSerializationAndSearch. Repeat it on the recorded CUDA 12.9.2, Python 3.12, Rocky Linux 8, RTX PRO 6000 environment and compare the recovered execution. <https://github.com/NVIDIA/cuvs/actions/runs/43377978004/job/131728928810|Evidence>. *Finish line:* Record the failing assertion, establish its cause, and report recurrence counts across repeated runs.\n\n_Vector Pit Crew report ID: release/26.12:2026-11-13_"
+        }
+      }
+    ],
+    "slack_text": "🏎️ *Vector Pit Crew — release/26.12 — November 13 8 AM Pacific cutoff: green flag*\nFull CI report in the message blocks.\nVector Pit Crew report ID: release/26.12:2026-11-13"
+  },
+  "aero_reports": [],
+  "slack_blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🏎️ *Vector Pit Crew — main — November 13 8 AM Pacific cutoff: coverage caution*\n\n🟡 *Nightly:* 1/1 green · 2 green days · 2 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/43378899798|nightly evidence> · 1 recovered after retry · latest 2026-11-13: recovered · <https://github.com/NVIDIA/cuvs/actions/runs/43378899798|latest cycle>\n🟡 *Coverage:* 1 run(s) that started in this window remained unfinished at collection; later outcomes are excluded.\n⏱️ *Lap times:* No clean full-pass nightly sample completed in this window.\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Prior 7d   4    1.87    2.48    3.02   3.39\nPR      Current    4    0.45    1.26    1.36   1.41\nPR      Prior 7d  29    0.47    1.29    1.63   2.82\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                         1/12    8.3%\nPR commits from first rerun onward                  1/1  100.0%\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🔧 *P2* — The GB300 C++ lane recovered from a ctest timeout; the green latest cycle has no current whole-cycle blocker. Inspect the interrupted ctest output on arm64 Ubuntu 26.04 GB300. Identify the active test and why it exceeded its timeout. <https://github.com/NVIDIA/cuvs/actions/runs/43378899798/job/131731875170|Evidence>. *Finish line:* Document the cause and verify the affected lane completes without the timeout in the next nightly.\n2. 🔧 *P2* — The Lucene vector-search test recovered; its underlying exception remains unknown. Read the Surefire report for TestCuVSRandomizedVectorSearch.testVectorSearch on amd64 Rocky Linux 8 RTX PRO 6000. Compare the failed and successful attempts to explain recurrence risk. <https://github.com/NVIDIA/cuvs/actions/runs/43378899798/job/131731857321|Evidence>. *Finish line:* Document the exception and cause, and verify the named test passes in the next nightly.\n\n_Vector Pit Crew report ID: 2026-11-13_"
+      }
+    }
+  ],
+  "slack_text": "🏎️ *Vector Pit Crew — main — November 13 8 AM Pacific cutoff: coverage caution*\nFull CI report in the message blocks.\nVector Pit Crew report ID: 2026-11-13"
+}
