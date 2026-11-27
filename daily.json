@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "report_format_version": 2,
+  "repo": "NVIDIA/cuvs",
+  "report_day": "2026-11-27",
+  "window_utc": {
+    "start": "2026-11-26T16:00:00Z",
+    "end": "2026-11-27T16:00:00Z"
+  },
+  "prepared_at_utc": "2026-11-27T16:02:01.865449+00:00",
+  "branch": "main",
+  "failed_nightly_jobs": 0,
+  "main_post": "🏎️ *Vector Pit Crew — main — November 27 8 AM Pacific cutoff: pace warning*\n\n🟡 *Nightly:* 1/1 green · 2 green days · 0 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/45947146027|nightly evidence> · latest 2026-11-27: green · <https://github.com/NVIDIA/cuvs/actions/runs/45950355072|latest cycle>\n⏱️ *Lap times:*\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Current    1    2.90    2.90    2.90   2.90\nNightly Prior 7d   5    2.48    2.82    3.28   3.47\nPR      Current    1    1.39    1.39    1.39   1.39\nPR      Prior 7d  12    0.62    1.02    1.10   1.75\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                          0/2    0.0%\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n• No evidence-backed actions in this window.\n\n_Vector Pit Crew report ID: 2026-11-27_",
+  "watchlist_thread": "",
+  "report_id": "Vector Pit Crew report ID: 2026-11-27",
+  "meme": null,
+  "aero": null,
+  "release_report": {
+    "branch": "release/26.12",
+    "window_utc": {
+      "start": "2026-11-26T16:00:00Z",
+      "end": "2026-11-27T16:00:00Z"
+    },
+    "failed_nightly_jobs": 1,
+    "main_post": "🏎️ *Vector Pit Crew — release/26.12 — November 27 8 AM Pacific cutoff: red flag*\n\n🔴 *Nightly:* 0/1 green · 0 green days · 1 failed job · <https://github.com/NVIDIA/cuvs/actions/runs/45950777215|nightly evidence> · latest 2026-11-27: red · <https://github.com/NVIDIA/cuvs/actions/runs/45950777215|latest cycle>\n⏱️ *Lap times:* No clean full-pass sample completed in this window, so there's no speed verdict.\n*Prior 7d clean full passes*\n```\nCI       n  Min(h)  P50(h)  P75(h) Max(h)\nNightly  4    2.75    2.96    5.24  12.02\nPR       8    0.71    0.98    1.22   1.91\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                          0/0     N/A\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🟨 *P1* — The latest nightly is red with one unrecovered Lucene serialization/search assertion failure. Inspect the Surefire report for TestCagraToHnswSerializationAndSearch.testCagraToHnswSerializationAndSearch. Reproduce the assertion in the CUDA 12.9.2 / Python 3.12 / amd64 / Rocky Linux 8 / RTX PRO 6000 / latest-driver lane and fix the identified cause. <https://github.com/NVIDIA/cuvs/actions/runs/45950777215/job/140345918982|Evidence>. *Finish line:* Record the assertion's cause, pass the targeted test, and complete a successful conda-lucene-tests lane.\n\n<https://raw.githubusercontent.com/divyegala/cuvs/6d5a7f2792a6419b12c1a2c5b6eca801ae438bd4/nightly-reset-988169cc1d1648b77c78b95b128090097fc90bfc34aa0c91171eeb147be3f579.png|🪧 Green-streak reset meme> · previous streak unknown\n\n_Vector Pit Crew report ID: release/26.12:2026-11-27_",
+    "watchlist_thread": "",
+    "report_id": "Vector Pit Crew report ID: release/26.12:2026-11-27",
+    "meme": {
+      "schema_version": 1,
+      "branch": "release/26.12",
+      "cutoff_utc": "2026-11-27T16:00:00Z",
+      "incident_opened_at": "2026-11-27T06:25:07Z",
+      "inner_value": 0,
+      "previous_green_days": null,
+      "outer_value": "?",
+      "alt_text": "release/26.12: days without red nightly CI. Current streak: 0. Previous green streak: ? days (unknown).",
+      "image_url": "https://raw.githubusercontent.com/divyegala/cuvs/6d5a7f2792a6419b12c1a2c5b6eca801ae438bd4/nightly-reset-988169cc1d1648b77c78b95b128090097fc90bfc34aa0c91171eeb147be3f579.png"
+    },
+    "aero": null,
+    "slack_blocks": [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "🏎️ *Vector Pit Crew — release/26.12 — November 27 8 AM Pacific cutoff: red flag*\n\n🔴 *Nightly:* 0/1 green · 0 green days · 1 failed job · <https://github.com/NVIDIA/cuvs/actions/runs/45950777215|nightly evidence> · latest 2026-11-27: red · <https://github.com/NVIDIA/cuvs/actions/runs/45950777215|latest cycle>\n⏱️ *Lap times:* No clean full-pass sample completed in this window, so there's no speed verdict.\n*Prior 7d clean full passes*\n```\nCI       n  Min(h)  P50(h)  P75(h) Max(h)\nNightly  4    2.75    2.96    5.24  12.02\nPR       8    0.71    0.98    1.22   1.91\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                          0/0     N/A\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n1. 🟨 *P1* — The latest nightly is red with one unrecovered Lucene serialization/search assertion failure. Inspect the Surefire report for TestCagraToHnswSerializationAndSearch.testCagraToHnswSerializationAndSearch. Reproduce the assertion in the CUDA 12.9.2 / Python 3.12 / amd64 / Rocky Linux 8 / RTX PRO 6000 / latest-driver lane and fix the identified cause. <https://github.com/NVIDIA/cuvs/actions/runs/45950777215/job/140345918982|Evidence>. *Finish line:* Record the assertion's cause, pass the targeted test, and complete a successful conda-lucene-tests lane.\n\n<https://raw.githubusercontent.com/divyegala/cuvs/6d5a7f2792a6419b12c1a2c5b6eca801ae438bd4/nightly-reset-988169cc1d1648b77c78b95b128090097fc90bfc34aa0c91171eeb147be3f579.png|🪧 Green-streak reset meme> · previous streak unknown\n\n_Vector Pit Crew report ID: release/26.12:2026-11-27_"
+        }
+      },
+      {
+        "type": "image",
+        "image_url": "https://raw.githubusercontent.com/divyegala/cuvs/6d5a7f2792a6419b12c1a2c5b6eca801ae438bd4/nightly-reset-988169cc1d1648b77c78b95b128090097fc90bfc34aa0c91171eeb147be3f579.png",
+        "alt_text": "release/26.12: days without red nightly CI. Current streak: 0. Previous green streak: ? days (unknown).",
+        "title": {
+          "type": "plain_text",
+          "text": "release/26.12 — green streak reset"
+        }
+      }
+    ],
+    "slack_text": "🏎️ *Vector Pit Crew — release/26.12 — November 27 8 AM Pacific cutoff: red flag*\nFull CI report in the message blocks.\nVector Pit Crew report ID: release/26.12:2026-11-27"
+  },
+  "aero_reports": [],
+  "slack_blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🏎️ *Vector Pit Crew — main — November 27 8 AM Pacific cutoff: pace warning*\n\n🟡 *Nightly:* 1/1 green · 2 green days · 0 failed jobs · <https://github.com/NVIDIA/cuvs/actions/runs/45947146027|nightly evidence> · latest 2026-11-27: green · <https://github.com/NVIDIA/cuvs/actions/runs/45950355072|latest cycle>\n⏱️ *Lap times:*\n*Clean full passes*\n```\nCI      Period     n  Min(h)  P50(h)  P75(h) Max(h)\nNightly Current    1    2.90    2.90    2.90   2.90\nNightly Prior 7d   5    2.48    2.82    3.28   3.47\nPR      Current    1    1.39    1.39    1.39   1.39\nPR      Prior 7d  12    0.62    1.02    1.10   1.75\n```\n\n🔧 *Pit stops*\n```\nPR commit cohort                     Retried / observed    Rate\nAll CI-observed PR commits                          0/2    0.0%\nPR commits from first rerun onward                  0/0     N/A\n```\n_Second row includes each PR's first rerun commit._\n\n🏁 *Today's race plan*\n• No evidence-backed actions in this window.\n\n_Vector Pit Crew report ID: 2026-11-27_"
+      }
+    }
+  ],
+  "slack_text": "🏎️ *Vector Pit Crew — main — November 27 8 AM Pacific cutoff: pace warning*\nFull CI report in the message blocks.\nVector Pit Crew report ID: 2026-11-27"
+}
